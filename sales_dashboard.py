@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v2"
+CACHE_VERSION = "v4"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -102,17 +102,18 @@ def load_all_data():
     # Load dashboard info (rep quotas and orders)
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
     
+    # Load invoice data from NetSuite
+    invoices_df = load_google_sheets_data("NS Invoices", "A:S", version=CACHE_VERSION)
+    
     # Clean and process data
     if not deals_df.empty and len(deals_df.columns) >= 8:
-        # The sheet has columns A-H, so let's use proper column names
-        # Based on the Google Apps Script: A=?, B=Deal Name, C=?, D=Close Date, E=Deal Owner, F=Amount, G=Status, H=Pipeline
-        
-        # Get column names from first row (if they exist) or use indices
+        # Get column names from first row
         if len(deals_df) > 0:
             # Standardize column names based on position
+            # Columns: 0=Record ID, 1=Deal Name, 2=Deal Stage, 3=Close Date, 4=Deal Owner, 5=Amount, 6=Status, 7=Pipeline
             col_names = deals_df.columns.tolist()
             
-            # Map columns by position if column names aren't what we expect
+            # Map columns by position
             deals_df = deals_df.rename(columns={
                 col_names[1]: 'Deal Name',
                 col_names[3]: 'Close Date',
@@ -122,8 +123,17 @@ def load_all_data():
                 col_names[7]: 'Pipeline'
             })
             
-            # Convert amount to numeric
-            deals_df['Amount'] = pd.to_numeric(deals_df['Amount'], errors='coerce').fillna(0)
+            # Clean and convert amount to numeric (remove commas, dollar signs)
+            def clean_numeric(value):
+                if pd.isna(value) or value == '':
+                    return 0
+                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+                try:
+                    return float(cleaned)
+                except:
+                    return 0
+            
+            deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
             
             # Convert close date to datetime
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
@@ -143,13 +153,19 @@ def load_all_data():
             # Remove any empty rows
             dashboard_df = dashboard_df[dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')]
             
-            # Convert to numeric, keeping original values if conversion fails
-            dashboard_df['Quota'] = pd.to_numeric(dashboard_df['Quota'], errors='coerce')
-            dashboard_df['NetSuite Orders'] = pd.to_numeric(dashboard_df['NetSuite Orders'], errors='coerce')
+            # Clean and convert numeric columns (remove commas, dollar signs, etc.)
+            def clean_numeric(value):
+                if pd.isna(value) or value == '':
+                    return 0
+                # Remove commas, dollar signs, and spaces
+                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+                try:
+                    return float(cleaned)
+                except:
+                    return 0
             
-            # Fill NaN with 0
-            dashboard_df['Quota'] = dashboard_df['Quota'].fillna(0)
-            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].fillna(0)
+            dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
+            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
             
             # Debug: Show after conversion
             st.sidebar.write("**DEBUG - After Conversion:**")
@@ -157,7 +173,63 @@ def load_all_data():
         else:
             st.error(f"Dashboard Info sheet has wrong number of columns: {len(dashboard_df.columns)}")
     
-    return deals_df, dashboard_df
+    # Process invoice data
+    if not invoices_df.empty:
+        st.sidebar.write("**DEBUG - NS Invoices loaded:**", len(invoices_df), "rows")
+        
+        # Clean invoice data
+        # Expected columns: Document Number, Status, Date, Due Date, Created From, Created By, 
+        # Customer, Account, Period, Department, Amount (Transaction Total), Amount Remaining, 
+        # CSM, Date Closed, Sales Rep, External ID, Amount (Shipping), Amount (Transaction Tax Total), HubSpot Pipeline
+        
+        if len(invoices_df.columns) >= 11:
+            # Map important columns
+            invoices_df = invoices_df.rename(columns={
+                invoices_df.columns[0]: 'Invoice Number',
+                invoices_df.columns[1]: 'Status',
+                invoices_df.columns[2]: 'Date',
+                invoices_df.columns[6]: 'Customer',
+                invoices_df.columns[10]: 'Amount',
+                invoices_df.columns[14]: 'Sales Rep'
+            })
+            
+            # Clean numeric amount
+            def clean_numeric(value):
+                if pd.isna(value) or value == '':
+                    return 0
+                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+                try:
+                    return float(cleaned)
+                except:
+                    return 0
+            
+            invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
+            
+            # Remove rows without amount or sales rep
+            invoices_df = invoices_df[
+                (invoices_df['Amount'] > 0) & 
+                (invoices_df['Sales Rep'].notna()) & 
+                (invoices_df['Sales Rep'] != '')
+            ]
+            
+            # Calculate total invoices by rep and update dashboard_df
+            invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
+            invoice_totals.columns = ['Rep Name', 'Invoice Total']
+            
+            # Merge with dashboard_df to update NetSuite Orders
+            dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
+            dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
+            
+            # Override NetSuite Orders with calculated invoice totals
+            dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
+            dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
+            
+            st.sidebar.write("**DEBUG - Invoice totals calculated and applied**")
+        else:
+            st.warning("NS Invoices sheet doesn't have enough columns")
+            invoices_df = pd.DataFrame()
+    
+    return deals_df, dashboard_df, invoices_df
 
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
@@ -401,7 +473,66 @@ def create_deals_timeline(deals_df, rep_name=None):
     
     return fig
 
-def display_team_dashboard(deals_df, dashboard_df):
+def create_invoice_status_chart(invoices_df, rep_name=None):
+    """Create a chart showing invoice breakdown by status"""
+    
+    if invoices_df.empty:
+        return None
+    
+    if rep_name:
+        invoices_df = invoices_df[invoices_df['Sales Rep'] == rep_name]
+    
+    if invoices_df.empty:
+        return None
+    
+    status_summary = invoices_df.groupby('Status')['Amount'].sum().reset_index()
+    
+    fig = px.pie(
+        status_summary,
+        values='Amount',
+        names='Status',
+        title='Invoice Amount by Status',
+        hole=0.4
+    )
+    
+    fig.update_traces(textposition='inside', textinfo='percent+label')
+    fig.update_layout(height=400)
+    
+    return fig
+
+def create_customer_invoice_table(invoices_df, rep_name):
+    """Create a detailed customer invoice breakdown table"""
+    
+    if invoices_df.empty:
+        return pd.DataFrame()
+    
+    rep_invoices = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
+    
+    if rep_invoices.empty:
+        return pd.DataFrame()
+    
+    # Group by customer and status
+    customer_summary = rep_invoices.groupby(['Customer', 'Status'])['Amount'].sum().reset_index()
+    
+    # Pivot to show statuses as columns
+    pivot_table = customer_summary.pivot_table(
+        index='Customer',
+        columns='Status',
+        values='Amount',
+        fill_value=0,
+        aggfunc='sum'
+    ).reset_index()
+    
+    # Add total column
+    status_cols = [col for col in pivot_table.columns if col != 'Customer']
+    pivot_table['Total'] = pivot_table[status_cols].sum(axis=1)
+    
+    # Sort by total descending
+    pivot_table = pivot_table.sort_values('Total', ascending=False)
+    
+    return pivot_table
+
+def display_team_dashboard(deals_df, dashboard_df, invoices_df):
     """Display the team-level dashboard"""
     
     st.title("🎯 Team Sales Dashboard - Q4 2025")
@@ -469,6 +600,13 @@ def display_team_dashboard(deals_df, dashboard_df):
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
     
+    # Invoice Status Breakdown
+    if not invoices_df.empty:
+        st.markdown("### 💰 Invoice Status Breakdown")
+        invoice_chart = create_invoice_status_chart(invoices_df)
+        if invoice_chart:
+            st.plotly_chart(invoice_chart, use_container_width=True)
+    
     # Rep summary table
     st.markdown("### 👥 Rep Summary")
     
@@ -488,7 +626,7 @@ def display_team_dashboard(deals_df, dashboard_df):
     rep_summary_df = pd.DataFrame(rep_summary)
     st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
 
-def display_rep_dashboard(rep_name, deals_df, dashboard_df):
+def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df):
     """Display individual rep dashboard"""
     
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
@@ -559,6 +697,32 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df):
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
     
+    # Invoice Status Breakdown
+    if not invoices_df.empty:
+        st.markdown("### 💰 Invoice Breakdown")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            invoice_chart = create_invoice_status_chart(invoices_df, rep_name)
+            if invoice_chart:
+                st.plotly_chart(invoice_chart, use_container_width=True)
+        
+        with col2:
+            # Customer invoice breakdown table
+            customer_table = create_customer_invoice_table(invoices_df, rep_name)
+            if not customer_table.empty:
+                st.markdown("**Invoice Amounts by Customer**")
+                
+                # Format currency columns
+                for col in customer_table.columns:
+                    if col != 'Customer':
+                        customer_table[col] = customer_table[col].apply(lambda x: f"${x:,.0f}")
+                
+                st.dataframe(customer_table, use_container_width=True, hide_index=True)
+            else:
+                st.info("No invoice data available for this rep")
+    
     # Detailed deals table
     st.markdown("### 📋 Deal Details")
     
@@ -623,7 +787,7 @@ def main():
     
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
-        deals_df, dashboard_df = load_all_data()
+        deals_df, dashboard_df, invoices_df = load_all_data()
     
     if deals_df.empty or dashboard_df.empty:
         st.error("Unable to load data. Please check your Google Sheets connection.")
@@ -637,13 +801,13 @@ def main():
     
     # Display appropriate dashboard
     if view_mode == "Team Overview":
-        display_team_dashboard(deals_df, dashboard_df)
+        display_team_dashboard(deals_df, dashboard_df, invoices_df)
     else:
         rep_name = st.selectbox(
             "Select Rep:",
             options=dashboard_df['Rep Name'].tolist()
         )
-        display_rep_dashboard(rep_name, deals_df, dashboard_df)
+        display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df)
 
 if __name__ == "__main__":
     main()
