@@ -93,16 +93,39 @@ def load_all_data():
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C")
     
     # Clean and process data
-    if not deals_df.empty:
-        # Convert amount to numeric
-        deals_df['Amount'] = pd.to_numeric(deals_df['Amount'], errors='coerce').fillna(0)
+    if not deals_df.empty and len(deals_df.columns) >= 8:
+        # The sheet has columns A-H, so let's use proper column names
+        # Based on the Google Apps Script: A=?, B=Deal Name, C=?, D=Close Date, E=Deal Owner, F=Amount, G=Status, H=Pipeline
         
-        # Convert close date to datetime
-        deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+        # Get column names from first row (if they exist) or use indices
+        if len(deals_df) > 0:
+            # Standardize column names based on position
+            col_names = deals_df.columns.tolist()
+            
+            # Map columns by position if column names aren't what we expect
+            deals_df = deals_df.rename(columns={
+                col_names[1]: 'Deal Name',
+                col_names[3]: 'Close Date',
+                col_names[4]: 'Deal Owner',
+                col_names[5]: 'Amount',
+                col_names[6]: 'Status',
+                col_names[7]: 'Pipeline'
+            })
+            
+            # Convert amount to numeric
+            deals_df['Amount'] = pd.to_numeric(deals_df['Amount'], errors='coerce').fillna(0)
+            
+            # Convert close date to datetime
+            deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
     
     if not dashboard_df.empty:
-        # Rename columns
-        dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
+        # Rename columns based on what we expect
+        col_names = dashboard_df.columns.tolist()
+        dashboard_df = dashboard_df.rename(columns={
+            col_names[0]: 'Rep Name',
+            col_names[1]: 'Quota',
+            col_names[2]: 'NetSuite Orders'
+        })
         
         # Convert to numeric
         dashboard_df['Quota'] = pd.to_numeric(dashboard_df['Quota'], errors='coerce').fillna(0)
