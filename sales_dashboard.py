@@ -73,14 +73,21 @@ def load_google_sheets_data(sheet_name, range_name):
         values = result.get('values', [])
         
         if not values:
+            st.warning(f"No data found in {sheet_name}!{range_name}")
             return pd.DataFrame()
+        
+        # Debug output
+        st.sidebar.write(f"**DEBUG - {sheet_name}:**")
+        st.sidebar.write(f"Total rows loaded: {len(values)}")
+        st.sidebar.write(f"First 3 rows: {values[:3]}")
         
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
         return df
         
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
+        st.error(f"Error loading data from {sheet_name}: {str(e)}")
+        st.sidebar.write(f"**ERROR in {sheet_name}:** {str(e)}")
         return pd.DataFrame()
 
 def load_all_data():
@@ -119,17 +126,33 @@ def load_all_data():
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
     
     if not dashboard_df.empty:
-        # Rename columns based on what we expect
-        col_names = dashboard_df.columns.tolist()
-        dashboard_df = dashboard_df.rename(columns={
-            col_names[0]: 'Rep Name',
-            col_names[1]: 'Quota',
-            col_names[2]: 'NetSuite Orders'
-        })
+        # Debug: Show raw data
+        st.sidebar.write("**DEBUG - Dashboard Info Raw:**")
+        st.sidebar.dataframe(dashboard_df.head())
         
-        # Convert to numeric
-        dashboard_df['Quota'] = pd.to_numeric(dashboard_df['Quota'], errors='coerce').fillna(0)
-        dashboard_df['NetSuite Orders'] = pd.to_numeric(dashboard_df['NetSuite Orders'], errors='coerce').fillna(0)
+        # The first row should be headers, data starts from row 2
+        # Columns should be: Rep Name, Quota, Orders
+        
+        # Ensure we have the right column names
+        if len(dashboard_df.columns) >= 3:
+            dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
+            
+            # Remove any empty rows
+            dashboard_df = dashboard_df[dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')]
+            
+            # Convert to numeric, keeping original values if conversion fails
+            dashboard_df['Quota'] = pd.to_numeric(dashboard_df['Quota'], errors='coerce')
+            dashboard_df['NetSuite Orders'] = pd.to_numeric(dashboard_df['NetSuite Orders'], errors='coerce')
+            
+            # Fill NaN with 0
+            dashboard_df['Quota'] = dashboard_df['Quota'].fillna(0)
+            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].fillna(0)
+            
+            # Debug: Show after conversion
+            st.sidebar.write("**DEBUG - After Conversion:**")
+            st.sidebar.dataframe(dashboard_df)
+        else:
+            st.error(f"Dashboard Info sheet has wrong number of columns: {len(dashboard_df.columns)}")
     
     return deals_df, dashboard_df
 
