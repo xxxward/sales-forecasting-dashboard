@@ -97,10 +97,10 @@ def load_all_data():
     """Load all necessary data from Google Sheets"""
     
     # Load deals data
-    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:H")
+    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:H", version=CACHE_VERSION)
     
     # Load dashboard info (rep quotas and orders)
-    dashboard_df = load_google_sheets_data("Dashboard Info", "A:C")
+    dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
     
     # Clean and process data
     if not deals_df.empty and len(deals_df.columns) >= 8:
