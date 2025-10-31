@@ -50,8 +50,11 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 # Cache duration - 1 hour
 CACHE_TTL = 3600
 
+# Add a version number to force cache refresh when code changes
+CACHE_VERSION = "v2"
+
 @st.cache_data(ttl=CACHE_TTL)
-def load_google_sheets_data(sheet_name, range_name):
+def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
     """
     Load data from Google Sheets with caching
     """
