@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v8"
+CACHE_VERSION = "v9"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -83,6 +83,13 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         st.sidebar.write(f"**DEBUG - {sheet_name}:**")
         st.sidebar.write(f"Total rows loaded: {len(values)}")
         st.sidebar.write(f"First 3 rows: {values[:3]}")
+        
+        # Handle mismatched column counts - pad shorter rows with empty strings
+        if len(values) > 1:
+            max_cols = max(len(row) for row in values)
+            for row in values:
+                while len(row) < max_cols:
+                    row.append('')
         
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
