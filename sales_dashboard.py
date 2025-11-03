@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v6"
+CACHE_VERSION = "v8"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -103,7 +103,10 @@ def load_all_data():
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
     
     # Load invoice data from NetSuite
-    invoices_df = load_google_sheets_data("NS Invoices", "A:S", version=CACHE_VERSION)
+    invoices_df = load_google_sheets_data("NS Invoices", "A:Z", version=CACHE_VERSION)
+    
+    # Load sales orders data from NetSuite
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:Z", version=CACHE_VERSION)
     
     # Clean and process data
     if not deals_df.empty and len(deals_df.columns) >= 8:
@@ -255,7 +258,63 @@ def load_all_data():
             st.warning(f"NS Invoices sheet doesn't have enough columns (has {len(invoices_df.columns)})")
             invoices_df = pd.DataFrame()
     
-    return deals_df, dashboard_df, invoices_df
+    # Process sales orders data
+    if not sales_orders_df.empty:
+        st.sidebar.write("**DEBUG - NS Sales Orders loaded:**", len(sales_orders_df), "rows")
+        
+        # Clean sales orders - find Status and Amount columns dynamically
+        status_col = None
+        amount_col = None
+        sales_rep_col = None
+        
+        for col in sales_orders_df.columns:
+            col_lower = str(col).lower()
+            if 'status' in col_lower and not status_col:
+                status_col = col
+            if ('amount' in col_lower or 'total' in col_lower) and not amount_col:
+                amount_col = col
+            if ('sales rep' in col_lower or 'salesrep' in col_lower) and not sales_rep_col:
+                sales_rep_col = col
+        
+        st.sidebar.write(f"**DEBUG - Found columns:** Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
+        
+        if status_col and amount_col and sales_rep_col:
+            # Standardize column names
+            sales_orders_df = sales_orders_df.rename(columns={
+                status_col: 'Status',
+                amount_col: 'Amount',
+                sales_rep_col: 'Sales Rep'
+            })
+            
+            # Clean numeric amount
+            def clean_numeric_so(value):
+                if pd.isna(value) or value == '':
+                    return 0
+                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+                try:
+                    return float(cleaned)
+                except:
+                    return 0
+            
+            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+            
+            # Normalize rep names
+            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
+            
+            # Remove rows without amount or sales rep
+            sales_orders_df = sales_orders_df[
+                (sales_orders_df['Amount'] > 0) & 
+                (sales_orders_df['Sales Rep'].notna()) & 
+                (sales_orders_df['Sales Rep'] != '')
+            ]
+            
+            st.sidebar.write(f"**DEBUG - After cleaning:** {len(sales_orders_df)} rows")
+            st.sidebar.write("**DEBUG - Unique statuses:**", sales_orders_df['Status'].unique().tolist())
+        else:
+            st.warning("Could not find required columns in NS Sales Orders")
+            sales_orders_df = pd.DataFrame()
+    
+    return deals_df, dashboard_df, invoices_df, sales_orders_df
 
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
@@ -290,7 +349,7 @@ def calculate_team_metrics(deals_df, dashboard_df):
         'current_forecast': current_forecast
     }
 
-def calculate_rep_metrics(rep_name, deals_df, dashboard_df):
+def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
     """Calculate metrics for a specific rep"""
     
     # Get rep's quota and orders
@@ -311,6 +370,23 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df):
     # Calculate Best Case/Opportunity
     best_opp = rep_deals[rep_deals['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
     
+    # Calculate sales order metrics (Pending Approval, Pending Fulfillment)
+    pending_approval = 0
+    pending_fulfillment = 0
+    
+    if sales_orders_df is not None and not sales_orders_df.empty:
+        rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name]
+        
+        # Find orders with "Pending Approval" status
+        pending_approval = rep_orders[
+            rep_orders['Status'].str.contains('Pending Approval', case=False, na=False)
+        ]['Amount'].sum()
+        
+        # Find orders with "Pending Fulfillment" or "Pending Billing" status
+        pending_fulfillment = rep_orders[
+            rep_orders['Status'].str.contains('Pending Fulfillment|Pending Billing', case=False, na=False, regex=True)
+        ]['Amount'].sum()
+    
     # Calculate gap
     gap = quota - expect_commit - orders
     
@@ -330,6 +406,8 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df):
         'attainment_pct': attainment_pct,
         'potential_attainment': potential_attainment,
         'current_forecast': current_forecast,
+        'pending_approval': pending_approval,
+        'pending_fulfillment': pending_fulfillment,
         'deals': rep_deals
     }
 
@@ -558,7 +636,7 @@ def create_customer_invoice_table(invoices_df, rep_name):
     
     return pivot_table
 
-def display_team_dashboard(deals_df, dashboard_df, invoices_df):
+def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
     
     st.title("🎯 Team Sales Dashboard - Q4 2025")
@@ -578,7 +656,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df):
     
     with col2:
         st.metric(
-            label="Current Forecast",
+            label="Orders Shipped NetSuite",
             value=f"${metrics['current_forecast']:,.0f}",
             delta=f"{metrics['attainment_pct']:.1f}% of quota"
         )
@@ -638,27 +716,28 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df):
     
     rep_summary = []
     for rep_name in dashboard_df['Rep Name']:
-        rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df)
+        rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
         if rep_metrics:
             rep_summary.append({
                 'Rep': rep_name,
                 'Quota': f"${rep_metrics['quota']:,.0f}",
-                'Forecast': f"${rep_metrics['current_forecast']:,.0f}",
+                'Orders Shipped': f"${rep_metrics['current_forecast']:,.0f}",
+                'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
+                'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
                 'Gap': f"${rep_metrics['gap']:,.0f}",
-                'Attainment': f"{rep_metrics['attainment_pct']:.1f}%",
-                'Potential': f"{rep_metrics['potential_attainment']:.1f}%"
+                'Attainment': f"{rep_metrics['attainment_pct']:.1f}%"
             })
     
     rep_summary_df = pd.DataFrame(rep_summary)
     st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
 
-def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df):
+def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard"""
     
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
     
     # Calculate metrics
-    metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df)
+    metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
     
     if not metrics:
         st.error(f"No data found for {rep_name}")
@@ -675,7 +754,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df):
     
     with col2:
         st.metric(
-            label="Current Forecast",
+            label="Orders Shipped NetSuite",
             value=f"${metrics['current_forecast']:,.0f}",
             delta=f"{metrics['attainment_pct']:.1f}% of quota"
         )
@@ -701,6 +780,25 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df):
     st.progress(progress)
     st.caption(f"Current: {metrics['attainment_pct']:.1f}% | Potential: {metrics['potential_attainment']:.1f}%")
     
+    
+    # Sales Order Pipeline Metrics
+    if metrics['pending_approval'] > 0 or metrics['pending_fulfillment'] > 0:
+        st.markdown("### 📦 Sales Order Pipeline")
+        so_col1, so_col2 = st.columns(2)
+        
+        with so_col1:
+            st.metric(
+                label="⏳ Pending Approval",
+                value=f"${metrics['pending_approval']:,.0f}",
+                help="Sales orders awaiting approval"
+            )
+        
+        with so_col2:
+            st.metric(
+                label="📤 Pending Fulfillment",
+                value=f"${metrics['pending_fulfillment']:,.0f}",
+                help="Sales orders pending fulfillment or billing"
+            )
     # Charts
     col1, col2 = st.columns(2)
     
@@ -813,7 +911,7 @@ def main():
     
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
-        deals_df, dashboard_df, invoices_df = load_all_data()
+        deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
     
     if deals_df.empty or dashboard_df.empty:
         st.error("Unable to load data. Please check your Google Sheets connection.")
@@ -827,13 +925,13 @@ def main():
     
     # Display appropriate dashboard
     if view_mode == "Team Overview":
-        display_team_dashboard(deals_df, dashboard_df, invoices_df)
+        display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     else:
         rep_name = st.selectbox(
             "Select Rep:",
             options=dashboard_df['Rep Name'].tolist()
         )
-        display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df)
+        display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
 
 if __name__ == "__main__":
     main()
