@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v4"
+CACHE_VERSION = "v6"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -178,12 +178,9 @@ def load_all_data():
         st.sidebar.write("**DEBUG - NS Invoices loaded:**", len(invoices_df), "rows")
         
         # Clean invoice data
-        # Expected columns: Document Number, Status, Date, Due Date, Created From, Created By, 
-        # Customer, Account, Period, Department, Amount (Transaction Total), Amount Remaining, 
-        # CSM, Date Closed, Sales Rep, External ID, Amount (Shipping), Amount (Transaction Tax Total), HubSpot Pipeline
-        
-        if len(invoices_df.columns) >= 11:
-            # Map important columns
+        if len(invoices_df.columns) >= 15:
+            # Map important columns by position (0-indexed)
+            # Columns: 0=Doc#, 1=Status, 2=Date, 6=Customer, 10=Amount, 14=Sales Rep
             invoices_df = invoices_df.rename(columns={
                 invoices_df.columns[0]: 'Invoice Number',
                 invoices_df.columns[1]: 'Status',
@@ -205,6 +202,23 @@ def load_all_data():
             
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             
+            # Convert Date column to datetime
+            invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
+            
+            # Filter to Q4 2025 only (October 1 - December 31, 2025)
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            
+            invoices_df = invoices_df[
+                (invoices_df['Date'] >= q4_start) & 
+                (invoices_df['Date'] <= q4_end)
+            ]
+            
+            st.sidebar.write(f"**DEBUG - After Q4 2025 filter:** {len(invoices_df)} rows")
+            
+            # Normalize rep names (trim spaces, consistent capitalization)
+            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].str.strip()
+            
             # Remove rows without amount or sales rep
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
@@ -212,9 +226,20 @@ def load_all_data():
                 (invoices_df['Sales Rep'] != '')
             ]
             
-            # Calculate total invoices by rep and update dashboard_df
+            st.sidebar.write(f"**DEBUG - After cleaning:** {len(invoices_df)} rows")
+            st.sidebar.write("**DEBUG - Unique sales reps in invoices:**", invoices_df['Sales Rep'].unique().tolist())
+            
+            # Calculate total invoices by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
+            
+            st.sidebar.write("**DEBUG - Invoice totals by rep:**")
+            st.sidebar.dataframe(invoice_totals)
+            
+            # Normalize dashboard rep names too
+            dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
+            
+            st.sidebar.write("**DEBUG - Rep names in Dashboard Info:**", dashboard_df['Rep Name'].tolist())
             
             # Merge with dashboard_df to update NetSuite Orders
             dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
@@ -224,9 +249,10 @@ def load_all_data():
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
             
-            st.sidebar.write("**DEBUG - Invoice totals calculated and applied**")
+            st.sidebar.write("**DEBUG - Final dashboard_df with invoice totals:**")
+            st.sidebar.dataframe(dashboard_df)
         else:
-            st.warning("NS Invoices sheet doesn't have enough columns")
+            st.warning(f"NS Invoices sheet doesn't have enough columns (has {len(invoices_df.columns)})")
             invoices_df = pd.DataFrame()
     
     return deals_df, dashboard_df, invoices_df
