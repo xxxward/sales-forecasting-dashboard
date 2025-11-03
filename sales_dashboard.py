@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v9"
+CACHE_VERSION = "v10"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -269,10 +269,13 @@ def load_all_data():
     if not sales_orders_df.empty:
         st.sidebar.write("**DEBUG - NS Sales Orders loaded:**", len(sales_orders_df), "rows")
         
-        # Clean sales orders - find Status and Amount columns dynamically
+        # Find required columns
         status_col = None
         amount_col = None
         sales_rep_col = None
+        pending_fulfillment_date_col = None  # Column J
+        projected_date_col = None  # Column M
+        customer_promise_col = None  # Column L
         
         for col in sales_orders_df.columns:
             col_lower = str(col).lower()
@@ -282,16 +285,33 @@ def load_all_data():
                 amount_col = col
             if ('sales rep' in col_lower or 'salesrep' in col_lower) and not sales_rep_col:
                 sales_rep_col = col
+            if 'pending fulfillment date' in col_lower:
+                pending_fulfillment_date_col = col
+            if 'projected date' in col_lower:
+                projected_date_col = col
+            if 'customer promise last date to ship' in col_lower:
+                customer_promise_col = col
         
-        st.sidebar.write(f"**DEBUG - Found columns:** Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
+        st.sidebar.write(f"**DEBUG - Found columns:**")
+        st.sidebar.write(f"Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
+        st.sidebar.write(f"Dates: J={pending_fulfillment_date_col}, M={projected_date_col}, L={customer_promise_col}")
         
         if status_col and amount_col and sales_rep_col:
             # Standardize column names
-            sales_orders_df = sales_orders_df.rename(columns={
+            rename_dict = {
                 status_col: 'Status',
                 amount_col: 'Amount',
                 sales_rep_col: 'Sales Rep'
-            })
+            }
+            
+            if pending_fulfillment_date_col:
+                rename_dict[pending_fulfillment_date_col] = 'Pending Fulfillment Date'
+            if projected_date_col:
+                rename_dict[projected_date_col] = 'Projected Date'
+            if customer_promise_col:
+                rename_dict[customer_promise_col] = 'Customer Promise Date'
+            
+            sales_orders_df = sales_orders_df.rename(columns=rename_dict)
             
             # Clean numeric amount
             def clean_numeric_so(value):
@@ -305,8 +325,66 @@ def load_all_data():
             
             sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
             
-            # Normalize rep names
+            # Normalize rep names and status
             sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
+            sales_orders_df['Status'] = sales_orders_df['Status'].str.strip()
+            
+            # Filter to ONLY Pending Approval and Pending Fulfillment
+            sales_orders_df = sales_orders_df[
+                sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment'])
+            ]
+            
+            st.sidebar.write(f"**DEBUG - After status filter:** {len(sales_orders_df)} rows")
+            
+            # For Pending Fulfillment orders, determine the date using waterfall logic
+            if 'Pending Fulfillment Date' in sales_orders_df.columns:
+                # Create a unified date column using waterfall logic
+                def get_fulfillment_date(row):
+                    if row['Status'] == 'Pending Approval':
+                        return None  # No date for Pending Approval
+                    
+                    # Waterfall: J → M → L → None
+                    date_val = None
+                    
+                    if 'Pending Fulfillment Date' in row and pd.notna(row['Pending Fulfillment Date']) and row['Pending Fulfillment Date'] != '':
+                        date_val = row['Pending Fulfillment Date']
+                    elif 'Projected Date' in row and pd.notna(row['Projected Date']) and row['Projected Date'] != '':
+                        date_val = row['Projected Date']
+                    elif 'Customer Promise Date' in row and pd.notna(row['Customer Promise Date']) and row['Customer Promise Date'] != '':
+                        date_val = row['Customer Promise Date']
+                    
+                    return date_val
+                
+                sales_orders_df['Effective Date'] = sales_orders_df.apply(get_fulfillment_date, axis=1)
+                
+                # Convert to datetime
+                sales_orders_df['Effective Date'] = pd.to_datetime(sales_orders_df['Effective Date'], errors='coerce')
+                
+                # Filter Pending Fulfillment to Q4 2025 only
+                q4_start = pd.Timestamp('2025-10-01')
+                q4_end = pd.Timestamp('2025-12-31')
+                
+                # Separate into categories
+                pending_approval = sales_orders_df[sales_orders_df['Status'] == 'Pending Approval']
+                
+                pending_fulfillment_q4 = sales_orders_df[
+                    (sales_orders_df['Status'] == 'Pending Fulfillment') &
+                    (sales_orders_df['Effective Date'] >= q4_start) &
+                    (sales_orders_df['Effective Date'] <= q4_end)
+                ]
+                
+                pending_fulfillment_no_date = sales_orders_df[
+                    (sales_orders_df['Status'] == 'Pending Fulfillment') &
+                    (sales_orders_df['Effective Date'].isna())
+                ]
+                
+                # Combine back
+                sales_orders_df = pd.concat([pending_approval, pending_fulfillment_q4, pending_fulfillment_no_date])
+                
+                st.sidebar.write(f"**DEBUG - After Q4 filter:**")
+                st.sidebar.write(f"Pending Approval: {len(pending_approval)} rows")
+                st.sidebar.write(f"Pending Fulfillment Q4: {len(pending_fulfillment_q4)} rows")
+                st.sidebar.write(f"Pending Fulfillment No Date: {len(pending_fulfillment_no_date)} rows")
             
             # Remove rows without amount or sales rep
             sales_orders_df = sales_orders_df[
@@ -315,8 +393,7 @@ def load_all_data():
                 (sales_orders_df['Sales Rep'] != '')
             ]
             
-            st.sidebar.write(f"**DEBUG - After cleaning:** {len(sales_orders_df)} rows")
-            st.sidebar.write("**DEBUG - Unique statuses:**", sales_orders_df['Status'].unique().tolist())
+            st.sidebar.write(f"**DEBUG - Final count:** {len(sales_orders_df)} rows")
         else:
             st.warning("Could not find required columns in NS Sales Orders")
             sales_orders_df = pd.DataFrame()
@@ -377,32 +454,48 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     # Calculate Best Case/Opportunity
     best_opp = rep_deals[rep_deals['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
     
-    # Calculate sales order metrics (Pending Approval, Pending Fulfillment)
+    # Calculate sales order metrics
     pending_approval = 0
     pending_fulfillment = 0
+    pending_fulfillment_no_date = 0
     
     if sales_orders_df is not None and not sales_orders_df.empty:
         rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name]
         
-        # Find orders with "Pending Approval" status
+        # Pending Approval (all amounts, no date filter)
         pending_approval = rep_orders[
-            rep_orders['Status'].str.contains('Pending Approval', case=False, na=False)
+            rep_orders['Status'] == 'Pending Approval'
         ]['Amount'].sum()
         
-        # Find orders with "Pending Fulfillment" or "Pending Billing" status
-        pending_fulfillment = rep_orders[
-            rep_orders['Status'].str.contains('Pending Fulfillment|Pending Billing', case=False, na=False, regex=True)
-        ]['Amount'].sum()
+        # Pending Fulfillment with Q4 dates
+        if 'Effective Date' in rep_orders.columns:
+            pending_fulfillment = rep_orders[
+                (rep_orders['Status'] == 'Pending Fulfillment') &
+                (rep_orders['Effective Date'].notna())
+            ]['Amount'].sum()
+            
+            # Pending Fulfillment without dates
+            pending_fulfillment_no_date = rep_orders[
+                (rep_orders['Status'] == 'Pending Fulfillment') &
+                (rep_orders['Effective Date'].isna())
+            ]['Amount'].sum()
+        else:
+            # If no date column, all pending fulfillment counts
+            pending_fulfillment = rep_orders[
+                rep_orders['Status'] == 'Pending Fulfillment'
+            ]['Amount'].sum()
     
-    # Calculate gap
-    gap = quota - expect_commit - orders
+    # NEW CALCULATION: Total Progress includes Orders + Expect/Commit + Pending Approval + Pending Fulfillment
+    total_progress = orders + expect_commit + pending_approval + pending_fulfillment
     
-    # Calculate attainment
-    current_forecast = expect_commit + orders
-    attainment_pct = (current_forecast / quota * 100) if quota > 0 else 0
+    # Calculate gap based on new formula
+    gap = quota - total_progress
     
-    # Potential attainment
-    potential_attainment = ((expect_commit + best_opp + orders) / quota * 100) if quota > 0 else 0
+    # Calculate attainment based on total progress
+    attainment_pct = (total_progress / quota * 100) if quota > 0 else 0
+    
+    # Potential attainment (add Best Case/Opportunity upside)
+    potential_attainment = ((total_progress + best_opp) / quota * 100) if quota > 0 else 0
     
     return {
         'quota': quota,
@@ -412,9 +505,10 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'gap': gap,
         'attainment_pct': attainment_pct,
         'potential_attainment': potential_attainment,
-        'current_forecast': current_forecast,
+        'total_progress': total_progress,
         'pending_approval': pending_approval,
         'pending_fulfillment': pending_fulfillment,
+        'pending_fulfillment_no_date': pending_fulfillment_no_date,
         'deals': rep_deals
     }
 
@@ -750,8 +844,9 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.error(f"No data found for {rep_name}")
         return
     
-    # Display key metrics
-    col1, col2, col3, col4 = st.columns(4)
+    # Display key metrics - NEW STRUCTURE
+    st.markdown("### 💰 Revenue Progress")
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
         st.metric(
@@ -761,12 +856,33 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     with col2:
         st.metric(
-            label="Orders Shipped NetSuite",
-            value=f"${metrics['current_forecast']:,.0f}",
-            delta=f"{metrics['attainment_pct']:.1f}% of quota"
+            label="Orders Shipped",
+            value=f"${metrics['orders']:,.0f}",
+            help="Invoiced and shipped orders from NetSuite"
         )
     
     with col3:
+        st.metric(
+            label="Expect/Commit",
+            value=f"${metrics['expect_commit']:,.0f}",
+            help="HubSpot deals likely to close this quarter"
+        )
+    
+    with col4:
+        st.metric(
+            label="Pending Approval",
+            value=f"${metrics['pending_approval']:,.0f}",
+            help="Sales orders awaiting approval"
+        )
+    
+    with col5:
+        st.metric(
+            label="Pending Fulfillment",
+            value=f"${metrics['pending_fulfillment']:,.0f}",
+            help="Sales orders awaiting shipment (Q4 only)"
+        )
+    
+    with col6:
         st.metric(
             label="Gap to Goal",
             value=f"${metrics['gap']:,.0f}",
@@ -774,18 +890,25 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             delta_color="inverse"
         )
     
-    with col4:
-        st.metric(
-            label="Potential Attainment",
-            value=f"{metrics['potential_attainment']:.1f}%",
-            delta=f"+{metrics['potential_attainment'] - metrics['attainment_pct']:.1f}% upside"
-        )
-    
     # Progress bar
     st.markdown("### 📈 Progress to Quota")
     progress = min(metrics['attainment_pct'] / 100, 1.0)
     st.progress(progress)
-    st.caption(f"Current: {metrics['attainment_pct']:.1f}% | Potential: {metrics['potential_attainment']:.1f}%")
+    st.caption(
+        f"Total Progress: ${metrics['total_progress']:,.0f} = "
+        f"Orders (${metrics['orders']:,.0f}) + "
+        f"Expect/Commit (${metrics['expect_commit']:,.0f}) + "
+        f"Pending Approval (${metrics['pending_approval']:,.0f}) + "
+        f"Pending Fulfillment (${metrics['pending_fulfillment']:,.0f})"
+    )
+    st.caption(f"Attainment: {metrics['attainment_pct']:.1f}% | Potential with Best Case/Opp: {metrics['potential_attainment']:.1f}%")
+    
+    # Pending Fulfillment No Date warning
+    if metrics['pending_fulfillment_no_date'] > 0:
+        st.warning(
+            f"⚠️ **Pending Fulfillment - No Ship Date:** ${metrics['pending_fulfillment_no_date']:,.0f} "
+            f"(Not included in totals - needs ship date to count toward Q4)"
+        )
     
     
     # Sales Order Pipeline Metrics
