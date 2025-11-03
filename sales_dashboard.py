@@ -51,7 +51,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v10"
+CACHE_VERSION = "v11"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -851,57 +851,57 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     with col1:
         st.metric(
             label="Quota",
-            value=f"${metrics['quota']:,.0f}"
+            value=f"${metrics['quota']/1000:.0f}K" if metrics['quota'] < 1000000 else f"${metrics['quota']/1000000:.1f}M"
         )
     
     with col2:
         st.metric(
             label="Orders Shipped",
-            value=f"${metrics['orders']:,.0f}",
+            value=f"${metrics['orders']/1000:.0f}K" if metrics['orders'] < 1000000 else f"${metrics['orders']/1000000:.1f}M",
             help="Invoiced and shipped orders from NetSuite"
         )
     
     with col3:
         st.metric(
             label="Expect/Commit",
-            value=f"${metrics['expect_commit']:,.0f}",
+            value=f"${metrics['expect_commit']/1000:.0f}K" if metrics['expect_commit'] < 1000000 else f"${metrics['expect_commit']/1000000:.1f}M",
             help="HubSpot deals likely to close this quarter"
         )
     
     with col4:
         st.metric(
             label="Pending Approval",
-            value=f"${metrics['pending_approval']:,.0f}",
+            value=f"${metrics['pending_approval']/1000:.0f}K" if metrics['pending_approval'] < 1000000 else f"${metrics['pending_approval']/1000000:.1f}M",
             help="Sales orders awaiting approval"
         )
     
     with col5:
         st.metric(
             label="Pending Fulfillment",
-            value=f"${metrics['pending_fulfillment']:,.0f}",
+            value=f"${metrics['pending_fulfillment']/1000:.0f}K" if metrics['pending_fulfillment'] < 1000000 else f"${metrics['pending_fulfillment']/1000000:.1f}M",
             help="Sales orders awaiting shipment (Q4 only)"
         )
     
     with col6:
         st.metric(
             label="Gap to Goal",
-            value=f"${metrics['gap']:,.0f}",
-            delta=f"{-metrics['gap']:,.0f}" if metrics['gap'] < 0 else None,
+            value=f"${metrics['gap']/1000:.0f}K" if abs(metrics['gap']) < 1000000 else f"${metrics['gap']/1000000:.1f}M",
+            delta=f"${-metrics['gap']/1000:.0f}K" if metrics['gap'] < 0 else None,
             delta_color="inverse"
         )
     
-    # Progress bar
+    # Progress bar with exact amounts in caption
     st.markdown("### 📈 Progress to Quota")
     progress = min(metrics['attainment_pct'] / 100, 1.0)
     st.progress(progress)
     st.caption(
-        f"Total Progress: ${metrics['total_progress']:,.0f} = "
+        f"**Total Progress: ${metrics['total_progress']:,.0f}** = "
         f"Orders (${metrics['orders']:,.0f}) + "
         f"Expect/Commit (${metrics['expect_commit']:,.0f}) + "
         f"Pending Approval (${metrics['pending_approval']:,.0f}) + "
         f"Pending Fulfillment (${metrics['pending_fulfillment']:,.0f})"
     )
-    st.caption(f"Attainment: {metrics['attainment_pct']:.1f}% | Potential with Best Case/Opp: {metrics['potential_attainment']:.1f}%")
+    st.caption(f"**Attainment:** {metrics['attainment_pct']:.1f}% | **Potential with Best Case/Opp:** {metrics['potential_attainment']:.1f}%")
     
     # Pending Fulfillment No Date warning
     if metrics['pending_fulfillment_no_date'] > 0:
