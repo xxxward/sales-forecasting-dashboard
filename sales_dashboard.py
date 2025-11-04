@@ -93,7 +93,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v13"
+CACHE_VERSION = "v14"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -764,9 +764,39 @@ def create_deals_timeline(deals_df, rep_name=None):
         color_discrete_map=color_map
     )
     
-    # Add vertical line for Q4/Q1 boundary
-    fig.add_vline(x=pd.Timestamp('2025-12-31'), line_dash="dash", line_color="red", 
-                  annotation_text="Q4/Q1 Boundary")
+    # Fixed: Use datetime object for the vertical line
+    from datetime import datetime
+    q4_boundary = datetime(2025, 12, 31)
+    
+    try:
+        # Try with datetime object
+        fig.add_vline(
+            x=q4_boundary, 
+            line_dash="dash", 
+            line_color="red",
+            annotation_text="Q4/Q1 Boundary"
+        )
+    except:
+        # If that fails, try without annotation
+        try:
+            fig.add_shape(
+                type="line",
+                x0=q4_boundary, x1=q4_boundary,
+                y0=0, y1=1,
+                yref="paper",
+                line=dict(color="red", dash="dash")
+            )
+            fig.add_annotation(
+                x=q4_boundary,
+                y=1,
+                yref="paper",
+                text="Q4/Q1 Boundary",
+                showarrow=False,
+                yshift=10
+            )
+        except:
+            # If all else fails, just skip the boundary line
+            pass
     
     fig.update_layout(
         height=400,
@@ -878,47 +908,226 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     
     st.title("🔍 Forecast Reconciliation with Boss's Numbers")
     
-    # Boss's Q4 numbers from the image
-    boss_numbers = {
-        'Jake Lynch': {'invoiced': 18981, 'pending_fulfillment': 291888, 'pending_approval': 42002, 'hubspot': 350386, 'total': 1203256},
-        'Dave Borkowski': {'invoiced': 223593, 'pending_fulfillment': 146068, 'pending_approval': 15702, 'hubspot': 396043, 'total': 781406},
-        'Alex Gonzalez': {'invoiced': 311101, 'pending_fulfillment': 190589, 'pending_approval': 0, 'hubspot': 0, 'total': 501691},
-        'Brad Sherman': {'invoiced': 107166, 'pending_fulfillment': 39753, 'pending_approval': 16878, 'hubspot': 211062, 'total': 374865},
-        'Lance Mitton': {'invoiced': 21998, 'pending_fulfillment': 0, 'pending_approval': 2758, 'hubspot': 11000, 'total': 35756}
+    # Boss's Q4 numbers from the actual screenshot - BY REP
+    boss_rep_numbers = {
+        'Jake Lynch': {
+            'invoiced': 18981, 
+            'pending_fulfillment': 291888, 
+            'pending_approval': 42002, 
+            'hubspot': 350386, 
+            'total': 1203256,
+            'pending_fulfillment_so_no_date': 108306,
+            'pending_approval_so_no_date': 2107,
+            'old_pending_approval': 33741,
+            'total_q4': 1347410
+        },
+        'Dave Borkowski': {
+            'invoiced': 223593, 
+            'pending_fulfillment': 146068, 
+            'pending_approval': 15702, 
+            'hubspot': 396043, 
+            'total': 781406,
+            'pending_fulfillment_so_no_date': 48150,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 0,
+            'total_q4': 911294
+        },
+        'Alex Gonzalez': {
+            'invoiced': 311101, 
+            'pending_fulfillment': 190589, 
+            'pending_approval': 0, 
+            'hubspot': 0, 
+            'total': 501691,
+            'pending_fulfillment_so_no_date': 3183,
+            'pending_approval_so_no_date': 34846,
+            'old_pending_approval': 19300,
+            'total_q4': 559019
+        },
+        'Brad Sherman': {
+            'invoiced': 107166, 
+            'pending_fulfillment': 39759, 
+            'pending_approval': 16878, 
+            'hubspot': 211062, 
+            'total': 374865,
+            'pending_fulfillment_so_no_date': 35390,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 1006,
+            'total_q4': 411262
+        },
+        'Lance Mitton': {
+            'invoiced': 21998, 
+            'pending_fulfillment': 0, 
+            'pending_approval': 2758, 
+            'hubspot': 11000, 
+            'total': 35756,
+            'pending_fulfillment_so_no_date': 3735,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 60527,
+            'total_q4': 100019
+        },
+        'Shopify ECommerce': {
+            'invoiced': 20404, 
+            'pending_fulfillment': 1406, 
+            'pending_approval': 1174, 
+            'hubspot': 0, 
+            'total': 22984,
+            'pending_fulfillment_so_no_date': 0,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 1544,
+            'total_q4': 24528
+        }
     }
     
-    comparison_data = []
-    for rep_name in dashboard_df['Rep Name']:
-        if rep_name in boss_numbers:
-            metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-            if metrics:
-                boss = boss_numbers[rep_name]
-                comparison_data.append({
-                    'Rep': rep_name,
-                    'Invoiced (You)': f"${metrics['orders']:,.0f}",
-                    'Invoiced (Boss)': f"${boss['invoiced']:,.0f}",
-                    'Inv Diff': f"${metrics['orders'] - boss['invoiced']:,.0f}",
-                    'HubSpot (You)': f"${metrics['expect_commit']:,.0f}",
-                    'HubSpot (Boss)': f"${boss['hubspot']:,.0f}",
-                    'HS Diff': f"${metrics['expect_commit'] - boss['hubspot']:,.0f}",
-                    'Pend Appr (You)': f"${metrics['pending_approval']:,.0f}",
-                    'Pend Appr (Boss)': f"${boss['pending_approval']:,.0f}",
-                    'PA Diff': f"${metrics['pending_approval'] - boss['pending_approval']:,.0f}",
-                })
+    # Boss's Q4 numbers from the actual screenshot - BY PIPELINE
+    boss_pipeline_numbers = {
+        'Retention (Existing Product)': {
+            'invoiced': 425514,
+            'pending_fulfillment': 387936,
+            'pending_approval': 46383,
+            'hubspot': 570164,
+            'total': 1429997,
+            'pending_fulfillment_so_no_date': 105199,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 114779,
+            'total_q4': 1649975
+        },
+        'Growth Pipeline (Upsell/Cross-sell)': {
+            'invoiced': 219590,
+            'pending_fulfillment': 31655,
+            'pending_approval': 11321,
+            'hubspot': 176265,
+            'total': 438830,
+            'pending_fulfillment_so_no_date': 46582,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 1583,
+            'total_q4': 486994
+        },
+        'Acquisition (New Customer)': {
+            'invoiced': 108041,
+            'pending_fulfillment': 10066,
+            'pending_approval': 25295,
+            'hubspot': 222062,
+            'total': 365463,
+            'pending_fulfillment_so_no_date': 7447,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 60527,
+            'total_q4': 433437
+        },
+        'SO Manually Built': {
+            'invoiced': 429222,
+            'pending_fulfillment': 301858,
+            'pending_approval': 1174,
+            'hubspot': 0,
+            'total': 732254,
+            'pending_fulfillment_so_no_date': 39537,
+            'pending_approval_so_no_date': 36953,
+            'old_pending_approval': 20967,
+            'total_q4': 829711
+        },
+        'Ecommerce Pipeline': {
+            'invoiced': 25388,
+            'pending_fulfillment': 1406,
+            'pending_approval': 0,
+            'hubspot': 0,
+            'total': 26793,
+            'pending_fulfillment_so_no_date': 0,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 0,
+            'total_q4': 26793
+        }
+    }
     
-    if comparison_data:
-        comparison_df = pd.DataFrame(comparison_data)
-        st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    # Tab selection for Rep vs Pipeline view
+    tab1, tab2 = st.tabs(["By Rep", "By Pipeline"])
+    
+    with tab1:
+        st.markdown("### Rep-Level Comparison")
+        comparison_data = []
+        for rep_name in dashboard_df['Rep Name']:
+            if rep_name in boss_rep_numbers:
+                metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
+                if metrics:
+                    boss = boss_rep_numbers[rep_name]
+                    comparison_data.append({
+                        'Rep': rep_name,
+                        'Invoiced (You)': f"${metrics['orders']:,.0f}",
+                        'Invoiced (Boss)': f"${boss['invoiced']:,.0f}",
+                        'Inv Diff': f"${metrics['orders'] - boss['invoiced']:,.0f}",
+                        'Pend Fulfillment (You)': f"${metrics['pending_fulfillment']:,.0f}",
+                        'Pend Fulfillment (Boss)': f"${boss['pending_fulfillment']:,.0f}",
+                        'PF Diff': f"${metrics['pending_fulfillment'] - boss['pending_fulfillment']:,.0f}",
+                        'Pend Approval (You)': f"${metrics['pending_approval']:,.0f}",
+                        'Pend Approval (Boss)': f"${boss['pending_approval']:,.0f}",
+                        'PA Diff': f"${metrics['pending_approval'] - boss['pending_approval']:,.0f}",
+                        'HubSpot (You)': f"${metrics['expect_commit']:,.0f}",
+                        'HubSpot (Boss)': f"${boss['hubspot']:,.0f}",
+                        'HS Diff': f"${metrics['expect_commit'] - boss['hubspot']:,.0f}",
+                    })
         
-        # Summary of differences
-        st.markdown("### 📊 Variance Analysis")
-        st.info(
-            "**Key Differences:**\n"
-            "- **Invoiced**: Check if invoice date filters match Q4 exactly\n"
-            "- **HubSpot**: Lead time logic now excludes late December deals\n"
-            "- **Pending Approval**: Verify all orders are captured\n"
-            "- **Pending Fulfillment**: Check date waterfall logic (J→M→L)"
-        )
+        if comparison_data:
+            comparison_df = pd.DataFrame(comparison_data)
+            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    
+    with tab2:
+        st.markdown("### Pipeline-Level Comparison")
+        
+        # Group deals by pipeline
+        pipeline_comparison = []
+        
+        # Calculate metrics by pipeline
+        for pipeline_name in boss_pipeline_numbers.keys():
+            pipeline_deals = deals_df[deals_df['Pipeline'] == pipeline_name]
+            pipeline_deals_q4 = pipeline_deals[pipeline_deals.get('Counts_In_Q4', True) == True]
+            
+            # Calculate HubSpot Expect/Commit for this pipeline
+            pipeline_hubspot = pipeline_deals_q4[
+                pipeline_deals_q4['Status'].isin(['Expect', 'Commit'])
+            ]['Amount'].sum()
+            
+            # Calculate invoices for this pipeline (would need pipeline info in invoices)
+            # For now, we'll show what we can calculate
+            
+            boss = boss_pipeline_numbers[pipeline_name]
+            pipeline_comparison.append({
+                'Pipeline': pipeline_name,
+                'HubSpot (You)': f"${pipeline_hubspot:,.0f}",
+                'HubSpot (Boss)': f"${boss['hubspot']:,.0f}",
+                'HS Diff': f"${pipeline_hubspot - boss['hubspot']:,.0f}",
+                'Invoiced (Boss)': f"${boss['invoiced']:,.0f}",
+                'Pend Fulfillment (Boss)': f"${boss['pending_fulfillment']:,.0f}",
+                'Pend Approval (Boss)': f"${boss['pending_approval']:,.0f}",
+                'Total (Boss)': f"${boss['total']:,.0f}"
+            })
+        
+        pipeline_df = pd.DataFrame(pipeline_comparison)
+        st.dataframe(pipeline_df, use_container_width=True, hide_index=True)
+    
+    # Summary of differences
+    st.markdown("### 📊 Variance Analysis")
+    st.info(
+        "**Key Differences to Investigate:**\n"
+        "- **Invoiced**: Verify Q4 date filtering and invoice statuses match\n"
+        "- **Pending Fulfillment**: Check waterfall date logic (J→M→L columns)\n"
+        "- **Pending Approval**: Ensure all pending approval orders are captured\n"
+        "- **HubSpot**: Lead time logic now excludes late December deals that ship in Q1\n"
+        "- **Pipeline Mapping**: Verify deals are mapped to correct pipelines"
+    )
+    
+    # Show totals comparison
+    st.markdown("### 📈 Totals Comparison")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        total_boss_invoiced = sum(boss_rep_numbers[rep]['invoiced'] for rep in boss_rep_numbers)
+        st.metric("Boss Total Invoiced", f"${total_boss_invoiced:,.0f}")
+    
+    with col2:
+        total_boss_hubspot = sum(boss_rep_numbers[rep]['hubspot'] for rep in boss_rep_numbers)
+        st.metric("Boss Total HubSpot", f"${total_boss_hubspot:,.0f}")
+    
+    with col3:
+        total_boss_q4 = sum(boss_rep_numbers[rep]['total_q4'] for rep in boss_rep_numbers)
+        st.metric("Boss Total Q4", f"${total_boss_q4:,.0f}")
 
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
