@@ -12,6 +12,7 @@ from googleapiclient.discovery import build
 import json
 from datetime import datetime, timedelta
 import time
+import base64
 
 # Page configuration
 st.set_page_config(
@@ -40,6 +41,39 @@ st.markdown("""
         border-radius: 8px;
         box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
     }
+    .progress-breakdown {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 25px;
+        border-radius: 15px;
+        color: white;
+        margin: 20px 0;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+    }
+    .progress-breakdown h3 {
+        color: white;
+        margin-bottom: 15px;
+        font-size: 24px;
+    }
+    .progress-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.2);
+    }
+    .progress-item:last-child {
+        border-bottom: none;
+        font-weight: bold;
+        font-size: 18px;
+        padding-top: 15px;
+        border-top: 2px solid rgba(255,255,255,0.4);
+    }
+    .progress-label {
+        font-size: 16px;
+    }
+    .progress-value {
+        font-size: 16px;
+        font-weight: 600;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -51,7 +85,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v11"
+CACHE_VERSION = "v12"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -79,11 +113,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
             st.warning(f"No data found in {sheet_name}!{range_name}")
             return pd.DataFrame()
         
-        # Debug output
-        st.sidebar.write(f"**DEBUG - {sheet_name}:**")
-        st.sidebar.write(f"Total rows loaded: {len(values)}")
-        st.sidebar.write(f"First 3 rows: {values[:3]}")
-        
         # Handle mismatched column counts - pad shorter rows with empty strings
         if len(values) > 1:
             max_cols = max(len(row) for row in values)
@@ -97,7 +126,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
     except Exception as e:
         st.error(f"Error loading data from {sheet_name}: {str(e)}")
-        st.sidebar.write(f"**ERROR in {sheet_name}:** {str(e)}")
         return pd.DataFrame()
 
 def load_all_data():
@@ -149,13 +177,6 @@ def load_all_data():
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
     
     if not dashboard_df.empty:
-        # Debug: Show raw data
-        st.sidebar.write("**DEBUG - Dashboard Info Raw:**")
-        st.sidebar.dataframe(dashboard_df.head())
-        
-        # The first row should be headers, data starts from row 2
-        # Columns should be: Rep Name, Quota, Orders
-        
         # Ensure we have the right column names
         if len(dashboard_df.columns) >= 3:
             dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
@@ -176,17 +197,11 @@ def load_all_data():
             
             dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
             dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
-            
-            # Debug: Show after conversion
-            st.sidebar.write("**DEBUG - After Conversion:**")
-            st.sidebar.dataframe(dashboard_df)
         else:
             st.error(f"Dashboard Info sheet has wrong number of columns: {len(dashboard_df.columns)}")
     
     # Process invoice data
     if not invoices_df.empty:
-        st.sidebar.write("**DEBUG - NS Invoices loaded:**", len(invoices_df), "rows")
-        
         # Clean invoice data
         if len(invoices_df.columns) >= 15:
             # Map important columns by position (0-indexed)
@@ -224,8 +239,6 @@ def load_all_data():
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            st.sidebar.write(f"**DEBUG - After Q4 2025 filter:** {len(invoices_df)} rows")
-            
             # Normalize rep names (trim spaces, consistent capitalization)
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].str.strip()
             
@@ -236,20 +249,12 @@ def load_all_data():
                 (invoices_df['Sales Rep'] != '')
             ]
             
-            st.sidebar.write(f"**DEBUG - After cleaning:** {len(invoices_df)} rows")
-            st.sidebar.write("**DEBUG - Unique sales reps in invoices:**", invoices_df['Sales Rep'].unique().tolist())
-            
             # Calculate total invoices by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
             
-            st.sidebar.write("**DEBUG - Invoice totals by rep:**")
-            st.sidebar.dataframe(invoice_totals)
-            
             # Normalize dashboard rep names too
             dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
-            
-            st.sidebar.write("**DEBUG - Rep names in Dashboard Info:**", dashboard_df['Rep Name'].tolist())
             
             # Merge with dashboard_df to update NetSuite Orders
             dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
@@ -258,21 +263,17 @@ def load_all_data():
             # Override NetSuite Orders with calculated invoice totals
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
-            
-            st.sidebar.write("**DEBUG - Final dashboard_df with invoice totals:**")
-            st.sidebar.dataframe(dashboard_df)
         else:
             st.warning(f"NS Invoices sheet doesn't have enough columns (has {len(invoices_df.columns)})")
             invoices_df = pd.DataFrame()
     
     # Process sales orders data
     if not sales_orders_df.empty:
-        st.sidebar.write("**DEBUG - NS Sales Orders loaded:**", len(sales_orders_df), "rows")
-        
         # Find required columns
         status_col = None
         amount_col = None
         sales_rep_col = None
+        date_col = None  # Column B (Date)
         pending_fulfillment_date_col = None  # Column J
         projected_date_col = None  # Column M
         customer_promise_col = None  # Column L
@@ -285,16 +286,14 @@ def load_all_data():
                 amount_col = col
             if ('sales rep' in col_lower or 'salesrep' in col_lower) and not sales_rep_col:
                 sales_rep_col = col
+            if col_lower == 'date' and not date_col:
+                date_col = col
             if 'pending fulfillment date' in col_lower:
                 pending_fulfillment_date_col = col
             if 'projected date' in col_lower:
                 projected_date_col = col
             if 'customer promise last date to ship' in col_lower:
                 customer_promise_col = col
-        
-        st.sidebar.write(f"**DEBUG - Found columns:**")
-        st.sidebar.write(f"Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
-        st.sidebar.write(f"Dates: J={pending_fulfillment_date_col}, M={projected_date_col}, L={customer_promise_col}")
         
         if status_col and amount_col and sales_rep_col:
             # Standardize column names
@@ -304,6 +303,8 @@ def load_all_data():
                 sales_rep_col: 'Sales Rep'
             }
             
+            if date_col:
+                rename_dict[date_col] = 'Date'
             if pending_fulfillment_date_col:
                 rename_dict[pending_fulfillment_date_col] = 'Pending Fulfillment Date'
             if projected_date_col:
@@ -329,12 +330,14 @@ def load_all_data():
             sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
             sales_orders_df['Status'] = sales_orders_df['Status'].str.strip()
             
+            # Convert Date column (Column B) to datetime
+            if 'Date' in sales_orders_df.columns:
+                sales_orders_df['Date'] = pd.to_datetime(sales_orders_df['Date'], errors='coerce')
+            
             # Filter to ONLY Pending Approval and Pending Fulfillment
             sales_orders_df = sales_orders_df[
                 sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment'])
             ]
-            
-            st.sidebar.write(f"**DEBUG - After status filter:** {len(sales_orders_df)} rows")
             
             # For Pending Fulfillment orders, determine the date using waterfall logic
             if 'Pending Fulfillment Date' in sales_orders_df.columns:
@@ -380,11 +383,13 @@ def load_all_data():
                 
                 # Combine back
                 sales_orders_df = pd.concat([pending_approval, pending_fulfillment_q4, pending_fulfillment_no_date])
-                
-                st.sidebar.write(f"**DEBUG - After Q4 filter:**")
-                st.sidebar.write(f"Pending Approval: {len(pending_approval)} rows")
-                st.sidebar.write(f"Pending Fulfillment Q4: {len(pending_fulfillment_q4)} rows")
-                st.sidebar.write(f"Pending Fulfillment No Date: {len(pending_fulfillment_no_date)} rows")
+            
+            # Calculate age of Pending Approval orders (using Date column B)
+            if 'Date' in sales_orders_df.columns:
+                today = pd.Timestamp.now()
+                sales_orders_df['Age_Days'] = (today - sales_orders_df['Date']).dt.days
+            else:
+                sales_orders_df['Age_Days'] = 0
             
             # Remove rows without amount or sales rep
             sales_orders_df = sales_orders_df[
@@ -392,8 +397,6 @@ def load_all_data():
                 (sales_orders_df['Sales Rep'].notna()) & 
                 (sales_orders_df['Sales Rep'] != '')
             ]
-            
-            st.sidebar.write(f"**DEBUG - Final count:** {len(sales_orders_df)} rows")
         else:
             st.warning("Could not find required columns in NS Sales Orders")
             sales_orders_df = pd.DataFrame()
@@ -456,6 +459,8 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     
     # Calculate sales order metrics
     pending_approval = 0
+    pending_approval_no_date = 0
+    pending_approval_old = 0
     pending_fulfillment = 0
     pending_fulfillment_no_date = 0
     
@@ -463,9 +468,20 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name]
         
         # Pending Approval (all amounts, no date filter)
-        pending_approval = rep_orders[
-            rep_orders['Status'] == 'Pending Approval'
-        ]['Amount'].sum()
+        pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval']
+        pending_approval = pending_approval_orders['Amount'].sum()
+        
+        # Pending Approval - No Date (orders without Date in column B)
+        if 'Date' in pending_approval_orders.columns:
+            pending_approval_no_date = pending_approval_orders[
+                pending_approval_orders['Date'].isna()
+            ]['Amount'].sum()
+        
+        # Old Pending Approval (over 2 weeks / 14 days)
+        if 'Age_Days' in pending_approval_orders.columns:
+            pending_approval_old = pending_approval_orders[
+                pending_approval_orders['Age_Days'] > 14
+            ]['Amount'].sum()
         
         # Pending Fulfillment with Q4 dates
         if 'Effective Date' in rep_orders.columns:
@@ -485,7 +501,10 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                 rep_orders['Status'] == 'Pending Fulfillment'
             ]['Amount'].sum()
     
-    # NEW CALCULATION: Total Progress includes Orders + Expect/Commit + Pending Approval + Pending Fulfillment
+    # Total Pending Fulfillment (includes both with and without dates)
+    total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
+    
+    # NEW CALCULATION: Total Progress includes Orders + Expect/Commit + Pending Approval + Pending Fulfillment (with dates only)
     total_progress = orders + expect_commit + pending_approval + pending_fulfillment
     
     # Calculate gap based on new formula
@@ -507,8 +526,11 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'potential_attainment': potential_attainment,
         'total_progress': total_progress,
         'pending_approval': pending_approval,
+        'pending_approval_no_date': pending_approval_no_date,
+        'pending_approval_old': pending_approval_old,
         'pending_fulfillment': pending_fulfillment,
         'pending_fulfillment_no_date': pending_fulfillment_no_date,
+        'total_pending_fulfillment': total_pending_fulfillment,
         'deals': rep_deals
     }
 
@@ -737,6 +759,44 @@ def create_customer_invoice_table(invoices_df, rep_name):
     
     return pivot_table
 
+def display_progress_breakdown(metrics):
+    """Display a beautiful progress breakdown card"""
+    
+    st.markdown(f"""
+    <div class="progress-breakdown">
+        <h3>💰 Total Progress Breakdown</h3>
+        <div class="progress-item">
+            <span class="progress-label">📦 Orders Shipped</span>
+            <span class="progress-value">${metrics['orders']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">✅ Expect/Commit</span>
+            <span class="progress-value">${metrics['expect_commit']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval</span>
+            <span class="progress-value">${metrics['pending_approval']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📤 Pending Fulfillment (Q4)</span>
+            <span class="progress-value">${metrics['pending_fulfillment']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">🎯 TOTAL PROGRESS</span>
+            <span class="progress-value">${metrics['total_progress']:,.0f}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Add attainment info below
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Current Attainment", f"{metrics['attainment_pct']:.1f}%", 
+                 delta=f"${metrics['total_progress']:,.0f} of ${metrics['quota']:,.0f}")
+    with col2:
+        st.metric("Potential with Upside", f"{metrics['potential_attainment']:.1f}%",
+                 delta=f"+${metrics['best_opp']:,.0f} Best Case/Opp")
+
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
     
@@ -757,7 +817,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     
     with col2:
         st.metric(
-            label="Orders Shipped NetSuite",
+            label="Orders Shipped",
             value=f"${metrics['current_forecast']:,.0f}",
             delta=f"{metrics['attainment_pct']:.1f}% of quota"
         )
@@ -822,9 +882,11 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             rep_summary.append({
                 'Rep': rep_name,
                 'Quota': f"${rep_metrics['quota']:,.0f}",
-                'Orders Shipped': f"${rep_metrics['current_forecast']:,.0f}",
+                'Orders': f"${rep_metrics['orders']:,.0f}",
+                'Expect/Commit': f"${rep_metrics['expect_commit']:,.0f}",
                 'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
                 'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
+                'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
                 'Gap': f"${rep_metrics['gap']:,.0f}",
                 'Attainment': f"{rep_metrics['attainment_pct']:.1f}%"
             })
@@ -844,8 +906,8 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.error(f"No data found for {rep_name}")
         return
     
-    # Display key metrics - NEW STRUCTURE
-    st.markdown("### 💰 Revenue Progress")
+    # Display key metrics
+    st.markdown("### 💰 Revenue Components")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
@@ -879,7 +941,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.metric(
             label="Pending Fulfillment",
             value=f"${metrics['pending_fulfillment']/1000:.0f}K" if metrics['pending_fulfillment'] < 1000000 else f"${metrics['pending_fulfillment']/1000000:.1f}M",
-            help="Sales orders awaiting shipment (Q4 only)"
+            help="Sales orders awaiting shipment (Q4 dates only)"
         )
     
     with col6:
@@ -890,45 +952,63 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             delta_color="inverse"
         )
     
-    # Progress bar with exact amounts in caption
-    st.markdown("### 📈 Progress to Quota")
-    progress = min(metrics['attainment_pct'] / 100, 1.0)
-    st.progress(progress)
-    st.caption(
-        f"**Total Progress: ${metrics['total_progress']:,.0f}** = "
-        f"Orders (${metrics['orders']:,.0f}) + "
-        f"Expect/Commit (${metrics['expect_commit']:,.0f}) + "
-        f"Pending Approval (${metrics['pending_approval']:,.0f}) + "
-        f"Pending Fulfillment (${metrics['pending_fulfillment']:,.0f})"
-    )
-    st.caption(f"**Attainment:** {metrics['attainment_pct']:.1f}% | **Potential with Best Case/Opp:** {metrics['potential_attainment']:.1f}%")
+    # Beautiful progress breakdown
+    display_progress_breakdown(metrics)
     
-    # Pending Fulfillment No Date warning
-    if metrics['pending_fulfillment_no_date'] > 0:
-        st.warning(
-            f"⚠️ **Pending Fulfillment - No Ship Date:** ${metrics['pending_fulfillment_no_date']:,.0f} "
-            f"(Not included in totals - needs ship date to count toward Q4)"
-        )
+    # Warnings for items not included in totals
+    warning_col1, warning_col2, warning_col3 = st.columns(3)
     
+    with warning_col1:
+        if metrics['pending_fulfillment_no_date'] > 0:
+            st.warning(
+                f"⚠️ **Pending Fulfillment - No Ship Date**\n\n"
+                f"${metrics['pending_fulfillment_no_date']:,.0f}\n\n"
+                f"*(Not counted - needs Q4 ship date)*"
+            )
     
-    # Sales Order Pipeline Metrics
-    if metrics['pending_approval'] > 0 or metrics['pending_fulfillment'] > 0:
-        st.markdown("### 📦 Sales Order Pipeline")
-        so_col1, so_col2 = st.columns(2)
+    with warning_col2:
+        if metrics['pending_approval_no_date'] > 0:
+            st.warning(
+                f"⚠️ **Pending Approval - No Date**\n\n"
+                f"${metrics['pending_approval_no_date']:,.0f}\n\n"
+                f"*(Missing order date)*"
+            )
+    
+    with warning_col3:
+        if metrics['pending_approval_old'] > 0:
+            st.error(
+                f"🚨 **Old Pending Approval (>2 weeks)**\n\n"
+                f"${metrics['pending_approval_old']:,.0f}\n\n"
+                f"*(Needs attention)*"
+            )
+    
+    # Additional SO metrics
+    if metrics['pending_approval'] > 0 or metrics['total_pending_fulfillment'] > 0:
+        st.markdown("### 📦 Sales Order Pipeline Details")
+        so_col1, so_col2, so_col3 = st.columns(3)
         
         with so_col1:
             st.metric(
-                label="⏳ Pending Approval",
-                value=f"${metrics['pending_approval']:,.0f}",
-                help="Sales orders awaiting approval"
+                label="Total Pending Fulfillment",
+                value=f"${metrics['total_pending_fulfillment']:,.0f}",
+                help="Includes all pending fulfillment orders (with and without dates)"
             )
+            st.caption(f"Q4 Dates: ${metrics['pending_fulfillment']:,.0f} | No Date: ${metrics['pending_fulfillment_no_date']:,.0f}")
         
         with so_col2:
             st.metric(
-                label="📤 Pending Fulfillment",
-                value=f"${metrics['pending_fulfillment']:,.0f}",
-                help="Sales orders pending fulfillment or billing"
+                label="Pending Approval - No Date",
+                value=f"${metrics['pending_approval_no_date']:,.0f}",
+                help="Pending approval orders without a date in column B"
             )
+        
+        with so_col3:
+            st.metric(
+                label="Old Pending Approval (>2 weeks)",
+                value=f"${metrics['pending_approval_old']:,.0f}",
+                help="Pending approval orders older than 14 days"
+            )
+    
     # Charts
     col1, col2 = st.columns(2)
     
@@ -1018,7 +1098,8 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        st.image("https://via.placeholder.com/200x80/1E88E5/FFFFFF?text=Your+Logo", use_container_width=True)
+        # Display Calyx logo
+        st.image("/mnt/user-data/uploads/1762285123898_image.png", use_container_width=True)
         st.markdown("---")
         
         st.markdown("### 🎯 Dashboard Navigation")
