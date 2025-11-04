@@ -1098,8 +1098,13 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        # Display Calyx logo
-        st.image("/mnt/user-data/uploads/1762285123898_image.png", use_container_width=True)
+        # Display company name
+        st.markdown("""
+        <div style="text-align: center; padding: 20px;">
+            <h2>CALYX</h2>
+            <p style="font-size: 12px; letter-spacing: 3px;">CONTAINERS</p>
+        </div>
+        """, unsafe_allow_html=True)
         st.markdown("---")
         
         st.markdown("### 🎯 Dashboard Navigation")
