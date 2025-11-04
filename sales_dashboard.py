@@ -931,24 +931,24 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     
     st.title("🔍 Forecast Reconciliation with Boss's Numbers")
     
-    # Boss's Q4 numbers from the actual screenshot - CORRECTED
+    # Boss's Q4 numbers from the UPDATED screenshot
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 518981,  # CORRECTED
-            'pending_fulfillment': 291888, 
-            'pending_approval': 42002, 
-            'hubspot': 350386, 
-            'total': 1203256,  # Section 1 total
+            'invoiced': 518981,
+            'pending_fulfillment': 291888,
+            'pending_approval': 42002,
+            'hubspot': 350386,
+            'total': 1203256,
             'pending_fulfillment_so_no_date': 108306,
             'pending_approval_so_no_date': 2107,
             'old_pending_approval': 33741,
-            'total_q4': 1347410  # Final total
+            'total_q4': 1347410
         },
         'Dave Borkowski': {
-            'invoiced': 223593, 
-            'pending_fulfillment': 146068, 
-            'pending_approval': 15702, 
-            'hubspot': 396043, 
+            'invoiced': 223593,
+            'pending_fulfillment': 146068,
+            'pending_approval': 15702,
+            'hubspot': 396043,
             'total': 781406,
             'pending_fulfillment_so_no_date': 48150,
             'pending_approval_so_no_date': 0,
@@ -956,10 +956,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'total_q4': 911294
         },
         'Alex Gonzalez': {
-            'invoiced': 311101, 
-            'pending_fulfillment': 190589, 
-            'pending_approval': 0, 
-            'hubspot': 0, 
+            'invoiced': 311101,
+            'pending_fulfillment': 190589,
+            'pending_approval': 0,
+            'hubspot': 0,
             'total': 501691,
             'pending_fulfillment_so_no_date': 3183,
             'pending_approval_so_no_date': 34846,
@@ -967,10 +967,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'total_q4': 559019
         },
         'Brad Sherman': {
-            'invoiced': 107166, 
-            'pending_fulfillment': 39759, 
-            'pending_approval': 16878, 
-            'hubspot': 211062, 
+            'invoiced': 107166,
+            'pending_fulfillment': 39759,
+            'pending_approval': 16878,
+            'hubspot': 211062,
             'total': 374865,
             'pending_fulfillment_so_no_date': 35390,
             'pending_approval_so_no_date': 0,
@@ -978,10 +978,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'total_q4': 411262
         },
         'Lance Mitton': {
-            'invoiced': 21998, 
-            'pending_fulfillment': 0, 
-            'pending_approval': 2758, 
-            'hubspot': 11000, 
+            'invoiced': 21998,
+            'pending_fulfillment': 0,
+            'pending_approval': 2758,
+            'hubspot': 11000,
             'total': 35756,
             'pending_fulfillment_so_no_date': 3735,
             'pending_approval_so_no_date': 0,
@@ -1000,10 +1000,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'total_q4': 0
         },
         'Shopify ECommerce': {
-            'invoiced': 20404, 
-            'pending_fulfillment': 1406, 
-            'pending_approval': 1174, 
-            'hubspot': 0, 
+            'invoiced': 20404,
+            'pending_fulfillment': 1406,
+            'pending_approval': 1174,
+            'hubspot': 0,
             'total': 22984,
             'pending_fulfillment_so_no_date': 0,
             'pending_approval_so_no_date': 0,
@@ -1012,7 +1012,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
         }
     }
     
-    # Boss's pipeline numbers
+    # Boss's pipeline numbers - UPDATED
     boss_pipeline_numbers = {
         'Retention (Existing Product)': {
             'invoiced': 425514,
