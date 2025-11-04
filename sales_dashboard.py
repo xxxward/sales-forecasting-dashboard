@@ -12,185 +12,177 @@ from googleapiclient.discovery import build
 import json
 from datetime import datetime, timedelta
 import time
+from io import BytesIO
+from PIL import Image
 
-# Page configuration
+# =========================
+# Page / Branding Settings
+# =========================
+
+# Put your logo file path here (local in the app repo or mounted path)
+LOGO_PATH = "/mnt/data/25a8bd3a-7e41-4692-b9d0-c06e29aa57f7.png"  # change if you store it elsewhere
+
+def _load_logo(path_or_fallback="📊"):
+    try:
+        return Image.open(path_or_fallback)
+    except Exception:
+        return "📊"
+
+PAGE_ICON = _load_logo(LOGO_PATH)
+
 st.set_page_config(
     page_title="Sales Forecasting Dashboard",
-    page_icon="📊",
+    page_icon=PAGE_ICON,  # real image => shows as favicon/tab icon
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for styling
+# =============
+# Custom Styles
+# =============
 st.markdown("""
-    <style>
-    .big-font {
-        font-size: 28px !important;
-        font-weight: bold;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-    }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
-    }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+.big-font { font-size: 28px !important; font-weight: bold; }
+.metric-card { background-color: #f0f2f6; padding: 20px; border-radius: 10px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }
+.stMetric { background-color: #ffffff; padding: 15px; border-radius: 8px; box-shadow: 1px 1px 3px rgba(0,0,0,0.1); }
+</style>
+""", unsafe_allow_html=True)
 
-# Google Sheets Configuration
+# =================
+# Google Sheets IO
+# =================
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
 # Cache duration - 1 hour
 CACHE_TTL = 3600
+# Version number to force cache refresh when code changes
+CACHE_VERSION = "v12"
 
-# Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v11"
+# Global Q4 window reused across functions
+Q4_START = pd.Timestamp('2025-10-01')
+Q4_END   = pd.Timestamp('2025-12-31')
 
+# ========
+# Debugging
+# ========
+# Toggle in sidebar (dev only). Default False in prod.
+with st.sidebar:
+    st.image(LOGO_PATH, use_container_width=True)
+    st.markdown("---")
+    st.markdown("### 🎯 Dashboard Navigation (use main area)")
+    st.markdown("---")
+    DEBUG = st.checkbox("Show debug logs", value=False)
+
+def dbg(*args, **kwargs):
+    if DEBUG:
+        st.sidebar.write(*args, **kwargs)
+
+def dbg_df(df, **kwargs):
+    if DEBUG:
+        st.sidebar.dataframe(df, **kwargs)
+
+# ============
+# Data Loading
+# ============
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
-    """
-    Load data from Google Sheets with caching
-    """
+    """Load data from Google Sheets with caching"""
     try:
         # Load credentials from Streamlit secrets
         creds_dict = st.secrets["gcp_service_account"]
         creds = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=SCOPES
         )
-        
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
-        
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{sheet_name}!{range_name}"
         ).execute()
-        
         values = result.get('values', [])
-        
+
         if not values:
             st.warning(f"No data found in {sheet_name}!{range_name}")
             return pd.DataFrame()
-        
-        # Debug output
-        st.sidebar.write(f"**DEBUG - {sheet_name}:**")
-        st.sidebar.write(f"Total rows loaded: {len(values)}")
-        st.sidebar.write(f"First 3 rows: {values[:3]}")
-        
+
+        dbg(f"**DEBUG - {sheet_name}:**")
+        dbg(f"Total rows loaded: {len(values)}")
+        dbg(f"First 3 rows: {values[:3]}")
+
         # Handle mismatched column counts - pad shorter rows with empty strings
         if len(values) > 1:
             max_cols = max(len(row) for row in values)
             for row in values:
                 while len(row) < max_cols:
                     row.append('')
-        
+
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
         return df
-        
+
     except Exception as e:
         st.error(f"Error loading data from {sheet_name}: {str(e)}")
-        st.sidebar.write(f"**ERROR in {sheet_name}:** {str(e)}")
+        dbg(f"**ERROR in {sheet_name}:** {str(e)}")
         return pd.DataFrame()
 
+def _clean_numeric(value):
+    if pd.isna(value) or value == '':
+        return 0
+    cleaned = (str(value)
+               .replace(',', '')
+               .replace('$', '')
+               .replace('′', '')
+               .replace('’', '')
+               .replace(' ', '')
+               .strip())
+    try:
+        return float(cleaned)
+    except:
+        return 0
+
 def load_all_data():
-    """Load all necessary data from Google Sheets"""
-    
-    # Load deals data
+    """Load and clean all necessary data from Google Sheets"""
+    # Load sheets
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:H", version=CACHE_VERSION)
-    
-    # Load dashboard info (rep quotas and orders)
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
-    
-    # Load invoice data from NetSuite
     invoices_df = load_google_sheets_data("NS Invoices", "A:Z", version=CACHE_VERSION)
-    
-    # Load sales orders data from NetSuite
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:Z", version=CACHE_VERSION)
-    
-    # Clean and process data
+
+    # Deals cleanup
     if not deals_df.empty and len(deals_df.columns) >= 8:
-        # Get column names from first row
-        if len(deals_df) > 0:
-            # Standardize column names based on position
-            # Columns: 0=Record ID, 1=Deal Name, 2=Deal Stage, 3=Close Date, 4=Deal Owner, 5=Amount, 6=Status, 7=Pipeline
-            col_names = deals_df.columns.tolist()
-            
-            # Map columns by position
-            deals_df = deals_df.rename(columns={
-                col_names[1]: 'Deal Name',
-                col_names[3]: 'Close Date',
-                col_names[4]: 'Deal Owner',
-                col_names[5]: 'Amount',
-                col_names[6]: 'Status',
-                col_names[7]: 'Pipeline'
-            })
-            
-            # Clean and convert amount to numeric (remove commas, dollar signs)
-            def clean_numeric(value):
-                if pd.isna(value) or value == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
-            
-            # Convert close date to datetime
-            deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
-    
+        col_names = deals_df.columns.tolist()
+        deals_df = deals_df.rename(columns={
+            col_names[1]: 'Deal Name',
+            col_names[3]: 'Close Date',
+            col_names[4]: 'Deal Owner',
+            col_names[5]: 'Amount',
+            col_names[6]: 'Status',
+            col_names[7]: 'Pipeline'
+        })
+        deals_df['Amount'] = deals_df['Amount'].apply(_clean_numeric)
+        deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+
+    # Dashboard Info cleanup
     if not dashboard_df.empty:
-        # Debug: Show raw data
-        st.sidebar.write("**DEBUG - Dashboard Info Raw:**")
-        st.sidebar.dataframe(dashboard_df.head())
-        
-        # The first row should be headers, data starts from row 2
-        # Columns should be: Rep Name, Quota, Orders
-        
-        # Ensure we have the right column names
+        dbg("**DEBUG - Dashboard Info Raw:**")
+        dbg_df(dashboard_df.head())
         if len(dashboard_df.columns) >= 3:
             dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
-            
-            # Remove any empty rows
-            dashboard_df = dashboard_df[dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')]
-            
-            # Clean and convert numeric columns (remove commas, dollar signs, etc.)
-            def clean_numeric(value):
-                if pd.isna(value) or value == '':
-                    return 0
-                # Remove commas, dollar signs, and spaces
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
-            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
-            
-            # Debug: Show after conversion
-            st.sidebar.write("**DEBUG - After Conversion:**")
-            st.sidebar.dataframe(dashboard_df)
+            dashboard_df = dashboard_df[
+                dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')
+            ]
+            dashboard_df['Quota'] = dashboard_df['Quota'].apply(_clean_numeric)
+            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(_clean_numeric)
+            dbg("**DEBUG - After Conversion:**")
+            dbg_df(dashboard_df)
         else:
             st.error(f"Dashboard Info sheet has wrong number of columns: {len(dashboard_df.columns)}")
-    
-    # Process invoice data
+
+    # Invoices cleanup (Q4 only)
     if not invoices_df.empty:
-        st.sidebar.write("**DEBUG - NS Invoices loaded:**", len(invoices_df), "rows")
-        
-        # Clean invoice data
+        dbg("**DEBUG - NS Invoices loaded:**", len(invoices_df), "rows")
         if len(invoices_df.columns) >= 15:
-            # Map important columns by position (0-indexed)
-            # Columns: 0=Doc#, 1=Status, 2=Date, 6=Customer, 10=Amount, 14=Sales Rep
             invoices_df = invoices_df.rename(columns={
                 invoices_df.columns[0]: 'Invoice Number',
                 invoices_df.columns[1]: 'Status',
@@ -199,84 +191,47 @@ def load_all_data():
                 invoices_df.columns[10]: 'Amount',
                 invoices_df.columns[14]: 'Sales Rep'
             })
-            
-            # Clean numeric amount
-            def clean_numeric(value):
-                if pd.isna(value) or value == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
-            
-            # Convert Date column to datetime
+            invoices_df['Amount'] = invoices_df['Amount'].apply(_clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
-            
-            # Filter to Q4 2025 only (October 1 - December 31, 2025)
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
+
             invoices_df = invoices_df[
-                (invoices_df['Date'] >= q4_start) & 
-                (invoices_df['Date'] <= q4_end)
+                (invoices_df['Date'] >= Q4_START) & (invoices_df['Date'] <= Q4_END)
             ]
-            
-            st.sidebar.write(f"**DEBUG - After Q4 2025 filter:** {len(invoices_df)} rows")
-            
-            # Normalize rep names (trim spaces, consistent capitalization)
-            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].str.strip()
-            
-            # Remove rows without amount or sales rep
+            dbg(f"**DEBUG - After Q4 2025 filter:** {len(invoices_df)} rows")
+
+            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             invoices_df = invoices_df[
-                (invoices_df['Amount'] > 0) & 
-                (invoices_df['Sales Rep'].notna()) & 
-                (invoices_df['Sales Rep'] != '')
+                (invoices_df['Amount'] > 0) & (invoices_df['Sales Rep'].notna()) & (invoices_df['Sales Rep'] != '')
             ]
-            
-            st.sidebar.write(f"**DEBUG - After cleaning:** {len(invoices_df)} rows")
-            st.sidebar.write("**DEBUG - Unique sales reps in invoices:**", invoices_df['Sales Rep'].unique().tolist())
-            
-            # Calculate total invoices by rep
+            dbg(f"**DEBUG - After cleaning:** {len(invoices_df)} rows")
+            dbg("**DEBUG - Unique sales reps in invoices:**", invoices_df['Sales Rep'].unique().tolist())
+
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
-            
-            st.sidebar.write("**DEBUG - Invoice totals by rep:**")
-            st.sidebar.dataframe(invoice_totals)
-            
-            # Normalize dashboard rep names too
-            dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
-            
-            st.sidebar.write("**DEBUG - Rep names in Dashboard Info:**", dashboard_df['Rep Name'].tolist())
-            
-            # Merge with dashboard_df to update NetSuite Orders
-            dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
-            dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
-            
-            # Override NetSuite Orders with calculated invoice totals
-            dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
-            dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
-            
-            st.sidebar.write("**DEBUG - Final dashboard_df with invoice totals:**")
-            st.sidebar.dataframe(dashboard_df)
+            dbg("**DEBUG - Invoice totals by rep:**")
+            dbg_df(invoice_totals)
+
+            if not dashboard_df.empty:
+                dashboard_df['Rep Name'] = dashboard_df['Rep Name'].astype(str).str.strip()
+                dbg("**DEBUG - Rep names in Dashboard Info:**", dashboard_df['Rep Name'].tolist())
+                dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
+                dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
+                dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
+                dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
+                dbg("**DEBUG - Final dashboard_df with invoice totals:**")
+                dbg_df(dashboard_df)
         else:
             st.warning(f"NS Invoices sheet doesn't have enough columns (has {len(invoices_df.columns)})")
             invoices_df = pd.DataFrame()
-    
-    # Process sales orders data
+
+    # Sales Orders cleanup
     if not sales_orders_df.empty:
-        st.sidebar.write("**DEBUG - NS Sales Orders loaded:**", len(sales_orders_df), "rows")
-        
-        # Find required columns
-        status_col = None
-        amount_col = None
-        sales_rep_col = None
-        pending_fulfillment_date_col = None  # Column J
-        projected_date_col = None  # Column M
-        customer_promise_col = None  # Column L
-        
+        dbg("**DEBUG - NS Sales Orders loaded:**", len(sales_orders_df), "rows")
+        status_col = amount_col = sales_rep_col = None
+        pending_fulfillment_date_col = None
+        projected_date_col = None
+        customer_promise_col = None
+
         for col in sales_orders_df.columns:
             col_lower = str(col).lower()
             if 'status' in col_lower and not status_col:
@@ -289,139 +244,87 @@ def load_all_data():
                 pending_fulfillment_date_col = col
             if 'projected date' in col_lower:
                 projected_date_col = col
-            if 'customer promise last date to ship' in col_lower:
+            if 'customer promise last date to ship' in col_lower or 'customer promise date' in col_lower:
                 customer_promise_col = col
-        
-        st.sidebar.write(f"**DEBUG - Found columns:**")
-        st.sidebar.write(f"Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
-        st.sidebar.write(f"Dates: J={pending_fulfillment_date_col}, M={projected_date_col}, L={customer_promise_col}")
-        
+
+        dbg("**DEBUG - Found columns:**")
+        dbg(f"Status={status_col}, Amount={amount_col}, Rep={sales_rep_col}")
+        dbg(f"Dates: J={pending_fulfillment_date_col}, M={projected_date_col}, L={customer_promise_col}")
+
         if status_col and amount_col and sales_rep_col:
-            # Standardize column names
-            rename_dict = {
-                status_col: 'Status',
-                amount_col: 'Amount',
-                sales_rep_col: 'Sales Rep'
-            }
-            
-            if pending_fulfillment_date_col:
-                rename_dict[pending_fulfillment_date_col] = 'Pending Fulfillment Date'
-            if projected_date_col:
-                rename_dict[projected_date_col] = 'Projected Date'
-            if customer_promise_col:
-                rename_dict[customer_promise_col] = 'Customer Promise Date'
-            
+            rename_dict = {status_col: 'Status', amount_col: 'Amount', sales_rep_col: 'Sales Rep'}
+            if pending_fulfillment_date_col: rename_dict[pending_fulfillment_date_col] = 'Pending Fulfillment Date'
+            if projected_date_col: rename_dict[projected_date_col] = 'Projected Date'
+            if customer_promise_col: rename_dict[customer_promise_col] = 'Customer Promise Date'
             sales_orders_df = sales_orders_df.rename(columns=rename_dict)
-            
-            # Clean numeric amount
-            def clean_numeric_so(value):
-                if pd.isna(value) or value == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
-            
-            # Normalize rep names and status
-            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
-            sales_orders_df['Status'] = sales_orders_df['Status'].str.strip()
-            
-            # Filter to ONLY Pending Approval and Pending Fulfillment
+
+            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(_clean_numeric)
+            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].astype(str).str.strip()
+            sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
+
             sales_orders_df = sales_orders_df[
                 sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment'])
             ]
-            
-            st.sidebar.write(f"**DEBUG - After status filter:** {len(sales_orders_df)} rows")
-            
-            # For Pending Fulfillment orders, determine the date using waterfall logic
+            dbg(f"**DEBUG - After status filter:** {len(sales_orders_df)} rows")
+
             if 'Pending Fulfillment Date' in sales_orders_df.columns:
-                # Create a unified date column using waterfall logic
                 def get_fulfillment_date(row):
                     if row['Status'] == 'Pending Approval':
-                        return None  # No date for Pending Approval
-                    
-                    # Waterfall: J → M → L → None
-                    date_val = None
-                    
-                    if 'Pending Fulfillment Date' in row and pd.notna(row['Pending Fulfillment Date']) and row['Pending Fulfillment Date'] != '':
-                        date_val = row['Pending Fulfillment Date']
-                    elif 'Projected Date' in row and pd.notna(row['Projected Date']) and row['Projected Date'] != '':
-                        date_val = row['Projected Date']
-                    elif 'Customer Promise Date' in row and pd.notna(row['Customer Promise Date']) and row['Customer Promise Date'] != '':
-                        date_val = row['Customer Promise Date']
-                    
-                    return date_val
-                
+                        return None
+                    if pd.notna(row.get('Pending Fulfillment Date')) and row.get('Pending Fulfillment Date') != '':
+                        return row.get('Pending Fulfillment Date')
+                    if pd.notna(row.get('Projected Date')) and row.get('Projected Date') != '':
+                        return row.get('Projected Date')
+                    if pd.notna(row.get('Customer Promise Date')) and row.get('Customer Promise Date') != '':
+                        return row.get('Customer Promise Date')
+                    return None
+
                 sales_orders_df['Effective Date'] = sales_orders_df.apply(get_fulfillment_date, axis=1)
-                
-                # Convert to datetime
                 sales_orders_df['Effective Date'] = pd.to_datetime(sales_orders_df['Effective Date'], errors='coerce')
-                
-                # Filter Pending Fulfillment to Q4 2025 only
-                q4_start = pd.Timestamp('2025-10-01')
-                q4_end = pd.Timestamp('2025-12-31')
-                
-                # Separate into categories
+
                 pending_approval = sales_orders_df[sales_orders_df['Status'] == 'Pending Approval']
-                
                 pending_fulfillment_q4 = sales_orders_df[
                     (sales_orders_df['Status'] == 'Pending Fulfillment') &
-                    (sales_orders_df['Effective Date'] >= q4_start) &
-                    (sales_orders_df['Effective Date'] <= q4_end)
+                    (sales_orders_df['Effective Date'] >= Q4_START) &
+                    (sales_orders_df['Effective Date'] <= Q4_END)
                 ]
-                
                 pending_fulfillment_no_date = sales_orders_df[
                     (sales_orders_df['Status'] == 'Pending Fulfillment') &
                     (sales_orders_df['Effective Date'].isna())
                 ]
-                
-                # Combine back
                 sales_orders_df = pd.concat([pending_approval, pending_fulfillment_q4, pending_fulfillment_no_date])
-                
-                st.sidebar.write(f"**DEBUG - After Q4 filter:**")
-                st.sidebar.write(f"Pending Approval: {len(pending_approval)} rows")
-                st.sidebar.write(f"Pending Fulfillment Q4: {len(pending_fulfillment_q4)} rows")
-                st.sidebar.write(f"Pending Fulfillment No Date: {len(pending_fulfillment_no_date)} rows")
-            
-            # Remove rows without amount or sales rep
+
+                dbg("**DEBUG - After Q4 filter:**")
+                dbg(f"Pending Approval: {len(pending_approval)} rows")
+                dbg(f"Pending Fulfillment Q4: {len(pending_fulfillment_q4)} rows")
+                dbg(f"Pending Fulfillment No Date: {len(pending_fulfillment_no_date)} rows")
+
             sales_orders_df = sales_orders_df[
-                (sales_orders_df['Amount'] > 0) & 
-                (sales_orders_df['Sales Rep'].notna()) & 
-                (sales_orders_df['Sales Rep'] != '')
+                (sales_orders_df['Amount'] > 0) & (sales_orders_df['Sales Rep'].notna()) & (sales_orders_df['Sales Rep'] != '')
             ]
-            
-            st.sidebar.write(f"**DEBUG - Final count:** {len(sales_orders_df)} rows")
+            dbg(f"**DEBUG - Final count:** {len(sales_orders_df)} rows")
         else:
             st.warning("Could not find required columns in NS Sales Orders")
             sales_orders_df = pd.DataFrame()
-    
+
     return deals_df, dashboard_df, invoices_df, sales_orders_df
 
+# ==================
+# Metrics Calculators
+# ==================
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
-    
     total_quota = dashboard_df['Quota'].sum()
     total_orders = dashboard_df['NetSuite Orders'].sum()
-    
-    # Calculate Expect/Commit forecast
+
     expect_commit = deals_df[deals_df['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
-    
-    # Calculate Best Case/Opportunity
     best_opp = deals_df[deals_df['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
-    
-    # Calculate gap
+
     gap = total_quota - expect_commit - total_orders
-    
-    # Calculate attainment percentage
     current_forecast = expect_commit + total_orders
     attainment_pct = (current_forecast / total_quota * 100) if total_quota > 0 else 0
-    
-    # Potential attainment (if all deals close)
     potential_attainment = ((expect_commit + best_opp + total_orders) / total_quota * 100) if total_quota > 0 else 0
-    
+
     return {
         'total_quota': total_quota,
         'total_orders': total_orders,
@@ -435,68 +338,40 @@ def calculate_team_metrics(deals_df, dashboard_df):
 
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
     """Calculate metrics for a specific rep"""
-    
-    # Get rep's quota and orders
     rep_info = dashboard_df[dashboard_df['Rep Name'] == rep_name]
-    
     if rep_info.empty:
         return None
-    
+
     quota = rep_info['Quota'].iloc[0]
     orders = rep_info['NetSuite Orders'].iloc[0]
-    
-    # Filter deals for this rep
+
     rep_deals = deals_df[deals_df['Deal Owner'] == rep_name]
-    
-    # Calculate Expect/Commit
     expect_commit = rep_deals[rep_deals['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
-    
-    # Calculate Best Case/Opportunity
     best_opp = rep_deals[rep_deals['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
-    
-    # Calculate sales order metrics
+
     pending_approval = 0
     pending_fulfillment = 0
     pending_fulfillment_no_date = 0
-    
+
     if sales_orders_df is not None and not sales_orders_df.empty:
         rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name]
-        
-        # Pending Approval (all amounts, no date filter)
-        pending_approval = rep_orders[
-            rep_orders['Status'] == 'Pending Approval'
-        ]['Amount'].sum()
-        
-        # Pending Fulfillment with Q4 dates
+        pending_approval = rep_orders[rep_orders['Status'] == 'Pending Approval']['Amount'].sum()
+
         if 'Effective Date' in rep_orders.columns:
             pending_fulfillment = rep_orders[
-                (rep_orders['Status'] == 'Pending Fulfillment') &
-                (rep_orders['Effective Date'].notna())
+                (rep_orders['Status'] == 'Pending Fulfillment') & (rep_orders['Effective Date'].notna())
             ]['Amount'].sum()
-            
-            # Pending Fulfillment without dates
             pending_fulfillment_no_date = rep_orders[
-                (rep_orders['Status'] == 'Pending Fulfillment') &
-                (rep_orders['Effective Date'].isna())
+                (rep_orders['Status'] == 'Pending Fulfillment') & (rep_orders['Effective Date'].isna())
             ]['Amount'].sum()
         else:
-            # If no date column, all pending fulfillment counts
-            pending_fulfillment = rep_orders[
-                rep_orders['Status'] == 'Pending Fulfillment'
-            ]['Amount'].sum()
-    
-    # NEW CALCULATION: Total Progress includes Orders + Expect/Commit + Pending Approval + Pending Fulfillment
+            pending_fulfillment = rep_orders[rep_orders['Status'] == 'Pending Fulfillment']['Amount'].sum()
+
     total_progress = orders + expect_commit + pending_approval + pending_fulfillment
-    
-    # Calculate gap based on new formula
     gap = quota - total_progress
-    
-    # Calculate attainment based on total progress
     attainment_pct = (total_progress / quota * 100) if quota > 0 else 0
-    
-    # Potential attainment (add Best Case/Opportunity upside)
     potential_attainment = ((total_progress + best_opp) / quota * 100) if quota > 0 else 0
-    
+
     return {
         'quota': quota,
         'orders': orders,
@@ -512,12 +387,13 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'deals': rep_deals
     }
 
+# ==========
+# Visuals
+# ==========
 def create_gap_chart(metrics, title):
-    """Create a waterfall/combo chart showing progress to goal"""
-    
+    """Create a stacked bar + markers showing progress to goal"""
     fig = go.Figure()
-    
-    # Create stacked bar
+
     fig.add_trace(go.Bar(
         name='NetSuite Orders',
         x=['Progress'],
@@ -526,7 +402,7 @@ def create_gap_chart(metrics, title):
         text=[f"${metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']:,.0f}"],
         textposition='inside'
     ))
-    
+
     fig.add_trace(go.Bar(
         name='Expect/Commit',
         x=['Progress'],
@@ -535,8 +411,8 @@ def create_gap_chart(metrics, title):
         text=[f"${metrics['expect_commit']:,.0f}"],
         textposition='inside'
     ))
-    
-    # Add quota line
+
+    # Quota goal
     fig.add_trace(go.Scatter(
         name='Quota Goal',
         x=['Progress'],
@@ -546,8 +422,8 @@ def create_gap_chart(metrics, title):
         text=[f"Goal: ${metrics['total_quota'] if 'total_quota' in metrics else metrics['quota']:,.0f}"],
         textposition='top center'
     ))
-    
-    # Add potential attainment line
+
+    # Potential
     potential = metrics['expect_commit'] + metrics['best_opp'] + (metrics['total_orders'] if 'total_orders' in metrics else metrics['orders'])
     fig.add_trace(go.Scatter(
         name='Potential (if all deals close)',
@@ -558,7 +434,7 @@ def create_gap_chart(metrics, title):
         text=[f"Potential: ${potential:,.0f}"],
         textposition='bottom center'
     ))
-    
+
     fig.update_layout(
         title=title,
         barmode='stack',
@@ -569,252 +445,162 @@ def create_gap_chart(metrics, title):
         xaxis_title="",
         hovermode='x unified'
     )
-    
     return fig
 
 def create_status_breakdown_chart(deals_df, rep_name=None):
-    """Create a pie chart showing deal distribution by status"""
-    
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
-    
     status_summary = deals_df.groupby('Status')['Amount'].sum().reset_index()
-    
     color_map = {
         'Expect': '#1E88E5',
         'Commit': '#43A047',
         'Best Case': '#FB8C00',
         'Opportunity': '#8E24AA'
     }
-    
     fig = px.pie(
-        status_summary,
-        values='Amount',
-        names='Status',
+        status_summary, values='Amount', names='Status',
         title='Deal Amount by Forecast Category',
-        color='Status',
-        color_discrete_map=color_map,
-        hole=0.4
+        color='Status', color_discrete_map=color_map, hole=0.4
     )
-    
     fig.update_traces(textposition='inside', textinfo='percent+label')
     fig.update_layout(height=400)
-    
     return fig
 
 def create_pipeline_breakdown_chart(deals_df, rep_name=None):
-    """Create a stacked bar chart showing pipeline breakdown"""
-    
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
-    
-    # Group by pipeline and status
     pipeline_summary = deals_df.groupby(['Pipeline', 'Status'])['Amount'].sum().reset_index()
-    
     color_map = {
         'Expect': '#1E88E5',
         'Commit': '#43A047',
         'Best Case': '#FB8C00',
         'Opportunity': '#8E24AA'
     }
-    
     fig = px.bar(
-        pipeline_summary,
-        x='Pipeline',
-        y='Amount',
-        color='Status',
+        pipeline_summary, x='Pipeline', y='Amount', color='Status',
         title='Pipeline Breakdown by Forecast Category',
-        color_discrete_map=color_map,
-        text_auto='.2s',
-        barmode='stack'
+        color_discrete_map=color_map, text_auto='.2s', barmode='stack'
     )
-    
-    fig.update_layout(
-        height=400,
-        yaxis_title="Amount ($)",
-        xaxis_title="Pipeline"
-    )
-    
+    fig.update_layout(height=400, yaxis_title="Amount ($)", xaxis_title="Pipeline")
     return fig
 
 def create_deals_timeline(deals_df, rep_name=None):
-    """Create a timeline showing when deals are expected to close"""
-    
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
-    
-    # Filter out deals without close dates
     timeline_df = deals_df[deals_df['Close Date'].notna()].copy()
-    
     if timeline_df.empty:
         return None
-    
-    # Sort by close date
     timeline_df = timeline_df.sort_values('Close Date')
-    
     color_map = {
         'Expect': '#1E88E5',
         'Commit': '#43A047',
         'Best Case': '#FB8C00',
         'Opportunity': '#8E24AA'
     }
-    
     fig = px.scatter(
-        timeline_df,
-        x='Close Date',
-        y='Amount',
-        color='Status',
-        size='Amount',
+        timeline_df, x='Close Date', y='Amount', color='Status', size='Amount',
         hover_data=['Deal Name', 'Amount', 'Pipeline'],
         title='Deal Close Date Timeline',
         color_discrete_map=color_map
     )
-    
-    fig.update_layout(
-        height=400,
-        yaxis_title="Deal Amount ($)",
-        xaxis_title="Expected Close Date"
-    )
-    
+    fig.update_layout(height=400, yaxis_title="Deal Amount ($)", xaxis_title="Expected Close Date")
     return fig
 
 def create_invoice_status_chart(invoices_df, rep_name=None):
-    """Create a chart showing invoice breakdown by status"""
-    
     if invoices_df.empty:
         return None
-    
     if rep_name:
         invoices_df = invoices_df[invoices_df['Sales Rep'] == rep_name]
-    
-    if invoices_df.empty:
-        return None
-    
+        if invoices_df.empty:
+            return None
     status_summary = invoices_df.groupby('Status')['Amount'].sum().reset_index()
-    
     fig = px.pie(
-        status_summary,
-        values='Amount',
-        names='Status',
-        title='Invoice Amount by Status',
-        hole=0.4
+        status_summary, values='Amount', names='Status',
+        title='Invoice Amount by Status', hole=0.4
     )
-    
     fig.update_traces(textposition='inside', textinfo='percent+label')
     fig.update_layout(height=400)
-    
     return fig
 
 def create_customer_invoice_table(invoices_df, rep_name):
-    """Create a detailed customer invoice breakdown table"""
-    
     if invoices_df.empty:
         return pd.DataFrame()
-    
     rep_invoices = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
-    
     if rep_invoices.empty:
         return pd.DataFrame()
-    
-    # Group by customer and status
     customer_summary = rep_invoices.groupby(['Customer', 'Status'])['Amount'].sum().reset_index()
-    
-    # Pivot to show statuses as columns
     pivot_table = customer_summary.pivot_table(
-        index='Customer',
-        columns='Status',
-        values='Amount',
-        fill_value=0,
-        aggfunc='sum'
+        index='Customer', columns='Status', values='Amount',
+        fill_value=0, aggfunc='sum'
     ).reset_index()
-    
-    # Add total column
-    status_cols = [col for col in pivot_table.columns if col != 'Customer']
+    status_cols = [c for c in pivot_table.columns if c != 'Customer']
     pivot_table['Total'] = pivot_table[status_cols].sum(axis=1)
-    
-    # Sort by total descending
     pivot_table = pivot_table.sort_values('Total', ascending=False)
-    
     return pivot_table
 
+def render_total_progress(metrics):
+    """Render chip-style breakdown under progress bar"""
+    html = f"""
+    <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;font-size:14px;">
+      <div><strong>Total Progress:</strong> ${metrics['total_progress']:,.0f}</div>
+      <span style="background:#eef3ff;padding:4px 8px;border-radius:999px;">Orders: ${metrics['orders']:,.0f}</span>
+      <span style="background:#e8f5e9;padding:4px 8px;border-radius:999px;">Expect/Commit: ${metrics['expect_commit']:,.0f}</span>
+      <span style="background:#fff8e1;padding:4px 8px;border-radius:999px;">Pending Approval: ${metrics['pending_approval']:,.0f}</span>
+      <span style="background:#fff3e0;padding:4px 8px;border-radius:999px;">Pending Fulfillment: ${metrics['pending_fulfillment']:,.0f}</span>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+# ===================
+# Dashboard Rendering
+# ===================
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
-    """Display the team-level dashboard"""
-    
     st.title("🎯 Team Sales Dashboard - Q4 2025")
-    
-    # Calculate metrics
+
     metrics = calculate_team_metrics(deals_df, dashboard_df)
-    
-    # Display key metrics
+
     col1, col2, col3, col4 = st.columns(4)
-    
     with col1:
-        st.metric(
-            label="Total Quota",
-            value=f"${metrics['total_quota']:,.0f}",
-            delta=None
-        )
-    
+        st.metric("Total Quota", value=f"${metrics['total_quota']:,.0f}")
     with col2:
-        st.metric(
-            label="Orders Shipped NetSuite",
-            value=f"${metrics['current_forecast']:,.0f}",
-            delta=f"{metrics['attainment_pct']:.1f}% of quota"
-        )
-    
+        # FIX: show actual orders shipped, not current_forecast
+        st.metric("Orders Shipped NetSuite", value=f"${metrics['total_orders']:,.0f}",
+                  delta=f"{metrics['attainment_pct']:.1f}% of quota")
     with col3:
-        st.metric(
-            label="Gap to Goal",
-            value=f"${metrics['gap']:,.0f}",
-            delta=f"{-metrics['gap']:,.0f}" if metrics['gap'] < 0 else None,
-            delta_color="inverse"
-        )
-    
+        st.metric("Gap to Goal", value=f"${metrics['gap']:,.0f}",
+                  delta=f"{-metrics['gap']:,.0f}" if metrics['gap'] < 0 else None,
+                  delta_color="inverse")
     with col4:
-        st.metric(
-            label="Potential Attainment",
-            value=f"{metrics['potential_attainment']:.1f}%",
-            delta=f"+{metrics['potential_attainment'] - metrics['attainment_pct']:.1f}% upside"
-        )
-    
-    # Progress bar
+        st.metric("Potential Attainment", value=f"{metrics['potential_attainment']:.1f}%",
+                  delta=f"+{metrics['potential_attainment'] - metrics['attainment_pct']:.1f}% upside")
+
     st.markdown("### 📈 Progress to Quota")
     progress = min(metrics['attainment_pct'] / 100, 1.0)
     st.progress(progress)
     st.caption(f"Current: {metrics['attainment_pct']:.1f}% | Potential: {metrics['potential_attainment']:.1f}%")
-    
-    # Charts
+
     col1, col2 = st.columns(2)
-    
     with col1:
-        gap_chart = create_gap_chart(metrics, "Team Progress to Goal")
-        st.plotly_chart(gap_chart, use_container_width=True)
-    
+        st.plotly_chart(create_gap_chart(metrics, "Team Progress to Goal"), use_container_width=True)
     with col2:
-        status_chart = create_status_breakdown_chart(deals_df)
-        st.plotly_chart(status_chart, use_container_width=True)
-    
-    # Pipeline breakdown
+        st.plotly_chart(create_status_breakdown_chart(deals_df), use_container_width=True)
+
     st.markdown("### 🔄 Pipeline Analysis")
-    pipeline_chart = create_pipeline_breakdown_chart(deals_df)
-    st.plotly_chart(pipeline_chart, use_container_width=True)
-    
-    # Timeline
+    st.plotly_chart(create_pipeline_breakdown_chart(deals_df), use_container_width=True)
+
     st.markdown("### 📅 Deal Close Timeline")
     timeline_chart = create_deals_timeline(deals_df)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
-    
-    # Invoice Status Breakdown
+
     if not invoices_df.empty:
         st.markdown("### 💰 Invoice Status Breakdown")
         invoice_chart = create_invoice_status_chart(invoices_df)
         if invoice_chart:
             st.plotly_chart(invoice_chart, use_container_width=True)
-    
-    # Rep summary table
+
+    # Rep summary table (FIX: use 'orders' not 'current_forecast')
     st.markdown("### 👥 Rep Summary")
-    
     rep_summary = []
     for rep_name in dashboard_df['Rep Name']:
         rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
@@ -822,165 +608,96 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             rep_summary.append({
                 'Rep': rep_name,
                 'Quota': f"${rep_metrics['quota']:,.0f}",
-                'Orders Shipped': f"${rep_metrics['current_forecast']:,.0f}",
+                'Orders Shipped': f"${rep_metrics['orders']:,.0f}",
                 'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
                 'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
                 'Gap': f"${rep_metrics['gap']:,.0f}",
                 'Attainment': f"{rep_metrics['attainment_pct']:.1f}%"
             })
-    
     rep_summary_df = pd.DataFrame(rep_summary)
     st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
 
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
-    """Display individual rep dashboard"""
-    
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
-    
-    # Calculate metrics
     metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-    
     if not metrics:
         st.error(f"No data found for {rep_name}")
         return
-    
-    # Display key metrics - NEW STRUCTURE
+
     st.markdown("### 💰 Revenue Progress")
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    
     with col1:
-        st.metric(
-            label="Quota",
-            value=f"${metrics['quota']/1000:.0f}K" if metrics['quota'] < 1000000 else f"${metrics['quota']/1000000:.1f}M"
-        )
-    
+        st.metric("Quota", value=f"${metrics['quota']/1000:.0f}K" if metrics['quota'] < 1_000_000 else f"${metrics['quota']/1_000_000:.1f}M")
     with col2:
-        st.metric(
-            label="Orders Shipped",
-            value=f"${metrics['orders']/1000:.0f}K" if metrics['orders'] < 1000000 else f"${metrics['orders']/1000000:.1f}M",
-            help="Invoiced and shipped orders from NetSuite"
-        )
-    
+        st.metric("Orders Shipped", value=f"${metrics['orders']/1000:.0f}K" if metrics['orders'] < 1_000_000 else f"${metrics['orders']/1_000_000:.1f}M",
+                  help="Invoiced and shipped orders from NetSuite")
     with col3:
-        st.metric(
-            label="Expect/Commit",
-            value=f"${metrics['expect_commit']/1000:.0f}K" if metrics['expect_commit'] < 1000000 else f"${metrics['expect_commit']/1000000:.1f}M",
-            help="HubSpot deals likely to close this quarter"
-        )
-    
+        st.metric("Expect/Commit", value=f"${metrics['expect_commit']/1000:.0f}K" if metrics['expect_commit'] < 1_000_000 else f"${metrics['expect_commit']/1_000_000:.1f}M",
+                  help="HubSpot deals likely to close this quarter")
     with col4:
-        st.metric(
-            label="Pending Approval",
-            value=f"${metrics['pending_approval']/1000:.0f}K" if metrics['pending_approval'] < 1000000 else f"${metrics['pending_approval']/1000000:.1f}M",
-            help="Sales orders awaiting approval"
-        )
-    
+        st.metric("Pending Approval", value=f"${metrics['pending_approval']/1000:.0f}K" if metrics['pending_approval'] < 1_000_000 else f"${metrics['pending_approval']/1_000_000:.1f}M",
+                  help="Sales orders awaiting approval")
     with col5:
-        st.metric(
-            label="Pending Fulfillment",
-            value=f"${metrics['pending_fulfillment']/1000:.0f}K" if metrics['pending_fulfillment'] < 1000000 else f"${metrics['pending_fulfillment']/1000000:.1f}M",
-            help="Sales orders awaiting shipment (Q4 only)"
-        )
-    
+        st.metric("Pending Fulfillment", value=f"${metrics['pending_fulfillment']/1000:.0f}K" if metrics['pending_fulfillment'] < 1_000_000 else f"${metrics['pending_fulfillment']/1_000_000:.1f}M",
+                  help="Sales orders awaiting shipment (Q4 only)")
     with col6:
-        st.metric(
-            label="Gap to Goal",
-            value=f"${metrics['gap']/1000:.0f}K" if abs(metrics['gap']) < 1000000 else f"${metrics['gap']/1000000:.1f}M",
-            delta=f"${-metrics['gap']/1000:.0f}K" if metrics['gap'] < 0 else None,
-            delta_color="inverse"
-        )
-    
-    # Progress bar with exact amounts in caption
+        st.metric("Gap to Goal", value=f"${metrics['gap']/1000:.0f}K" if abs(metrics['gap']) < 1_000_000 else f"${metrics['gap']/1_000_000:.1f}M",
+                  delta=f"${-metrics['gap']/1000:.0f}K" if metrics['gap'] < 0 else None, delta_color="inverse")
+
     st.markdown("### 📈 Progress to Quota")
     progress = min(metrics['attainment_pct'] / 100, 1.0)
     st.progress(progress)
-    st.caption(
-        f"**Total Progress: ${metrics['total_progress']:,.0f}** = "
-        f"Orders (${metrics['orders']:,.0f}) + "
-        f"Expect/Commit (${metrics['expect_commit']:,.0f}) + "
-        f"Pending Approval (${metrics['pending_approval']:,.0f}) + "
-        f"Pending Fulfillment (${metrics['pending_fulfillment']:,.0f})"
-    )
-    st.caption(f"**Attainment:** {metrics['attainment_pct']:.1f}% | **Potential with Best Case/Opp:** {metrics['potential_attainment']:.1f}%")
-    
-    # Pending Fulfillment No Date warning
+    # Better formatted chips
+    render_total_progress(metrics)
+    st.caption(f"Attainment: {metrics['attainment_pct']:.1f}% | Potential with Best Case/Opp: {metrics['potential_attainment']:.1f}%")
+
     if metrics['pending_fulfillment_no_date'] > 0:
         st.warning(
             f"⚠️ **Pending Fulfillment - No Ship Date:** ${metrics['pending_fulfillment_no_date']:,.0f} "
             f"(Not included in totals - needs ship date to count toward Q4)"
         )
-    
-    
-    # Sales Order Pipeline Metrics
+
     if metrics['pending_approval'] > 0 or metrics['pending_fulfillment'] > 0:
         st.markdown("### 📦 Sales Order Pipeline")
         so_col1, so_col2 = st.columns(2)
-        
         with so_col1:
-            st.metric(
-                label="⏳ Pending Approval",
-                value=f"${metrics['pending_approval']:,.0f}",
-                help="Sales orders awaiting approval"
-            )
-        
+            st.metric("⏳ Pending Approval", value=f"${metrics['pending_approval']:,.0f}", help="Sales orders awaiting approval")
         with so_col2:
-            st.metric(
-                label="📤 Pending Fulfillment",
-                value=f"${metrics['pending_fulfillment']:,.0f}",
-                help="Sales orders pending fulfillment or billing"
-            )
-    # Charts
+            st.metric("📤 Pending Fulfillment", value=f"${metrics['pending_fulfillment']:,.0f}", help="Sales orders pending fulfillment or billing")
+
     col1, col2 = st.columns(2)
-    
     with col1:
-        gap_chart = create_gap_chart(metrics, f"{rep_name}'s Progress to Goal")
-        st.plotly_chart(gap_chart, use_container_width=True)
-    
+        st.plotly_chart(create_gap_chart(metrics, f"{rep_name}'s Progress to Goal"), use_container_width=True)
     with col2:
-        status_chart = create_status_breakdown_chart(deals_df, rep_name)
-        st.plotly_chart(status_chart, use_container_width=True)
-    
-    # Pipeline breakdown
+        st.plotly_chart(create_status_breakdown_chart(deals_df, rep_name), use_container_width=True)
+
     st.markdown("### 🔄 Pipeline Analysis")
-    pipeline_chart = create_pipeline_breakdown_chart(deals_df, rep_name)
-    st.plotly_chart(pipeline_chart, use_container_width=True)
-    
-    # Timeline
+    st.plotly_chart(create_pipeline_breakdown_chart(deals_df, rep_name), use_container_width=True)
+
     st.markdown("### 📅 Deal Close Timeline")
     timeline_chart = create_deals_timeline(deals_df, rep_name)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
-    
-    # Invoice Status Breakdown
+
     if not invoices_df.empty:
         st.markdown("### 💰 Invoice Breakdown")
-        
         col1, col2 = st.columns(2)
-        
         with col1:
             invoice_chart = create_invoice_status_chart(invoices_df, rep_name)
             if invoice_chart:
                 st.plotly_chart(invoice_chart, use_container_width=True)
-        
         with col2:
-            # Customer invoice breakdown table
             customer_table = create_customer_invoice_table(invoices_df, rep_name)
             if not customer_table.empty:
                 st.markdown("**Invoice Amounts by Customer**")
-                
-                # Format currency columns
-                for col in customer_table.columns:
-                    if col != 'Customer':
-                        customer_table[col] = customer_table[col].apply(lambda x: f"${x:,.0f}")
-                
+                for c in customer_table.columns:
+                    if c != 'Customer':
+                        customer_table[c] = customer_table[c].apply(lambda x: f"${x:,.0f}")
                 st.dataframe(customer_table, use_container_width=True, hide_index=True)
             else:
                 st.info("No invoice data available for this rep")
-    
-    # Detailed deals table
+
     st.markdown("### 📋 Deal Details")
-    
-    # Add filters
     col1, col2 = st.columns(2)
     with col1:
         status_filter = st.multiselect(
@@ -988,7 +705,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             options=['Expect', 'Commit', 'Best Case', 'Opportunity'],
             default=['Expect', 'Commit', 'Best Case', 'Opportunity']
         )
-    
     with col2:
         if 'Pipeline' in metrics['deals'].columns:
             pipeline_filter = st.multiselect(
@@ -998,69 +714,54 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             )
         else:
             pipeline_filter = None
-    
-    # Filter deals
+
     filtered_deals = metrics['deals'][metrics['deals']['Status'].isin(status_filter)]
-    if pipeline_filter:
+    if pipeline_filter is not None:
         filtered_deals = filtered_deals[filtered_deals['Pipeline'].isin(pipeline_filter)]
-    
-    # Display deals table
+
     if not filtered_deals.empty:
         display_deals = filtered_deals[['Deal Name', 'Close Date', 'Amount', 'Status', 'Pipeline']].copy()
         display_deals['Amount'] = display_deals['Amount'].apply(lambda x: f"${x:,.0f}")
-        display_deals['Close Date'] = display_deals['Close Date'].dt.strftime('%Y-%m-%d')
+        display_deals['Close Date'] = pd.to_datetime(display_deals['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d')
         st.dataframe(display_deals, use_container_width=True, hide_index=True)
     else:
         st.info("No deals match the selected filters.")
 
-# Main app
+# ========
+# Main App
+# ========
 def main():
-    
-    # Sidebar
-    with st.sidebar:
-        st.image("https://via.placeholder.com/200x80/1E88E5/FFFFFF?text=Your+Logo", use_container_width=True)
-        st.markdown("---")
-        
-        st.markdown("### 🎯 Dashboard Navigation")
-        view_mode = st.radio(
-            "Select View:",
-            ["Team Overview", "Individual Rep"],
-            label_visibility="collapsed"
-        )
-        
-        st.markdown("---")
-        
-        # Last updated
-        current_time = datetime.now()
-        st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        st.caption("Dashboard refreshes every hour")
-        
-        if st.button("🔄 Refresh Data Now"):
-            st.cache_data.clear()
-            st.rerun()
-    
-    # Load data
+    # Left sidebar above already shows logo + debug toggle
+
+    st.markdown("### 🎯 Dashboard Navigation")
+    view_mode = st.radio("Select View:", ["Team Overview", "Individual Rep"], label_visibility="collapsed")
+    st.markdown("---")
+
+    current_time = datetime.now()
+    st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption("Dashboard refreshes every hour")
+
+    if st.button("🔄 Refresh Data Now"):
+        st.cache_data.clear()
+        st.rerun()
+
     with st.spinner("Loading data from Google Sheets..."):
         deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
-    
+
     if deals_df.empty or dashboard_df.empty:
         st.error("Unable to load data. Please check your Google Sheets connection.")
         st.info("""
-        **Setup Instructions:**
-        1. Add your Google Service Account credentials to Streamlit secrets
-        2. Share your Google Sheet with the service account email
-        3. Verify the spreadsheet ID in the code
-        """)
+**Setup Instructions:**
+1. Add your Google Service Account credentials to Streamlit secrets
+2. Share your Google Sheet with the service account email
+3. Verify the spreadsheet ID in the code
+""")
         return
-    
-    # Display appropriate dashboard
+
     if view_mode == "Team Overview":
         display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     else:
-        rep_name = st.selectbox(
-            "Select Rep:",
-            options=dashboard_df['Rep Name'].tolist()
-        )
+        rep_name = st.selectbox("Select Rep:", options=dashboard_df['Rep Name'].tolist())
         display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
 
 if __name__ == "__main__":
