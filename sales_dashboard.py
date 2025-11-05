@@ -1568,18 +1568,18 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     for rep_name in dashboard_df['Rep Name']:
         rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
         if rep_metrics:
-            rep_summary.append({
-                'Rep': rep_name,
-                'Quota': f"${rep_metrics['quota']:,.0f}",
-                'Orders': f"${rep_metrics['orders']:,.0f}",
-                'Expect/Commit (Q4)': f"${rep_metrics['expect_commit']:,.0f}",
-                'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
-                'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
-                'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
-                'Gap': f"${rep_metrics['gap']:,.0f}",
-                'Attainment': f"{rep_metrics['attainment_pct']:.1f}%",
-                'Q1 Spillover': f"${rep_metrics.get('q1_spillover_total', 0):,.0f}"
-            })
+           rep_summary.append({
+    'Rep': rep_name,
+    'Quota': f"${rep_metrics['quota']:,.0f}",
+    'Orders': f"${rep_metrics['orders']:,.0f}",
+    'Expect/Commit (Q4)': f"${rep_metrics['expect_commit']:,.0f}",
+    'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
+    'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
+    'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
+    'Gap': f"${rep_metrics['gap']:,.0f}",
+    'Attainment': f"{rep_metrics['attainment_pct']:.1f}%",
+    'Q1 Spillover': f"${rep_metrics.get('q1_spillover_total', 0):,.0f}"  # <-- This is the fixed line
+})
     
     if rep_summary:
         rep_summary_df = pd.DataFrame(rep_summary)
