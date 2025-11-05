@@ -1473,120 +1473,273 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
 
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
-    
+   
     st.title("🎯 Team Sales Dashboard - Q4 2025")
-    
-    # Calculate metrics
-    metrics = calculate_team_metrics(deals_df, dashboard_df)
-    
+   
+    # Calculate basic metrics
+    basic_metrics = calculate_team_metrics(deals_df, dashboard_df)
+   
+    # Aggregate full team metrics from per-rep calculations
+    team_quota = basic_metrics['total_quota']
+    team_best_opp = basic_metrics['best_opp']
+    team_q1_spillover = basic_metrics['q1_spillover']
+   
+    team_invoiced = 0
+    team_pf = 0
+    team_pa = 0
+    team_hs = 0
+    team_pf_no_date = 0
+    team_pa_no_date = 0
+    team_old_pa = 0
+   
+    section1_data = []
+    section2_data = []
+   
+    for rep_name in dashboard_df['Rep Name']:
+        rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
+        if rep_metrics:
+            section1_total = (rep_metrics['orders'] + rep_metrics['pending_fulfillment'] +
+                              rep_metrics['pending_approval'] + rep_metrics['expect_commit'])
+            final_total = (section1_total + rep_metrics['pending_fulfillment_no_date'] +
+                           rep_metrics['pending_approval_no_date'] + rep_metrics['pending_approval_old'])
+           
+            section1_data.append({
+                'Rep': rep_name,
+                'Invoiced': f"${rep_metrics['orders']:,.0f}",
+                'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
+                'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
+                'HubSpot Expect/Commit': f"${rep_metrics['expect_commit']:,.0f}",
+                'Total': f"${section1_total:,.0f}"
+            })
+           
+            section2_data.append({
+                'Rep': rep_name,
+                'PF SO\'s No Date': f"${rep_metrics['pending_fulfillment_no_date']:,.0f}",
+                'PA SO\'s No Date': f"${rep_metrics['pending_approval_no_date']:,.0f}",
+                'Old PA (>2 weeks)': f"${rep_metrics['pending_approval_old']:,.0f}",
+                'Total Q4': f"${final_total:,.0f}"
+            })
+           
+            # Aggregate sums
+            team_invoiced += rep_metrics['orders']
+            team_pf += rep_metrics['pending_fulfillment']
+            team_pa += rep_metrics['pending_approval']
+            team_hs += rep_metrics['expect_commit']
+            team_pf_no_date += rep_metrics['pending_fulfillment_no_date']
+            team_pa_no_date += rep_metrics['pending_approval_no_date']
+            team_old_pa += rep_metrics['pending_approval_old']
+            team_q1_spillover = max(team_q1_spillover, rep_metrics.get('q1_spillover_total', 0))  # Use max if not summing, but should sum if per rep
+            # Actually sum q1 spillover
+            team_q1_spillover += rep_metrics.get('q1_spillover_total', 0)
+   
+    # Calculate team totals
+    base_forecast = team_invoiced + team_pf + team_pa + team_hs
+    full_forecast = base_forecast + team_pf_no_date + team_pa_no_date + team_old_pa
+    base_gap = team_quota - base_forecast
+    full_gap = team_quota - full_forecast
+    base_attainment_pct = (base_forecast / team_quota * 100) if team_quota > 0 else 0
+    full_attainment_pct = (full_forecast / team_quota * 100) if team_quota > 0 else 0
+    potential_attainment = ((base_forecast + team_best_opp) / team_quota * 100) if team_quota > 0 else 0
+   
+    # Add total rows to data
+    section1_data.append({
+        'Rep': 'TOTAL',
+        'Invoiced': f"${team_invoiced:,.0f}",
+        'Pending Fulfillment': f"${team_pf:,.0f}",
+        'Pending Approval': f"${team_pa:,.0f}",
+        'HubSpot Expect/Commit': f"${team_hs:,.0f}",
+        'Total': f"${base_forecast:,.0f}"
+    })
+   
+    section2_data.append({
+        'Rep': 'TOTAL',
+        'PF SO\'s No Date': f"${team_pf_no_date:,.0f}",
+        'PA SO\'s No Date': f"${team_pa_no_date:,.0f}",
+        'Old PA (>2 weeks)': f"${team_old_pa:,.0f}",
+        'Total Q4': f"${full_forecast:,.0f}"
+    })
+   
     # Display Q1 spillover warning if applicable
-    if metrics.get('q1_spillover', 0) > 0:
+    if team_q1_spillover > 0:
         st.warning(
-            f"📅 **Q1 2026 Spillover**: ${metrics['q1_spillover']:,.0f} in deals will close in late December "
+            f"📅 **Q1 2026 Spillover**: ${team_q1_spillover:,.0f} in deals will close in late December "
             f"but ship in Q1 2026 based on product lead times"
         )
-    
-    # Display key metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
+   
+    # Display key metrics with two breakdowns
+    st.markdown("### 📊 Key Metrics")
+    col1, col2, col3, col4, col5 = st.columns(5)
+   
     with col1:
         st.metric(
             label="Total Quota",
-            value=f"${metrics['total_quota']:,.0f}",
+            value=f"${team_quota:,.0f}",
             delta=None
         )
-    
+   
     with col2:
         st.metric(
-            label="Current Forecast",
-            value=f"${metrics['current_forecast']:,.0f}",
-            delta=f"{metrics['attainment_pct']:.1f}% of quota"
+            label="Base Forecast (Breakdown 1)",
+            value=f"${base_forecast:,.0f}",
+            delta=f"{base_attainment_pct:.1f}% of quota"
         )
-    
+   
     with col3:
         st.metric(
-            label="Gap to Goal",
-            value=f"${metrics['gap']:,.0f}",
-            delta=f"${-metrics['gap']:,.0f}" if metrics['gap'] < 0 else None,
-            delta_color="inverse"
+            label="Full Forecast (Breakdown 2)",
+            value=f"${full_forecast:,.0f}",
+            delta=f"{full_attainment_pct:.1f}% of quota"
         )
-    
+   
     with col4:
         st.metric(
-            label="Potential Attainment",
-            value=f"{metrics['potential_attainment']:.1f}%",
-            delta=f"+{metrics['potential_attainment'] - metrics['attainment_pct']:.1f}% upside"
+            label="Base Gap to Goal",
+            value=f"${base_gap:,.0f}",
+            delta=f"${-base_gap:,.0f}" if base_gap < 0 else None,
+            delta_color="inverse"
         )
-    
-    # Progress bar
+   
+    with col5:
+        st.metric(
+            label="Potential Attainment",
+            value=f"{potential_attainment:.1f}%",
+            delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside"
+        )
+   
+    # Progress bars for both breakdowns
     st.markdown("### 📈 Progress to Quota")
-    progress = min(metrics['attainment_pct'] / 100, 1.0)
-    st.progress(progress)
-    st.caption(f"Current: {metrics['attainment_pct']:.1f}% | Potential: {metrics['potential_attainment']:.1f}%")
-    
-    # Charts
     col1, col2 = st.columns(2)
-    
     with col1:
-        gap_chart = create_gap_chart(metrics, "Team Progress to Goal")
-        st.plotly_chart(gap_chart, use_container_width=True)
-    
+        st.markdown("**Base Forecast**")
+        base_progress = min(base_attainment_pct / 100, 1.0)
+        st.progress(base_progress)
+        st.caption(f"Current: {base_attainment_pct:.1f}% | Potential: {potential_attainment:.1f}%")
+   
     with col2:
+        st.markdown("**Full Forecast**")
+        full_progress = min(full_attainment_pct / 100, 1.0)
+        st.progress(full_progress)
+        st.caption(f"Current: {full_attainment_pct:.1f}%")
+   
+    # Updated Gap Chart for Base Forecast
+    st.markdown("### 📊 Base Progress Breakdown")
+    fig = go.Figure()
+   
+    fig.add_trace(go.Bar(
+        name='Invoiced',
+        x=['Progress'],
+        y=[team_invoiced],
+        marker_color='#1E88E5',
+        text=[f"${team_invoiced:,.0f}"],
+        textposition='inside'
+    ))
+   
+    fig.add_trace(go.Bar(
+        name='Pending Fulfillment',
+        x=['Progress'],
+        y=[team_pf],
+        marker_color='#FFC107',
+        text=[f"${team_pf:,.0f}"],
+        textposition='inside'
+    ))
+   
+    fig.add_trace(go.Bar(
+        name='Pending Approval',
+        x=['Progress'],
+        y=[team_pa],
+        marker_color='#FB8C00',
+        text=[f"${team_pa:,.0f}"],
+        textposition='inside'
+    ))
+   
+    fig.add_trace(go.Bar(
+        name='Expect/Commit',
+        x=['Progress'],
+        y=[team_hs],
+        marker_color='#43A047',
+        text=[f"${team_hs:,.0f}"],
+        textposition='inside'
+    ))
+   
+    # Quota line
+    fig.add_trace(go.Scatter(
+        name='Quota Goal',
+        x=['Progress'],
+        y=[team_quota],
+        mode='markers',
+        marker=dict(size=12, color='#DC3912', symbol='diamond'),
+        text=[f"Goal: ${team_quota:,.0f}"],
+        textposition='top center'
+    ))
+   
+    # Potential
+    potential = base_forecast + team_best_opp
+    fig.add_trace(go.Scatter(
+        name='Potential (if all deals close)',
+        x=['Progress'],
+        y=[potential],
+        mode='markers',
+        marker=dict(size=12, color='#FB8C00', symbol='diamond'),
+        text=[f"Potential: ${potential:,.0f}"],
+        textposition='bottom center'
+    ))
+   
+    fig.update_layout(
+        title="Team Base Progress to Goal",
+        barmode='stack',
+        height=400,
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        yaxis_title="Amount ($)",
+        xaxis_title="",
+        hovermode='x unified'
+    )
+    st.plotly_chart(fig, use_container_width=True)
+   
+    # Other charts remain the same
+    col1, col2 = st.columns(2)
+   
+    with col1:
         status_chart = create_status_breakdown_chart(deals_df)
         if status_chart:
             st.plotly_chart(status_chart, use_container_width=True)
         else:
             st.info("No deal data available for status breakdown")
-    
-    # Pipeline breakdown
-    st.markdown("### 🔄 Pipeline Analysis")
-    pipeline_chart = create_pipeline_breakdown_chart(deals_df)
-    if pipeline_chart:
-        st.plotly_chart(pipeline_chart, use_container_width=True)
-    else:
-        st.info("No deal data available for pipeline analysis")
-    
-    # Timeline
+   
+    with col2:
+        pipeline_chart = create_pipeline_breakdown_chart(deals_df)
+        if pipeline_chart:
+            st.plotly_chart(pipeline_chart, use_container_width=True)
+        else:
+            st.info("No deal data available for pipeline analysis")
+   
     st.markdown("### 📅 Deal Close Timeline")
     timeline_chart = create_deals_timeline(deals_df)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
     else:
         st.info("No deal data available for timeline")
-    
-    # Invoice Status Breakdown
+   
     if not invoices_df.empty:
         st.markdown("### 💰 Invoice Status Breakdown")
         invoice_chart = create_invoice_status_chart(invoices_df)
         if invoice_chart:
             st.plotly_chart(invoice_chart, use_container_width=True)
-    
-    # Rep summary table
-    st.markdown("### 👥 Rep Summary")
-    
-    rep_summary = []
-    for rep_name in dashboard_df['Rep Name']:
-        rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-        if rep_metrics:
-           rep_summary.append({
-    'Rep': rep_name,
-    'Quota': f"${rep_metrics['quota']:,.0f}",
-    'Orders': f"${rep_metrics['orders']:,.0f}",
-    'Expect/Commit (Q4)': f"${rep_metrics['expect_commit']:,.0f}",
-    'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
-    'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
-    'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
-    'Gap': f"${rep_metrics['gap']:,.0f}",
-    'Attainment': f"{rep_metrics['attainment_pct']:.1f}%",
-    'Q1 Spillover': f"${rep_metrics.get('q1_spillover_total', 0):,.0f}"  # <-- This is the fixed line
-})
-    
-    if rep_summary:
-        rep_summary_df = pd.DataFrame(rep_summary)
-        st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
+   
+    # Display the two sections
+    st.markdown("### 👥 Section 1: Q4 Gap to Goal")
+    if section1_data:
+        section1_df = pd.DataFrame(section1_data)
+        st.dataframe(section1_df, use_container_width=True, hide_index=True)
     else:
-        st.warning("No rep data available")
-
+        st.warning("No data for Section 1")
+   
+    st.markdown("### 👥 Section 2: Additional Orders (Can be included)")
+    if section2_data:
+        section2_df = pd.DataFrame(section2_data)
+        st.dataframe(section2_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("No data for Section 2")
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
     
