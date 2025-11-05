@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v23_q4_2025_only"
+CACHE_VERSION = "v24_q1_spillover_tracking"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -674,38 +674,60 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     quota = rep_info['Quota'].iloc[0]
     orders = rep_info['NetSuite Orders'].iloc[0]
     
-    # Filter deals for this rep
-    rep_deals = deals_df[deals_df['Deal Owner'] == rep_name]
+    # Filter deals for this rep - ALL Q4 2025 deals (regardless of spillover)
+    rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
     
-    # Separate Q4 and Q1 deals
-    rep_deals_q4 = rep_deals[rep_deals.get('Counts_In_Q4', True) == True]
-    rep_deals_q1 = rep_deals[rep_deals.get('Counts_In_Q4', True) == False]
+    # NEW: Check if we have the Q1 2026 Spillover column
+    has_spillover_column = 'Q1 2026 Spillover' in rep_deals.columns
     
-    # Calculate Expect/Commit (Q4 only) with details
-    expect_commit_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])].copy()
-    # Remove duplicate columns if any
-    if expect_commit_deals.columns.duplicated().any():
-        expect_commit_deals = expect_commit_deals.loc[:, ~expect_commit_deals.columns.duplicated()]
-    expect_commit = expect_commit_deals['Amount'].sum() if not expect_commit_deals.empty else 0
+    if has_spillover_column:
+        # Separate deals by shipping timeline
+        rep_deals['Ships_In_Q4'] = rep_deals['Q1 2026 Spillover'] != 'Q1 2026'
+        rep_deals['Ships_In_Q1'] = rep_deals['Q1 2026 Spillover'] == 'Q1 2026'
+        
+        # Deals that ship in Q4 2025
+        rep_deals_ship_q4 = rep_deals[rep_deals['Ships_In_Q4'] == True].copy()
+        
+        # Deals that ship in Q1 2026 (spillover)
+        rep_deals_ship_q1 = rep_deals[rep_deals['Ships_In_Q1'] == True].copy()
+    else:
+        # Fallback if column doesn't exist - treat all as Q4
+        rep_deals_ship_q4 = rep_deals.copy()
+        rep_deals_ship_q1 = pd.DataFrame()
     
-    # Calculate Best Case/Opportunity (Q4 only) with details
-    best_opp_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    # Remove duplicate columns if any
-    if best_opp_deals.columns.duplicated().any():
-        best_opp_deals = best_opp_deals.loc[:, ~best_opp_deals.columns.duplicated()]
-    best_opp = best_opp_deals['Amount'].sum() if not best_opp_deals.empty else 0
+    # Calculate metrics for DEALS SHIPPING IN Q4 (this counts toward quota)
+    expect_commit_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Expect', 'Commit'])].copy()
+    if expect_commit_q4_deals.columns.duplicated().any():
+        expect_commit_q4_deals = expect_commit_q4_deals.loc[:, ~expect_commit_q4_deals.columns.duplicated()]
+    expect_commit_q4 = expect_commit_q4_deals['Amount'].sum() if not expect_commit_q4_deals.empty else 0
     
-    # Track Q1 spillover
-    q1_spillover = rep_deals_q1['Amount'].sum()
+    best_opp_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
+    if best_opp_q4_deals.columns.duplicated().any():
+        best_opp_q4_deals = best_opp_q4_deals.loc[:, ~best_opp_q4_deals.columns.duplicated()]
+    best_opp_q4 = best_opp_q4_deals['Amount'].sum() if not best_opp_q4_deals.empty else 0
     
-    # Initialize detail dataframes
+    # Calculate metrics for Q1 SPILLOVER DEALS (closing in Q4 but shipping in Q1)
+    expect_commit_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Expect', 'Commit'])].copy()
+    if expect_commit_q1_deals.columns.duplicated().any():
+        expect_commit_q1_deals = expect_commit_q1_deals.loc[:, ~expect_commit_q1_deals.columns.duplicated()]
+    expect_commit_q1_spillover = expect_commit_q1_deals['Amount'].sum() if not expect_commit_q1_deals.empty else 0
+    
+    best_opp_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Best Case', 'Opportunity'])].copy()
+    if best_opp_q1_deals.columns.duplicated().any():
+        best_opp_q1_deals = best_opp_q1_deals.loc[:, ~best_opp_q1_deals.columns.duplicated()]
+    best_opp_q1_spillover = best_opp_q1_deals['Amount'].sum() if not best_opp_q1_deals.empty else 0
+    
+    # Total Q1 spillover
+    q1_spillover_total = expect_commit_q1_spillover + best_opp_q1_spillover
+    
+    # Initialize detail dataframes for sales orders
     pending_approval_details = pd.DataFrame()
     pending_approval_no_date_details = pd.DataFrame()
     pending_approval_old_details = pd.DataFrame()
     pending_fulfillment_details = pd.DataFrame()
     pending_fulfillment_no_date_details = pd.DataFrame()
     
-    # Calculate sales order metrics with NEW LOGIC
+    # Calculate sales order metrics
     pending_approval = 0
     pending_approval_no_date = 0
     pending_approval_old = 0
@@ -792,18 +814,18 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                 pending_fulfillment_no_date_details = pending_fulfillment_no_date_details.loc[:, ~pending_fulfillment_no_date_details.columns.duplicated()]
             pending_fulfillment_no_date = pending_fulfillment_no_date_details['Amount'].sum() if not pending_fulfillment_no_date_details.empty else 0
     
-    # Total calculations
+    # Total calculations - ONLY Q4 SHIPPING DEALS COUNT TOWARD QUOTA
     total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
-    total_progress = orders + expect_commit + pending_approval + pending_fulfillment
+    total_progress = orders + expect_commit_q4 + pending_approval + pending_fulfillment
     gap = quota - total_progress
     attainment_pct = (total_progress / quota * 100) if quota > 0 else 0
-    potential_attainment = ((total_progress + best_opp) / quota * 100) if quota > 0 else 0
+    potential_attainment = ((total_progress + best_opp_q4) / quota * 100) if quota > 0 else 0
     
     return {
         'quota': quota,
         'orders': orders,
-        'expect_commit': expect_commit,
-        'best_opp': best_opp,
+        'expect_commit': expect_commit_q4,  # Only Q4 shipping deals
+        'best_opp': best_opp_q4,  # Only Q4 shipping deals
         'gap': gap,
         'attainment_pct': attainment_pct,
         'potential_attainment': potential_attainment,
@@ -814,16 +836,31 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'pending_fulfillment': pending_fulfillment,
         'pending_fulfillment_no_date': pending_fulfillment_no_date,
         'total_pending_fulfillment': total_pending_fulfillment,
-        'q1_spillover': q1_spillover,
-        'deals': rep_deals_q4,
+        
+        # NEW: Q1 Spillover metrics
+        'q1_spillover_expect_commit': expect_commit_q1_spillover,
+        'q1_spillover_best_opp': best_opp_q1_spillover,
+        'q1_spillover_total': q1_spillover_total,
+        
+        # ALL Q4 2025 closing deals (for reference)
+        'total_q4_closing_deals': len(rep_deals),
+        'total_q4_closing_amount': rep_deals['Amount'].sum() if not rep_deals.empty else 0,
+        
+        'deals': rep_deals_ship_q4,  # Deals shipping in Q4
+        
         # Add detail dataframes for drill-down
         'pending_approval_details': pending_approval_details,
         'pending_approval_no_date_details': pending_approval_no_date_details,
         'pending_approval_old_details': pending_approval_old_details,
         'pending_fulfillment_details': pending_fulfillment_details,
         'pending_fulfillment_no_date_details': pending_fulfillment_no_date_details,
-        'expect_commit_deals': expect_commit_deals,
-        'best_opp_deals': best_opp_deals
+        'expect_commit_deals': expect_commit_q4_deals,
+        'best_opp_deals': best_opp_q4_deals,
+        
+        # NEW: Q1 Spillover deal details
+        'expect_commit_q1_spillover_deals': expect_commit_q1_deals,
+        'best_opp_q1_spillover_deals': best_opp_q1_deals,
+        'all_q1_spillover_deals': rep_deals_ship_q1
     }
 
 def create_gap_chart(metrics, title):
@@ -1537,11 +1574,12 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.error(f"No data found for {rep_name}")
         return
     
-    # Display Q1 spillover info if applicable
-    if metrics.get('q1_spillover', 0) > 0:
+    # Show summary of ALL Q4 2025 deals (closing in Q4)
+    if metrics.get('total_q4_closing_deals', 0) > 0:
         st.info(
-            f"💡 **Q1 2026 Spillover**: ${metrics['q1_spillover']:,.0f} in deals will close in late December "
-            f"but ship in Q1 2026 based on product lead times"
+            f"📋 **Total Q4 2025 Pipeline**: {metrics['total_q4_closing_deals']} deals worth "
+            f"${metrics['total_q4_closing_amount']:,.0f} closing in Q4 2025. "
+            f"Of these, ${metrics.get('q1_spillover_total', 0):,.0f} will ship in Q1 2026 based on lead times."
         )
     
     # Display key metrics - Section 1
@@ -1672,6 +1710,52 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             metrics['pending_approval_old'],
             metrics.get('pending_approval_old_details', pd.DataFrame()),
             f"{rep_name}_pa_old"
+        )
+    
+    # NEW: Section 3 - Q1 2026 Spillover
+    st.markdown("### 🚢 Section 3: Q1 2026 Spillover (Closing in Q4, Shipping in Q1)")
+    
+    st.info(f"💡 These deals close in Q4 2025 but will ship in Q1 2026 based on product lead times")
+    
+    spillover_col1, spillover_col2, spillover_col3 = st.columns(3)
+    
+    with spillover_col1:
+        st.metric(
+            label="Expect/Commit (Q1 Ship)",
+            value=f"${metrics.get('q1_spillover_expect_commit', 0):,.0f}",
+            help="Deals closing in Q4 but shipping in Q1"
+        )
+        display_drill_down_section(
+            "Expect/Commit Deals Shipping Q1 2026",
+            metrics.get('q1_spillover_expect_commit', 0),
+            metrics.get('expect_commit_q1_spillover_deals', pd.DataFrame()),
+            f"{rep_name}_ec_q1"
+        )
+    
+    with spillover_col2:
+        st.metric(
+            label="Best Case/Opp (Q1 Ship)",
+            value=f"${metrics.get('q1_spillover_best_opp', 0):,.0f}",
+            help="Potential deals closing in Q4 but shipping in Q1"
+        )
+        display_drill_down_section(
+            "Best Case/Opp Deals Shipping Q1 2026",
+            metrics.get('q1_spillover_best_opp', 0),
+            metrics.get('best_opp_q1_spillover_deals', pd.DataFrame()),
+            f"{rep_name}_bo_q1"
+        )
+    
+    with spillover_col3:
+        st.metric(
+            label="Total Q1 Spillover",
+            value=f"${metrics.get('q1_spillover_total', 0):,.0f}",
+            help="All deals shipping in Q1 2026"
+        )
+        display_drill_down_section(
+            "All Q1 2026 Spillover Deals",
+            metrics.get('q1_spillover_total', 0),
+            metrics.get('all_q1_spillover_deals', pd.DataFrame()),
+            f"{rep_name}_all_q1"
         )
     
     # Final Total
