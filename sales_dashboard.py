@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v17"
+CACHE_VERSION = "v18"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -117,28 +117,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         # Check if secrets exist
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Missing Google Cloud credentials in Streamlit secrets")
-            st.info("""
-            **To fix this:**
-            1. Go to your Streamlit Cloud dashboard
-            2. Click on your app settings
-            3. Go to 'Secrets' section
-            4. Add your Google Service Account JSON credentials
-            
-            Format:
-            ```
-            [gcp_service_account]
-            type = "service_account"
-            project_id = "your-project-id"
-            private_key_id = "your-key-id"
-            private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
-            client_email = "your-service-account@project.iam.gserviceaccount.com"
-            client_id = "your-client-id"
-            auth_uri = "https://accounts.google.com/o/oauth2/auth"
-            token_uri = "https://oauth2.googleapis.com/token"
-            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
-            client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
-            ```
-            """)
             return pd.DataFrame()
         
         # Load credentials from Streamlit secrets
@@ -283,6 +261,15 @@ def load_all_data():
     # Load deals data - extend range to include all columns
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:I", version=CACHE_VERSION)
     
+    # DEBUG: Show what we got from HubSpot
+    if not deals_df.empty:
+        st.sidebar.success(f"📊 HubSpot raw data: {len(deals_df)} rows, {len(deals_df.columns)} columns")
+        with st.sidebar.expander("🔍 HubSpot Column Names"):
+            for i, col in enumerate(deals_df.columns):
+                st.write(f"{i}: {col}")
+    else:
+        st.sidebar.error("❌ No HubSpot data loaded!")
+    
     # Load dashboard info (rep quotas and orders)
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
     
@@ -292,29 +279,44 @@ def load_all_data():
     # Load sales orders data from NetSuite - EXTEND to include Column AB
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AB", version=CACHE_VERSION)
     
-    # Clean and process deals data
-    if not deals_df.empty and len(deals_df.columns) >= 8:
+    # Clean and process deals data - FIXED VERSION
+    if not deals_df.empty and len(deals_df.columns) >= 6:
         # Get column names from first row
         if len(deals_df) > 0:
             # Standardize column names based on position
             col_names = deals_df.columns.tolist()
             
-            # Map columns by position
-            rename_dict = {
-                col_names[1]: 'Deal Name',
-                col_names[2]: 'Deal Stage',  # Column C - for filtering
-                col_names[3]: 'Close Date',
-                col_names[4]: 'Deal Owner',
-                col_names[5]: 'Amount',
-                col_names[6]: 'Status',
-                col_names[7]: 'Pipeline'
-            }
+            st.sidebar.info(f"Processing {len(col_names)} HubSpot columns")
             
-            # Check if we have Product Type column (might be column 8)
+            # Build rename dictionary based on available columns
+            rename_dict = {}
+            
+            # Map the first 8 columns by position
+            if len(col_names) > 0:
+                rename_dict[col_names[0]] = 'Record ID'
+            if len(col_names) > 1:
+                rename_dict[col_names[1]] = 'Deal Name'
+            if len(col_names) > 2:
+                rename_dict[col_names[2]] = 'Deal Stage'
+            if len(col_names) > 3:
+                rename_dict[col_names[3]] = 'Close Date'
+            if len(col_names) > 4:
+                rename_dict[col_names[4]] = 'Deal Owner'
+            if len(col_names) > 5:
+                rename_dict[col_names[5]] = 'Amount'
+            if len(col_names) > 6:
+                rename_dict[col_names[6]] = 'Status'
+            if len(col_names) > 7:
+                rename_dict[col_names[7]] = 'Pipeline'
+            
+            # Check if we have Product Type column
             if len(col_names) > 8:
                 rename_dict[col_names[8]] = 'Product Type'
             
             deals_df = deals_df.rename(columns=rename_dict)
+            
+            # Show what we have after renaming
+            st.sidebar.success(f"Renamed columns: {', '.join(deals_df.columns.tolist()[:8])}")
             
             # Clean and convert amount to numeric
             def clean_numeric(value):
@@ -331,6 +333,11 @@ def load_all_data():
             # Convert close date to datetime
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
             
+            # Show data before filtering
+            total_deals_before = len(deals_df)
+            total_amount_before = deals_df['Amount'].sum()
+            st.sidebar.info(f"Before filtering: {total_deals_before} deals, ${total_amount_before:,.0f}")
+            
             # FILTER: Only Q4 2025 deals
             q4_start = pd.Timestamp('2025-10-01')
             q4_end = pd.Timestamp('2025-12-31')
@@ -338,6 +345,8 @@ def load_all_data():
                 (deals_df['Close Date'] >= q4_start) & 
                 (deals_df['Close Date'] <= q4_end)
             ]
+            
+            st.sidebar.info(f"After Q4 filter: {len(deals_df)} deals")
             
             # FILTER OUT unwanted deal stages
             excluded_stages = [
@@ -350,11 +359,19 @@ def load_all_data():
             deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
             deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
             
+            # Show unique stages before filtering
+            unique_stages = deals_df['Deal Stage'].unique()
+            st.sidebar.info(f"Unique stages: {', '.join(unique_stages[:5])}")
+            
             # Filter out excluded stages
             deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
             
+            st.sidebar.success(f"After stage filter: {len(deals_df)} deals, ${deals_df['Amount'].sum():,.0f}")
+            
             # Apply Q4 fulfillment logic
             deals_df = apply_q4_fulfillment_logic(deals_df)
+    else:
+        st.sidebar.error(f"❌ HubSpot data has insufficient columns: {len(deals_df.columns) if not deals_df.empty else 0}")
     
     if not dashboard_df.empty:
         # Ensure we have the right column names
@@ -432,9 +449,6 @@ def load_all_data():
     
     # Process sales orders data with NEW LOGIC
     if not sales_orders_df.empty:
-        # Store all columns for drill-down display
-        sales_orders_df_original_cols = sales_orders_df.columns.tolist()
-        
         # Map column positions
         col_names = sales_orders_df.columns.tolist()
         
@@ -443,15 +457,15 @@ def load_all_data():
         # Find standard columns
         for idx, col in enumerate(col_names):
             col_lower = str(col).lower()
-            if 'status' in col_lower:
+            if 'status' in col_lower and 'Status' not in rename_dict.values():
                 rename_dict[col] = 'Status'
             if ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
                 rename_dict[col] = 'Amount'
             if 'sales rep' in col_lower or 'salesrep' in col_lower:
                 rename_dict[col] = 'Sales Rep'
-            if 'customer' in col_lower and 'customer promise' not in col_lower:
+            if 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
                 rename_dict[col] = 'Customer'
-            if 'doc' in col_lower or 'document' in col_lower:
+            if ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
                 rename_dict[col] = 'Document Number'
         
         # Map specific columns by position (0-indexed)
@@ -466,9 +480,8 @@ def load_all_data():
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
-        # Clean numeric values - FIXED VERSION
+        # Clean numeric values
         def clean_numeric_so(value):
-            # Convert to string first to handle any type
             value_str = str(value).strip()
             if value_str == '' or value_str == 'nan' or value_str == 'None':
                 return 0
@@ -478,7 +491,6 @@ def load_all_data():
             except:
                 return 0
         
-        # Apply cleaning only if Amount column exists
         if 'Amount' in sales_orders_df.columns:
             sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
         
@@ -590,11 +602,11 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     rep_deals_q1 = rep_deals[rep_deals.get('Counts_In_Q4', True) == False]
     
     # Calculate Expect/Commit (Q4 only) with details
-    expect_commit_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])]
+    expect_commit_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])].copy()
     expect_commit = expect_commit_deals['Amount'].sum()
     
     # Calculate Best Case/Opportunity (Q4 only) with details
-    best_opp_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])]
+    best_opp_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
     best_opp = best_opp_deals['Amount'].sum()
     
     # Track Q1 spillover
@@ -777,6 +789,9 @@ def create_status_breakdown_chart(deals_df, rep_name=None):
     # Only show Q4 deals
     deals_df = deals_df[deals_df.get('Counts_In_Q4', True) == True]
     
+    if deals_df.empty:
+        return None
+    
     status_summary = deals_df.groupby('Status')['Amount'].sum().reset_index()
     
     color_map = {
@@ -809,6 +824,9 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
     
     # Only show Q4 deals
     deals_df = deals_df[deals_df.get('Counts_In_Q4', True) == True]
+    
+    if deals_df.empty:
+        return None
     
     # Group by pipeline and status
     pipeline_summary = deals_df.groupby(['Pipeline', 'Status'])['Amount'].sum().reset_index()
@@ -883,7 +901,6 @@ def create_deals_timeline(deals_df, rep_name=None):
     q4_boundary = datetime(2025, 12, 31)
     
     try:
-        # Try with datetime object
         fig.add_vline(
             x=q4_boundary, 
             line_dash="dash", 
@@ -891,26 +908,7 @@ def create_deals_timeline(deals_df, rep_name=None):
             annotation_text="Q4/Q1 Boundary"
         )
     except:
-        # If that fails, try without annotation
-        try:
-            fig.add_shape(
-                type="line",
-                x0=q4_boundary, x1=q4_boundary,
-                y0=0, y1=1,
-                yref="paper",
-                line=dict(color="red", dash="dash")
-            )
-            fig.add_annotation(
-                x=q4_boundary,
-                y=1,
-                yref="paper",
-                text="Q4/Q1 Boundary",
-                showarrow=False,
-                yshift=10
-            )
-        except:
-            # If all else fails, just skip the boundary line
-            pass
+        pass
     
     fig.update_layout(
         height=400,
@@ -947,40 +945,8 @@ def create_invoice_status_chart(invoices_df, rep_name=None):
     
     return fig
 
-def create_customer_invoice_table(invoices_df, rep_name):
-    """Create a detailed customer invoice breakdown table"""
-    
-    if invoices_df.empty:
-        return pd.DataFrame()
-    
-    rep_invoices = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
-    
-    if rep_invoices.empty:
-        return pd.DataFrame()
-    
-    # Group by customer and status
-    customer_summary = rep_invoices.groupby(['Customer', 'Status'])['Amount'].sum().reset_index()
-    
-    # Pivot to show statuses as columns
-    pivot_table = customer_summary.pivot_table(
-        index='Customer',
-        columns='Status',
-        values='Amount',
-        fill_value=0,
-        aggfunc='sum'
-    ).reset_index()
-    
-    # Add total column
-    status_cols = [col for col in pivot_table.columns if col != 'Customer']
-    pivot_table['Total'] = pivot_table[status_cols].sum(axis=1)
-    
-    # Sort by total descending
-    pivot_table = pivot_table.sort_values('Total', ascending=False)
-    
-    return pivot_table
-
 def display_drill_down_section(title, amount, details_df, key_suffix):
-    """Display a collapsible section with order details"""
+    """Display a collapsible section with order details - FIXED for duplicate columns"""
     
     with st.expander(f"{title}: ${amount:,.2f} (Click to see {len(details_df)} items)"):
         if not details_df.empty:
@@ -1003,7 +969,15 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
             display_cols = [col for col in display_cols if col in details_df.columns]
             
             if display_cols:
-                display_df = details_df[display_cols].copy()
+                # FIX: Make sure we only select each column once (no duplicates)
+                display_cols_unique = []
+                seen = set()
+                for col in display_cols:
+                    if col not in seen:
+                        display_cols_unique.append(col)
+                        seen.add(col)
+                
+                display_df = details_df[display_cols_unique].copy()
                 
                 # Format amount column
                 if 'Amount' in display_df.columns:
@@ -1011,7 +985,7 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
                 
                 # Format date columns
                 for col in display_df.columns:
-                    if 'Date' in col and display_df[col].dtype == 'datetime64[ns]':
+                    if 'Date' in col and pd.api.types.is_datetime64_any_dtype(display_df[col]):
                         display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
                 
                 st.dataframe(display_df, use_container_width=True, hide_index=True)
@@ -1373,18 +1347,26 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     
     with col2:
         status_chart = create_status_breakdown_chart(deals_df)
-        st.plotly_chart(status_chart, use_container_width=True)
+        if status_chart:
+            st.plotly_chart(status_chart, use_container_width=True)
+        else:
+            st.info("No deal data available for status breakdown")
     
     # Pipeline breakdown
     st.markdown("### 🔄 Pipeline Analysis")
     pipeline_chart = create_pipeline_breakdown_chart(deals_df)
-    st.plotly_chart(pipeline_chart, use_container_width=True)
+    if pipeline_chart:
+        st.plotly_chart(pipeline_chart, use_container_width=True)
+    else:
+        st.info("No deal data available for pipeline analysis")
     
     # Timeline
     st.markdown("### 📅 Deal Close Timeline")
     timeline_chart = create_deals_timeline(deals_df)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
+    else:
+        st.info("No deal data available for timeline")
     
     # Invoice Status Breakdown
     if not invoices_df.empty:
@@ -1413,8 +1395,11 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
                 'Q1 Spillover': f"${rep_metrics['q1_spillover']:,.0f}"
             })
     
-    rep_summary_df = pd.DataFrame(rep_summary)
-    st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
+    if rep_summary:
+        rep_summary_df = pd.DataFrame(rep_summary)
+        st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
+    else:
+        st.warning("No rep data available")
 
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
@@ -1583,18 +1568,26 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     with col2:
         status_chart = create_status_breakdown_chart(deals_df, rep_name)
-        st.plotly_chart(status_chart, use_container_width=True)
+        if status_chart:
+            st.plotly_chart(status_chart, use_container_width=True)
+        else:
+            st.info("No deal data available for this rep")
     
     # Pipeline breakdown
     st.markdown("### 🔄 Pipeline Analysis")
     pipeline_chart = create_pipeline_breakdown_chart(deals_df, rep_name)
-    st.plotly_chart(pipeline_chart, use_container_width=True)
+    if pipeline_chart:
+        st.plotly_chart(pipeline_chart, use_container_width=True)
+    else:
+        st.info("No deal data available for this rep")
     
     # Timeline
     st.markdown("### 📅 Deal Close Timeline")
     timeline_chart = create_deals_timeline(deals_df, rep_name)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
+    else:
+        st.info("No deal data available for this rep")
 
 # Main app
 def main():
@@ -1689,12 +1682,15 @@ def main():
     if view_mode == "Team Overview":
         display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     elif view_mode == "Individual Rep":
-        rep_name = st.selectbox(
-            "Select Rep:",
-            options=dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else []
-        )
-        if rep_name:
-            display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
+        if not dashboard_df.empty:
+            rep_name = st.selectbox(
+                "Select Rep:",
+                options=dashboard_df['Rep Name'].tolist()
+            )
+            if rep_name:
+                display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
+        else:
+            st.error("No rep data available")
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
