@@ -106,23 +106,54 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v16"
+CACHE_VERSION = "v17"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
     """
-    Load data from Google Sheets with caching
+    Load data from Google Sheets with caching and enhanced error handling
     """
     try:
+        # Check if secrets exist
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Missing Google Cloud credentials in Streamlit secrets")
+            st.info("""
+            **To fix this:**
+            1. Go to your Streamlit Cloud dashboard
+            2. Click on your app settings
+            3. Go to 'Secrets' section
+            4. Add your Google Service Account JSON credentials
+            
+            Format:
+            ```
+            [gcp_service_account]
+            type = "service_account"
+            project_id = "your-project-id"
+            private_key_id = "your-key-id"
+            private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+            client_email = "your-service-account@project.iam.gserviceaccount.com"
+            client_id = "your-client-id"
+            auth_uri = "https://accounts.google.com/o/oauth2/auth"
+            token_uri = "https://oauth2.googleapis.com/token"
+            auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+            client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
+            ```
+            """)
+            return pd.DataFrame()
+        
         # Load credentials from Streamlit secrets
-        creds_dict = st.secrets["gcp_service_account"]
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        
+        # Create credentials
         creds = service_account.Credentials.from_service_account_info(
             creds_dict, scopes=SCOPES
         )
         
+        # Build service
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         
+        # Fetch data
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{sheet_name}!{range_name}"
@@ -131,7 +162,7 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         values = result.get('values', [])
         
         if not values:
-            st.warning(f"No data found in {sheet_name}!{range_name}")
+            st.warning(f"⚠️ No data found in {sheet_name}!{range_name}")
             return pd.DataFrame()
         
         # Handle mismatched column counts - pad shorter rows with empty strings
@@ -143,10 +174,38 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
+        
+        # Success message (only in sidebar to avoid clutter)
+        st.sidebar.success(f"✅ Loaded {len(df)} rows from {sheet_name}")
+        
         return df
         
     except Exception as e:
-        st.error(f"Error loading data from {sheet_name}: {str(e)}")
+        error_msg = str(e)
+        st.error(f"❌ Error loading data from {sheet_name}: {error_msg}")
+        
+        # Provide specific troubleshooting based on error type
+        if "403" in error_msg or "permission" in error_msg.lower():
+            st.warning("""
+            **Permission Error:**
+            - Make sure you've shared the Google Sheet with your service account email
+            - The service account email looks like: `your-service-account@project.iam.gserviceaccount.com`
+            - Share the sheet with 'Viewer' access
+            """)
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            st.warning("""
+            **Sheet Not Found:**
+            - Check that the spreadsheet ID is correct
+            - Check that the sheet name matches exactly (case-sensitive)
+            - Current spreadsheet ID: `12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk`
+            """)
+        elif "401" in error_msg or "authentication" in error_msg.lower():
+            st.warning("""
+            **Authentication Error:**
+            - Your service account credentials may be invalid
+            - Try regenerating the service account key in Google Cloud Console
+            """)
+        
         return pd.DataFrame()
 
 def apply_q4_fulfillment_logic(deals_df):
@@ -218,6 +277,8 @@ def apply_q4_fulfillment_logic(deals_df):
 
 def load_all_data():
     """Load all necessary data from Google Sheets"""
+    
+    st.sidebar.info("🔄 Loading data from Google Sheets...")
     
     # Load deals data - extend range to include all columns
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:I", version=CACHE_VERSION)
@@ -1084,65 +1145,6 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
         }
     }
     
-    # Boss's pipeline numbers - UPDATED from latest screenshot
-    boss_pipeline_numbers = {
-        'Retention (Existing Product)': {
-            'invoiced': 492355,
-            'pending_fulfillment': 56113,
-            'pending_approval': 10795,
-            'hubspot': 610334,
-            'total': 1170400,
-            'pending_fulfillment_so_no_date': 69273,
-            'pending_approval_so_no_date': 13219,
-            'old_pending_approval': 2311,
-            'total_q4': 1255204
-        },
-        'Growth Pipeline (Upsell/Cross-sell)': {
-            'invoiced': 219590,
-            'pending_fulfillment': 111923,
-            'pending_approval': 27141,
-            'hubspot': 194890,
-            'total': 503847,
-            'pending_fulfillment_so_no_date': 43848,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 0,
-            'total_q4': 547495
-        },
-        'Acquisition (New Customer)': {
-            'invoiced': 119086,
-            'pending_fulfillment': 84523,
-            'pending_approval': 18825,
-            'hubspot': 194103,
-            'total': 416537,
-            'pending_fulfillment_so_no_date': 34146,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 500,
-            'total_q4': 451183
-        },
-        'SO Manually Built': {
-            'invoiced': 438019,
-            'pending_fulfillment': 375415,
-            'pending_approval': 39032,
-            'hubspot': 0,
-            'total': 842467,
-            'pending_fulfillment_so_no_date': 31036,
-            'pending_approval_so_no_date': 66142,
-            'old_pending_approval': 95641,
-            'total_q4': 1035286
-        },
-        'Ecommerce Pipeline': {
-            'invoiced': 26586,
-            'pending_fulfillment': 91268,
-            'pending_approval': 9831,
-            'hubspot': 0,
-            'total': 127685,
-            'pending_fulfillment_so_no_date': 30484,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 15388,
-            'total_q4': 181343
-        }
-    }
-    
     # Tab selection for Rep vs Pipeline view
     tab1, tab2 = st.tabs(["By Rep", "By Pipeline"])
     
@@ -1617,6 +1619,23 @@ def main():
         
         st.markdown("---")
         
+        # Connection diagnostics
+        with st.expander("🔧 Connection Diagnostics"):
+            st.write("**Spreadsheet ID:**")
+            st.code(SPREADSHEET_ID)
+            
+            if "gcp_service_account" in st.secrets:
+                st.success("✅ GCP credentials found")
+                try:
+                    creds_dict = dict(st.secrets["gcp_service_account"])
+                    if 'client_email' in creds_dict:
+                        st.info(f"Service account: {creds_dict['client_email']}")
+                        st.caption("Make sure this email has 'Viewer' access to your Google Sheet")
+                except:
+                    st.error("Error reading credentials")
+            else:
+                st.error("❌ GCP credentials missing")
+        
         # Last updated
         current_time = datetime.now()
         st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1630,16 +1649,41 @@ def main():
     with st.spinner("Loading data from Google Sheets..."):
         deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
     
-    if deals_df.empty or dashboard_df.empty:
-        st.error("Unable to load data. Please check your Google Sheets connection.")
-        st.info("""
-        **Setup Instructions:**
-        1. Add your Google Service Account credentials to Streamlit secrets
-        2. Share your Google Sheet with the service account email
-        3. Verify the spreadsheet ID in the code
-        4. Ensure 'Product Type' column exists in HubSpot data for lead time calculations
-        """)
+    # Check if data loaded successfully
+    if deals_df.empty and dashboard_df.empty:
+        st.error("❌ Unable to load data. Please check your Google Sheets connection.")
+        
+        with st.expander("📋 Setup Checklist"):
+            st.markdown("""
+            ### Quick Setup Guide:
+            
+            1. **Google Cloud Setup:**
+               - Create a service account in Google Cloud Console
+               - Download the JSON key file
+               - Note the service account email (ends with @iam.gserviceaccount.com)
+            
+            2. **Share Your Google Sheet:**
+               - Open your Google Sheet
+               - Click 'Share' button
+               - Add the service account email
+               - Give 'Viewer' permission
+            
+            3. **Add Credentials to Streamlit:**
+               - Go to your Streamlit Cloud dashboard
+               - Click on your app
+               - Go to Settings → Secrets
+               - Paste your service account JSON in the format shown in diagnostics above
+            
+            4. **Verify Sheet Structure:**
+               - Ensure sheet names match: 'All Reps All Pipelines', 'Dashboard Info', 'NS Invoices', 'NS Sales Orders'
+               - Verify columns are in the expected positions
+            """)
+        
         return
+    elif deals_df.empty:
+        st.warning("⚠️ Deals data is empty. Check 'All Reps All Pipelines' sheet.")
+    elif dashboard_df.empty:
+        st.warning("⚠️ Dashboard info is empty. Check 'Dashboard Info' sheet.")
     
     # Display appropriate dashboard
     if view_mode == "Team Overview":
@@ -1647,9 +1691,10 @@ def main():
     elif view_mode == "Individual Rep":
         rep_name = st.selectbox(
             "Select Rep:",
-            options=dashboard_df['Rep Name'].tolist()
+            options=dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else []
         )
-        display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
+        if rep_name:
+            display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
