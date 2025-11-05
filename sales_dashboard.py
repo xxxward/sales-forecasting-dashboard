@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v21_dynamic_q4"
+CACHE_VERSION = "v23_q4_2025_only"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -398,26 +398,25 @@ def load_all_data():
             else:
                 st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
-            # DYNAMIC Q4 FILTER - Use the most recent Q4 in the data
+            # FILTER: Only Q4 2025 deals (Oct 1 - Dec 31, 2025)
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            
             if 'Close Date' in deals_df.columns:
-                valid_dates = deals_df['Close Date'].dropna()
-                if len(valid_dates) > 0:
-                    # Find the most recent year with data
-                    max_year = valid_dates.max().year
-                    
-                    # Use Q4 of the most recent year
-                    q4_start = pd.Timestamp(f'{max_year}-10-01')
-                    q4_end = pd.Timestamp(f'{max_year}-12-31')
-                    
-                    st.sidebar.warning(f"🔄 Using Q4 {max_year} filter (Oct-Dec {max_year}) based on data date range")
-                    
-                    deals_df = deals_df[
-                        (deals_df['Close Date'] >= q4_start) & 
-                        (deals_df['Close Date'] <= q4_end)
-                    ]
-                    st.sidebar.info(f"📅 After Q4 {max_year} filter: {len(deals_df)} deals")
+                before_count = len(deals_df)
+                deals_df = deals_df[
+                    (deals_df['Close Date'] >= q4_start) & 
+                    (deals_df['Close Date'] <= q4_end)
+                ]
+                after_count = len(deals_df)
+                
+                st.sidebar.info(f"📅 Q4 2025 Filter: {before_count} deals → {after_count} deals")
+                
+                if after_count == 0:
+                    st.sidebar.error("❌ No deals found in Q4 2025 (Oct-Dec 2025)")
+                    st.sidebar.info("💡 Your data range is 2019-2021. You may need to refresh your Google Sheet with current HubSpot data.")
                 else:
-                    st.sidebar.error("❌ No valid dates to filter on!")
+                    st.sidebar.success(f"✅ Found {after_count} Q4 2025 deals worth ${deals_df['Amount'].sum():,.0f}")
             else:
                 st.sidebar.error("❌ Cannot apply date filter - no Close Date column")
             
@@ -1413,16 +1412,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
     
-    # Determine which quarter we're showing based on the data
-    if not deals_df.empty and 'Close Date' in deals_df.columns:
-        valid_dates = deals_df['Close Date'].dropna()
-        if len(valid_dates) > 0:
-            year = valid_dates.max().year
-            st.title(f"🎯 Team Sales Dashboard - Q4 {year}")
-        else:
-            st.title("🎯 Team Sales Dashboard - Q4")
-    else:
-        st.title("🎯 Team Sales Dashboard - Q4")
+    st.title("🎯 Team Sales Dashboard - Q4 2025")
     
     # Calculate metrics
     metrics = calculate_team_metrics(deals_df, dashboard_df)
@@ -1538,16 +1528,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
     
-    # Determine which quarter we're showing
-    if not deals_df.empty and 'Close Date' in deals_df.columns:
-        valid_dates = deals_df['Close Date'].dropna()
-        if len(valid_dates) > 0:
-            year = valid_dates.max().year
-            st.title(f"👤 {rep_name}'s Q4 {year} Forecast")
-        else:
-            st.title(f"👤 {rep_name}'s Q4 Forecast")
-    else:
-        st.title(f"👤 {rep_name}'s Q4 Forecast")
+    st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
     
     # Calculate metrics with details
     metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
