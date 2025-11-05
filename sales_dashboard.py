@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v24_q1_spillover_tracking"
+CACHE_VERSION = "v25_pa_q4_filter"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -746,11 +746,17 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
         
         if not pending_approval_orders.empty:
-            # Pending Approval WITH dates (Column AB has a date)
+            # Define Q4 2025 date range
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            
+            # Pending Approval WITH dates (Column AB has a date AND it's in Q4 2025)
             if 'Pending Approval Date' in pending_approval_orders.columns:
                 pa_with_date_mask = (
                     (pending_approval_orders['Pending Approval Date'].notna()) &
-                    (pending_approval_orders['Pending Approval Date'] != 'No Date')
+                    (pending_approval_orders['Pending Approval Date'] != 'No Date') &
+                    (pending_approval_orders['Pending Approval Date'] >= q4_start) &
+                    (pending_approval_orders['Pending Approval Date'] <= q4_end)
                 )
                 pending_approval_details = pending_approval_orders[pa_with_date_mask].copy()
                 # Remove duplicate columns
@@ -758,7 +764,7 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                     pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
                 pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
                 
-                # Pending Approval WITHOUT dates
+                # Pending Approval WITHOUT dates OR outside Q4
                 pa_no_date_mask = ~pa_with_date_mask
                 pending_approval_no_date_details = pending_approval_orders[pa_no_date_mask].copy()
                 # Remove duplicate columns
