@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v28_cosmetic_fixes"
+CACHE_VERSION = "v29_force_refresh"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1572,7 +1572,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
                 'Rep': rep_name,
                 'Quota': f"${rep_metrics['quota']:,.0f}",
                 'Orders': f"${rep_metrics['orders']:,.0f}",
-                'Expect/Commit': f"${rep_metrics['expect_commit']:,.0f}",
+                'Expect/Commit (Q4)': f"${rep_metrics['expect_commit']:,.0f}",
                 'Pending Approval': f"${rep_metrics['pending_approval']:,.0f}",
                 'Pending Fulfillment': f"${rep_metrics['pending_fulfillment']:,.0f}",
                 'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
