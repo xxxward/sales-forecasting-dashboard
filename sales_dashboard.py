@@ -2142,8 +2142,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
 
 # Main app
 def main():
-    def main():
-    
     # Sidebar
     with st.sidebar:
         # Display company name
@@ -2164,54 +2162,9 @@ def main():
         
         # Rep selection if needed
         selected_rep = None
-        if view_mode == "Individual Rep" and not dashboard_df.empty:
-            selected_rep = st.selectbox(
-                "Select Rep:",
-                options=dashboard_df['Rep Name'].tolist()
-            )
-        
-        st.markdown("---")
-        
-        # ... rest of your sidebar code ...
-    
-    # Load data
-    with st.spinner("Loading data from Google Sheets..."):
-        deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
-    
-    # Check if data loaded
-    if deals_df.empty and dashboard_df.empty:
-        st.error("❌ Unable to load data...")
-        return
-    
-    # **ADD CLAUDE CHAT HERE - after data loads, before displaying dashboards**
-    with st.sidebar:
-        render_claude_chat(deals_df, dashboard_df, sales_orders_df, view_mode, selected_rep)
-    
-    # Display appropriate dashboard
-    if view_mode == "Team Overview":
-        display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
-    elif view_mode == "Individual Rep":
-        if selected_rep:
-            display_rep_dashboard(selected_rep, deals_df, dashboard_df, invoices_df, sales_orders_df)
-    else:
-        display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
-    # Sidebar
-    with st.sidebar:
-        # Display company name
-        st.markdown("""
-        <div style="text-align: center; padding: 20px;">
-            <h2>CALYX</h2>
-            <p style="font-size: 12px; letter-spacing: 3px;">CONTAINERS</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown("---")
-        
-        st.markdown("### 🎯 Dashboard Navigation")
-        view_mode = st.radio(
-            "Select View:",
-            ["Team Overview", "Individual Rep", "Reconciliation"],
-            label_visibility="collapsed"
-        )
+        if view_mode == "Individual Rep":
+            # We'll populate this after data loads
+            pass
         
         st.markdown("---")
         
@@ -2281,19 +2234,27 @@ def main():
     elif dashboard_df.empty:
         st.warning("⚠️ Dashboard info is empty. Check 'Dashboard Info' sheet.")
     
+    # Now that data is loaded, handle rep selection for Individual Rep view
+    if view_mode == "Individual Rep" and not dashboard_df.empty:
+        with st.sidebar:
+            selected_rep = st.selectbox(
+                "Select Rep:",
+                options=dashboard_df['Rep Name'].tolist()
+            )
+    
+    # **ADD CLAUDE CHAT HERE - after data loads and rep selection**
+    with st.sidebar:
+        st.markdown("---")
+        render_claude_chat(deals_df, dashboard_df, sales_orders_df, view_mode, selected_rep)
+    
     # Display appropriate dashboard
     if view_mode == "Team Overview":
         display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     elif view_mode == "Individual Rep":
-        if not dashboard_df.empty:
-            rep_name = st.selectbox(
-                "Select Rep:",
-                options=dashboard_df['Rep Name'].tolist()
-            )
-            if rep_name:
-                display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
+        if selected_rep:
+            display_rep_dashboard(selected_rep, deals_df, dashboard_df, invoices_df, sales_orders_df)
         else:
-            st.error("No rep data available")
+            st.info("Please select a rep from the sidebar")
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
