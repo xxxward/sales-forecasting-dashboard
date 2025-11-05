@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v19"
+CACHE_VERSION = "v20"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -290,8 +290,7 @@ def load_all_data():
             st.sidebar.info(f"First 10 columns: {col_names[:10]}")
             
             # Map based on ACTUAL column names from your sheet
-            # Your columns: Record ID, Deal Name, Deal Stage, Close Date, Deal Owner First Name, 
-            # Deal Owner Last Name, Amount, Close Status, Pipeline, Create Date, Netsuite SO#, etc.
+            # Note: Column 4 appears to be "Deal Owner First Name Deal Owner Last Name" combined
             
             rename_dict = {}
             
@@ -305,6 +304,9 @@ def load_all_data():
                     rename_dict[col] = 'Deal Stage'
                 elif col == 'Close Date':
                     rename_dict[col] = 'Close Date'
+                elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
+                    # This column has both names already combined
+                    rename_dict[col] = 'Deal Owner'
                 elif col == 'Deal Owner First Name':
                     rename_dict[col] = 'Deal Owner First Name'
                 elif col == 'Deal Owner Last Name':
@@ -322,12 +324,19 @@ def load_all_data():
             
             deals_df = deals_df.rename(columns=rename_dict)
             
-            # Create a combined "Deal Owner" field from First Name + Last Name
-            if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
-                deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
-                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
+            # Check if Deal Owner already exists (from combined column)
+            if 'Deal Owner' not in deals_df.columns:
+                # Create a combined "Deal Owner" field from First Name + Last Name if they're separate
+                if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
+                    deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+                    deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
+                    st.sidebar.success("✅ Created Deal Owner from First + Last Name")
+                else:
+                    st.sidebar.error("❌ Missing Deal Owner column!")
             else:
-                st.sidebar.error("Missing Deal Owner name columns!")
+                st.sidebar.success("✅ Deal Owner column already exists")
+                # Clean up the Deal Owner field
+                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
             
             # Show what we have after renaming
             st.sidebar.success(f"✅ Columns after rename: {', '.join([c for c in deals_df.columns.tolist()[:10] if c])}")
@@ -356,6 +365,24 @@ def load_all_data():
             # Convert close date to datetime
             if 'Close Date' in deals_df.columns:
                 deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+                
+                # Debug: Show date range in the data
+                valid_dates = deals_df['Close Date'].dropna()
+                if len(valid_dates) > 0:
+                    min_date = valid_dates.min()
+                    max_date = valid_dates.max()
+                    st.sidebar.info(f"📅 Date range in data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
+                    
+                    # Count deals in each quarter
+                    q4_2024_count = len(deals_df[(deals_df['Close Date'] >= '2024-10-01') & (deals_df['Close Date'] <= '2024-12-31')])
+                    q1_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-01-01') & (deals_df['Close Date'] <= '2025-03-31')])
+                    q2_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-04-01') & (deals_df['Close Date'] <= '2025-06-30')])
+                    q3_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-07-01') & (deals_df['Close Date'] <= '2025-09-30')])
+                    q4_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-10-01') & (deals_df['Close Date'] <= '2025-12-31')])
+                    
+                    st.sidebar.info(f"Q4 2024: {q4_2024_count} | Q1 2025: {q1_2025_count} | Q2 2025: {q2_2025_count} | Q3 2025: {q3_2025_count} | Q4 2025: {q4_2025_count}")
+                else:
+                    st.sidebar.error("❌ No valid dates found in Close Date column!")
             else:
                 st.sidebar.error("❌ No Close Date column found!")
             
