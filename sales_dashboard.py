@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v26_accuracy_fix"
+CACHE_VERSION = "v27_unboundlocalerror_fix"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1437,18 +1437,20 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     # Summary
     st.markdown("### 📊 Key Insights")
     
+    # Calculate differences first
+    diff = totals['total_boss'] - totals['total_you']
+    final_diff = additional_totals['final_boss'] - additional_totals['final_you']
+    
     # Debug: Show the actual totals being compared
     st.caption(f"Debug: Your Total = ${additional_totals['final_you']:,.0f} | Boss Total = ${additional_totals['final_boss']:,.0f} | Diff = ${abs(final_diff):,.0f}")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        diff = totals['total_boss'] - totals['total_you']
         st.metric("Section 1 Variance", f"${abs(diff):,.0f}", 
                  delta=f"{'Under' if diff > 0 else 'Over'} by ${abs(diff):,.0f}")
     
     with col2:
-        final_diff = additional_totals['final_boss'] - additional_totals['final_you']
         st.metric("Total Q4 Variance", f"${abs(final_diff):,.0f}",
                  delta=f"{'Under' if final_diff > 0 else 'Over'} by ${abs(final_diff):,.0f}")
     
