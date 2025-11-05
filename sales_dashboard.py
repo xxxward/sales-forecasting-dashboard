@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v20"
+CACHE_VERSION = "v21_dynamic_q4"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -398,16 +398,28 @@ def load_all_data():
             else:
                 st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
-            # FILTER: Only Q4 2025 deals
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
+            # DYNAMIC Q4 FILTER - Use the most recent Q4 in the data
             if 'Close Date' in deals_df.columns:
-                deals_df = deals_df[
-                    (deals_df['Close Date'] >= q4_start) & 
-                    (deals_df['Close Date'] <= q4_end)
-                ]
-                st.sidebar.info(f"📅 After Q4 filter: {len(deals_df)} deals")
+                valid_dates = deals_df['Close Date'].dropna()
+                if len(valid_dates) > 0:
+                    # Find the most recent year with data
+                    max_year = valid_dates.max().year
+                    
+                    # Use Q4 of the most recent year
+                    q4_start = pd.Timestamp(f'{max_year}-10-01')
+                    q4_end = pd.Timestamp(f'{max_year}-12-31')
+                    
+                    st.sidebar.warning(f"🔄 Using Q4 {max_year} filter (Oct-Dec {max_year}) based on data date range")
+                    
+                    deals_df = deals_df[
+                        (deals_df['Close Date'] >= q4_start) & 
+                        (deals_df['Close Date'] <= q4_end)
+                    ]
+                    st.sidebar.info(f"📅 After Q4 {max_year} filter: {len(deals_df)} deals")
+                else:
+                    st.sidebar.error("❌ No valid dates to filter on!")
+            else:
+                st.sidebar.error("❌ Cannot apply date filter - no Close Date column")
             
             # FILTER OUT unwanted deal stages
             excluded_stages = [
@@ -1401,7 +1413,16 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
     
-    st.title("🎯 Team Sales Dashboard - Q4 2025")
+    # Determine which quarter we're showing based on the data
+    if not deals_df.empty and 'Close Date' in deals_df.columns:
+        valid_dates = deals_df['Close Date'].dropna()
+        if len(valid_dates) > 0:
+            year = valid_dates.max().year
+            st.title(f"🎯 Team Sales Dashboard - Q4 {year}")
+        else:
+            st.title("🎯 Team Sales Dashboard - Q4")
+    else:
+        st.title("🎯 Team Sales Dashboard - Q4")
     
     # Calculate metrics
     metrics = calculate_team_metrics(deals_df, dashboard_df)
@@ -1517,7 +1538,16 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
     
-    st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
+    # Determine which quarter we're showing
+    if not deals_df.empty and 'Close Date' in deals_df.columns:
+        valid_dates = deals_df['Close Date'].dropna()
+        if len(valid_dates) > 0:
+            year = valid_dates.max().year
+            st.title(f"👤 {rep_name}'s Q4 {year} Forecast")
+        else:
+            st.title(f"👤 {rep_name}'s Q4 Forecast")
+    else:
+        st.title(f"👤 {rep_name}'s Q4 Forecast")
     
     # Calculate metrics with details
     metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
