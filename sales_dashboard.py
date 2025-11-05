@@ -454,31 +454,36 @@ def load_all_data():
         
         rename_dict = {}
         
-        # Find standard columns
+        # Find standard columns - only map FIRST occurrence
         for idx, col in enumerate(col_names):
             col_lower = str(col).lower()
             if 'status' in col_lower and 'Status' not in rename_dict.values():
                 rename_dict[col] = 'Status'
-            if ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
+            elif ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
                 rename_dict[col] = 'Amount'
-            if 'sales rep' in col_lower or 'salesrep' in col_lower:
+            elif ('sales rep' in col_lower or 'salesrep' in col_lower) and 'Sales Rep' not in rename_dict.values():
                 rename_dict[col] = 'Sales Rep'
-            if 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
+            elif 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
                 rename_dict[col] = 'Customer'
-            if ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
+            elif ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
                 rename_dict[col] = 'Document Number'
         
-        # Map specific columns by position (0-indexed)
-        if len(col_names) > 8:
+        # Map specific columns by position (0-indexed) - be more careful
+        if len(col_names) > 8 and 'Order Start Date' not in rename_dict.values():
             rename_dict[col_names[8]] = 'Order Start Date'  # Column I
-        if len(col_names) > 11:
+        if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
             rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
-        if len(col_names) > 12:
+        if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
             rename_dict[col_names[12]] = 'Projected Date'  # Column M
-        if len(col_names) > 27:
+        if len(col_names) > 27 and 'Pending Approval Date' not in rename_dict.values():
             rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
+        
+        # CRITICAL: Remove any duplicate columns that may have been created
+        if sales_orders_df.columns.duplicated().any():
+            st.sidebar.warning(f"⚠️ Removed duplicate columns in Sales Orders: {sales_orders_df.columns[sales_orders_df.columns.duplicated()].tolist()}")
+            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
         
         # Clean numeric values
         def clean_numeric_so(value):
@@ -603,11 +608,17 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     
     # Calculate Expect/Commit (Q4 only) with details
     expect_commit_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])].copy()
-    expect_commit = expect_commit_deals['Amount'].sum()
+    # Remove duplicate columns if any
+    if expect_commit_deals.columns.duplicated().any():
+        expect_commit_deals = expect_commit_deals.loc[:, ~expect_commit_deals.columns.duplicated()]
+    expect_commit = expect_commit_deals['Amount'].sum() if not expect_commit_deals.empty else 0
     
     # Calculate Best Case/Opportunity (Q4 only) with details
     best_opp_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    best_opp = best_opp_deals['Amount'].sum()
+    # Remove duplicate columns if any
+    if best_opp_deals.columns.duplicated().any():
+        best_opp_deals = best_opp_deals.loc[:, ~best_opp_deals.columns.duplicated()]
+    best_opp = best_opp_deals['Amount'].sum() if not best_opp_deals.empty else 0
     
     # Track Q1 spillover
     q1_spillover = rep_deals_q1['Amount'].sum()
@@ -627,7 +638,12 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     pending_fulfillment_no_date = 0
     
     if sales_orders_df is not None and not sales_orders_df.empty:
+        # Make a clean copy and ensure no duplicate columns
         rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+        
+        # Remove duplicate columns if any exist
+        if rep_orders.columns.duplicated().any():
+            rep_orders = rep_orders.loc[:, ~rep_orders.columns.duplicated()]
         
         # PENDING APPROVAL LOGIC
         pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
@@ -640,18 +656,27 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                     (pending_approval_orders['Pending Approval Date'] != 'No Date')
                 )
                 pending_approval_details = pending_approval_orders[pa_with_date_mask].copy()
-                pending_approval = pending_approval_details['Amount'].sum()
+                # Remove duplicate columns
+                if pending_approval_details.columns.duplicated().any():
+                    pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
+                pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
                 
                 # Pending Approval WITHOUT dates
                 pa_no_date_mask = ~pa_with_date_mask
                 pending_approval_no_date_details = pending_approval_orders[pa_no_date_mask].copy()
-                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum()
+                # Remove duplicate columns
+                if pending_approval_no_date_details.columns.duplicated().any():
+                    pending_approval_no_date_details = pending_approval_no_date_details.loc[:, ~pending_approval_no_date_details.columns.duplicated()]
+                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum() if not pending_approval_no_date_details.empty else 0
             
             # Old Pending Approval (Order Start Date > 14 business days)
             if 'Age_Business_Days' in pending_approval_orders.columns:
                 old_mask = pending_approval_orders['Age_Business_Days'] > 14
                 pending_approval_old_details = pending_approval_orders[old_mask].copy()
-                pending_approval_old = pending_approval_old_details['Amount'].sum()
+                # Remove duplicate columns
+                if pending_approval_old_details.columns.duplicated().any():
+                    pending_approval_old_details = pending_approval_old_details.loc[:, ~pending_approval_old_details.columns.duplicated()]
+                pending_approval_old = pending_approval_old_details['Amount'].sum() if not pending_approval_old_details.empty else 0
         
         # PENDING FULFILLMENT LOGIC
         fulfillment_orders = rep_orders[
@@ -676,7 +701,10 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             
             # Pending Fulfillment WITH Q4 dates
             pending_fulfillment_details = fulfillment_orders[fulfillment_orders['Has_Q4_Date'] == True].copy()
-            pending_fulfillment = pending_fulfillment_details['Amount'].sum()
+            # Remove duplicate columns
+            if pending_fulfillment_details.columns.duplicated().any():
+                pending_fulfillment_details = pending_fulfillment_details.loc[:, ~pending_fulfillment_details.columns.duplicated()]
+            pending_fulfillment = pending_fulfillment_details['Amount'].sum() if not pending_fulfillment_details.empty else 0
             
             # Pending Fulfillment WITHOUT dates
             no_date_mask = (
@@ -684,7 +712,10 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                 (fulfillment_orders['Projected Date'].isna())
             )
             pending_fulfillment_no_date_details = fulfillment_orders[no_date_mask].copy()
-            pending_fulfillment_no_date = pending_fulfillment_no_date_details['Amount'].sum()
+            # Remove duplicate columns
+            if pending_fulfillment_no_date_details.columns.duplicated().any():
+                pending_fulfillment_no_date_details = pending_fulfillment_no_date_details.loc[:, ~pending_fulfillment_no_date_details.columns.duplicated()]
+            pending_fulfillment_no_date = pending_fulfillment_no_date_details['Amount'].sum() if not pending_fulfillment_no_date_details.empty else 0
     
     # Total calculations
     total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
@@ -950,6 +981,12 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
     
     with st.expander(f"{title}: ${amount:,.2f} (Click to see {len(details_df)} items)"):
         if not details_df.empty:
+            # DEBUG: Check for duplicate columns
+            if details_df.columns.duplicated().any():
+                st.warning(f"⚠️ Duplicate columns detected: {details_df.columns[details_df.columns.duplicated()].tolist()}")
+                # Remove duplicates
+                details_df = details_df.loc[:, ~details_df.columns.duplicated()]
+            
             # Select relevant columns to display
             display_cols = []
             
@@ -962,36 +999,48 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
                                'Customer Promise Date', 'Projected Date']
             
             for col in priority_cols:
-                if col in details_df.columns:
+                if col in details_df.columns and col not in display_cols:
                     display_cols.append(col)
             
-            # Limit to available columns
-            display_cols = [col for col in display_cols if col in details_df.columns]
+            # Limit to available columns (no duplicates)
+            display_cols_unique = []
+            for col in display_cols:
+                if col not in display_cols_unique:
+                    display_cols_unique.append(col)
             
-            if display_cols:
-                # FIX: Make sure we only select each column once (no duplicates)
-                display_cols_unique = []
-                seen = set()
-                for col in display_cols:
-                    if col not in seen:
-                        display_cols_unique.append(col)
-                        seen.add(col)
-                
-                display_df = details_df[display_cols_unique].copy()
-                
-                # Format amount column
-                if 'Amount' in display_df.columns:
-                    display_df['Amount'] = display_df['Amount'].apply(lambda x: f"${x:,.2f}")
-                
-                # Format date columns
-                for col in display_df.columns:
-                    if 'Date' in col and pd.api.types.is_datetime64_any_dtype(display_df[col]):
-                        display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
-                
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
-                
-                # Summary statistics
-                st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
+            if display_cols_unique:
+                try:
+                    display_df = details_df[display_cols_unique].copy()
+                    
+                    # Double-check for duplicates in display_df
+                    if display_df.columns.duplicated().any():
+                        st.error(f"Still have duplicates: {display_df.columns.tolist()}")
+                        display_df = display_df.loc[:, ~display_df.columns.duplicated()]
+                    
+                    # Format amount column
+                    if 'Amount' in display_df.columns:
+                        display_df['Amount'] = display_df['Amount'].apply(lambda x: f"${x:,.2f}")
+                    
+                    # Format date columns
+                    for col in display_df.columns:
+                        if 'Date' in col and pd.api.types.is_datetime64_any_dtype(display_df[col]):
+                            display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
+                    
+                    # Final check before display
+                    if display_df.columns.duplicated().any():
+                        st.error("Cannot display: duplicate columns persist")
+                        st.write(f"Columns: {display_df.columns.tolist()}")
+                    else:
+                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        
+                        # Summary statistics
+                        st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
+                except Exception as e:
+                    st.error(f"Error displaying data: {str(e)}")
+                    st.write(f"Available columns: {details_df.columns.tolist()}")
+                    st.write(f"Attempted to display: {display_cols_unique}")
+            else:
+                st.info("No columns available to display")
         else:
             st.info("No items in this category")
 
