@@ -1,7 +1,7 @@
 """
-Sales Forecasting Dashboard - Enhanced Version
+Sales Forecasting Dashboard - Enhanced Version with Drill-Down Capability
 Reads from Google Sheets and displays gap-to-goal analysis with interactive visualizations
-Includes lead time logic for Q4/Q1 fulfillment determination
+Includes lead time logic for Q4/Q1 fulfillment determination and detailed order drill-downs
 """
 
 import streamlit as st
@@ -89,6 +89,12 @@ st.markdown("""
         margin: 15px 0;
         font-weight: bold;
     }
+    .drill-down-section {
+        background: #f8f9fa;
+        padding: 10px;
+        border-radius: 8px;
+        margin: 10px 0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -100,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v15"
+CACHE_VERSION = "v16"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -213,7 +219,7 @@ def apply_q4_fulfillment_logic(deals_df):
 def load_all_data():
     """Load all necessary data from Google Sheets"""
     
-    # Load deals data
+    # Load deals data - extend range to include all columns
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:I", version=CACHE_VERSION)
     
     # Load dashboard info (rep quotas and orders)
@@ -222,8 +228,8 @@ def load_all_data():
     # Load invoice data from NetSuite
     invoices_df = load_google_sheets_data("NS Invoices", "A:Z", version=CACHE_VERSION)
     
-    # Load sales orders data from NetSuite
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:Z", version=CACHE_VERSION)
+    # Load sales orders data from NetSuite - EXTEND to include Column AB
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AB", version=CACHE_VERSION)
     
     # Clean and process deals data
     if not deals_df.empty and len(deals_df.columns) >= 8:
@@ -235,6 +241,7 @@ def load_all_data():
             # Map columns by position
             rename_dict = {
                 col_names[1]: 'Deal Name',
+                col_names[2]: 'Deal Stage',  # Column C - for filtering
                 col_names[3]: 'Close Date',
                 col_names[4]: 'Deal Owner',
                 col_names[5]: 'Amount',
@@ -262,6 +269,28 @@ def load_all_data():
             
             # Convert close date to datetime
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+            
+            # FILTER: Only Q4 2025 deals
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            deals_df = deals_df[
+                (deals_df['Close Date'] >= q4_start) & 
+                (deals_df['Close Date'] <= q4_end)
+            ]
+            
+            # FILTER OUT unwanted deal stages
+            excluded_stages = [
+                '', '(Blanks)', None, 'Cancelled', 'checkout abandoned', 
+                'closed lost', 'closed won', 'sales order created in NS', 
+                'NCR', 'Shipped'
+            ]
+            
+            # Convert Deal Stage to string and handle NaN
+            deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
+            deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
+            
+            # Filter out excluded stages
+            deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
             
             # Apply Q4 fulfillment logic
             deals_df = apply_q4_fulfillment_logic(deals_df)
@@ -342,129 +371,94 @@ def load_all_data():
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
     
-    # Process sales orders data
+    # Process sales orders data with NEW LOGIC
     if not sales_orders_df.empty:
-        status_col = None
-        amount_col = None
-        sales_rep_col = None
-        date_col = None
-        pending_fulfillment_date_col = None
-        projected_date_col = None
-        customer_promise_col = None
+        # Store all columns for drill-down display
+        sales_orders_df_original_cols = sales_orders_df.columns.tolist()
         
-        for col in sales_orders_df.columns:
+        # Map column positions
+        col_names = sales_orders_df.columns.tolist()
+        
+        rename_dict = {}
+        
+        # Find standard columns
+        for idx, col in enumerate(col_names):
             col_lower = str(col).lower()
-            if 'status' in col_lower and not status_col:
-                status_col = col
-            if ('amount' in col_lower or 'total' in col_lower) and not amount_col:
-                amount_col = col
-            if ('sales rep' in col_lower or 'salesrep' in col_lower) and not sales_rep_col:
-                sales_rep_col = col
-            if col_lower == 'date' and not date_col:
-                date_col = col
-            if 'pending fulfillment date' in col_lower:
-                pending_fulfillment_date_col = col
-            if 'projected date' in col_lower:
-                projected_date_col = col
-            if 'customer promise last date to ship' in col_lower:
-                customer_promise_col = col
+            if 'status' in col_lower:
+                rename_dict[col] = 'Status'
+            if 'amount' in col_lower or 'total' in col_lower:
+                rename_dict[col] = 'Amount'
+            if 'sales rep' in col_lower or 'salesrep' in col_lower:
+                rename_dict[col] = 'Sales Rep'
+            if 'customer' in col_lower and 'customer promise' not in col_lower:
+                rename_dict[col] = 'Customer'
+            if 'doc' in col_lower or 'document' in col_lower:
+                rename_dict[col] = 'Document Number'
         
-        if status_col and amount_col and sales_rep_col:
-            rename_dict = {
-                status_col: 'Status',
-                amount_col: 'Amount',
-                sales_rep_col: 'Sales Rep'
-            }
-            
-            if date_col:
-                rename_dict[date_col] = 'Date'
-            if pending_fulfillment_date_col:
-                rename_dict[pending_fulfillment_date_col] = 'Pending Fulfillment Date'
-            if projected_date_col:
-                rename_dict[projected_date_col] = 'Projected Date'
-            if customer_promise_col:
-                rename_dict[customer_promise_col] = 'Customer Promise Date'
-            
-            sales_orders_df = sales_orders_df.rename(columns=rename_dict)
-            
-            def clean_numeric_so(value):
-                if pd.isna(value) or value == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+        # Map specific columns by position
+        if len(col_names) > 8:
+            rename_dict[col_names[8]] = 'Order Start Date'  # Column I
+        if len(col_names) > 11:
+            rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
+        if len(col_names) > 12:
+            rename_dict[col_names[12]] = 'Projected Date'  # Column M
+        if len(col_names) > 27:
+            rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
+        
+        sales_orders_df = sales_orders_df.rename(columns=rename_dict)
+        
+        # Clean numeric values
+        def clean_numeric_so(value):
+            if pd.isna(value) or value == '':
+                return 0
+            cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+            try:
+                return float(cleaned)
+            except:
+                return 0
+        
+        sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+        if 'Sales Rep' in sales_orders_df.columns:
             sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
+        if 'Status' in sales_orders_df.columns:
             sales_orders_df['Status'] = sales_orders_df['Status'].str.strip()
+        
+        # Convert date columns
+        date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']
+        for col in date_columns:
+            if col in sales_orders_df.columns:
+                sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
+        
+        # Filter to include Pending Approval, Pending Fulfillment, AND Pending Billing/Partially Fulfilled
+        sales_orders_df = sales_orders_df[
+            sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
+        ]
+        
+        # Calculate age for Old Pending Approval
+        if 'Order Start Date' in sales_orders_df.columns:
+            today = pd.Timestamp.now()
             
-            if 'Date' in sales_orders_df.columns:
-                sales_orders_df['Date'] = pd.to_datetime(sales_orders_df['Date'], errors='coerce')
+            def business_days_between(start_date, end_date):
+                if pd.isna(start_date):
+                    return 0
+                days = pd.bdate_range(start=start_date, end=end_date).size - 1
+                return max(0, days)
             
-            sales_orders_df = sales_orders_df[
-                sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment'])
-            ]
-            
-            if 'Pending Fulfillment Date' in sales_orders_df.columns:
-                def get_fulfillment_date(row):
-                    if row['Status'] == 'Pending Approval':
-                        # For Pending Approval, check Projected Date and Customer Promise Date
-                        if 'Projected Date' in row and pd.notna(row['Projected Date']) and row['Projected Date'] != '':
-                            return row['Projected Date']
-                        elif 'Customer Promise Date' in row and pd.notna(row['Customer Promise Date']) and row['Customer Promise Date'] != '':
-                            return row['Customer Promise Date']
-                        return None
-                    
-                    # For Pending Fulfillment, use waterfall J→M→L
-                    date_val = None
-                    
-                    if 'Pending Fulfillment Date' in row and pd.notna(row['Pending Fulfillment Date']) and row['Pending Fulfillment Date'] != '':
-                        date_val = row['Pending Fulfillment Date']
-                    elif 'Projected Date' in row and pd.notna(row['Projected Date']) and row['Projected Date'] != '':
-                        date_val = row['Projected Date']
-                    elif 'Customer Promise Date' in row and pd.notna(row['Customer Promise Date']) and row['Customer Promise Date'] != '':
-                        date_val = row['Customer Promise Date']
-                    
-                    return date_val
-                
-                sales_orders_df['Effective Date'] = sales_orders_df.apply(get_fulfillment_date, axis=1)
-                sales_orders_df['Effective Date'] = pd.to_datetime(sales_orders_df['Effective Date'], errors='coerce')
-                
-                q4_start = pd.Timestamp('2025-10-01')
-                q4_end = pd.Timestamp('2025-12-31')
-                
-                # Keep all pending approval (will filter by date later)
-                pending_approval = sales_orders_df[sales_orders_df['Status'] == 'Pending Approval']
-                
-                pending_fulfillment_q4 = sales_orders_df[
-                    (sales_orders_df['Status'] == 'Pending Fulfillment') &
-                    (sales_orders_df['Effective Date'] >= q4_start) &
-                    (sales_orders_df['Effective Date'] <= q4_end)
-                ]
-                
-                pending_fulfillment_no_date = sales_orders_df[
-                    (sales_orders_df['Status'] == 'Pending Fulfillment') &
-                    (sales_orders_df['Effective Date'].isna())
-                ]
-                
-                sales_orders_df = pd.concat([pending_approval, pending_fulfillment_q4, pending_fulfillment_no_date])
-            
-            if 'Date' in sales_orders_df.columns:
-                today = pd.Timestamp.now()
-                sales_orders_df['Age_Days'] = (today - sales_orders_df['Date']).dt.days
-            else:
-                sales_orders_df['Age_Days'] = 0
-            
-            sales_orders_df = sales_orders_df[
-                (sales_orders_df['Amount'] > 0) & 
-                (sales_orders_df['Sales Rep'].notna()) & 
-                (sales_orders_df['Sales Rep'] != '')
-            ]
+            sales_orders_df['Age_Business_Days'] = sales_orders_df['Order Start Date'].apply(
+                lambda x: business_days_between(x, today)
+            )
         else:
-            st.warning("Could not find required columns in NS Sales Orders")
-            sales_orders_df = pd.DataFrame()
+            sales_orders_df['Age_Business_Days'] = 0
+        
+        # Remove rows without amount or sales rep
+        sales_orders_df = sales_orders_df[
+            (sales_orders_df['Amount'] > 0) & 
+            (sales_orders_df['Sales Rep'].notna()) & 
+            (sales_orders_df['Sales Rep'] != '')
+        ]
+    else:
+        st.warning("Could not find required columns in NS Sales Orders")
+        sales_orders_df = pd.DataFrame()
     
     return deals_df, dashboard_df, invoices_df, sales_orders_df
 
@@ -509,7 +503,7 @@ def calculate_team_metrics(deals_df, dashboard_df):
     }
 
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
-    """Calculate metrics for a specific rep"""
+    """Calculate metrics for a specific rep with detailed order lists for drill-down"""
     
     # Get rep's quota and orders
     rep_info = dashboard_df[dashboard_df['Rep Name'] == rep_name]
@@ -527,16 +521,25 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     rep_deals_q4 = rep_deals[rep_deals.get('Counts_In_Q4', True) == True]
     rep_deals_q1 = rep_deals[rep_deals.get('Counts_In_Q4', True) == False]
     
-    # Calculate Expect/Commit (Q4 only)
-    expect_commit = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
+    # Calculate Expect/Commit (Q4 only) with details
+    expect_commit_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Expect', 'Commit'])]
+    expect_commit = expect_commit_deals['Amount'].sum()
     
-    # Calculate Best Case/Opportunity (Q4 only)
-    best_opp = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
+    # Calculate Best Case/Opportunity (Q4 only) with details
+    best_opp_deals = rep_deals_q4[rep_deals_q4['Status'].isin(['Best Case', 'Opportunity'])]
+    best_opp = best_opp_deals['Amount'].sum()
     
     # Track Q1 spillover
     q1_spillover = rep_deals_q1['Amount'].sum()
     
-    # Calculate sales order metrics
+    # Initialize detail dataframes
+    pending_approval_details = pd.DataFrame()
+    pending_approval_no_date_details = pd.DataFrame()
+    pending_approval_old_details = pd.DataFrame()
+    pending_fulfillment_details = pd.DataFrame()
+    pending_fulfillment_no_date_details = pd.DataFrame()
+    
+    # Calculate sales order metrics with NEW LOGIC
     pending_approval = 0
     pending_approval_no_date = 0
     pending_approval_old = 0
@@ -544,58 +547,70 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     pending_fulfillment_no_date = 0
     
     if sales_orders_df is not None and not sales_orders_df.empty:
-        rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name]
+        rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
         
-        # Pending Approval - only with dates in Projected Date or Customer Promise Date
-        pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval']
+        # PENDING APPROVAL LOGIC
+        pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
         
-        # Count pending approval WITH dates
-        if 'Effective Date' in pending_approval_orders.columns:
-            pending_approval = pending_approval_orders[
-                pending_approval_orders['Effective Date'].notna()
-            ]['Amount'].sum()
+        if not pending_approval_orders.empty:
+            # Pending Approval WITH dates (Column AB has a date)
+            if 'Pending Approval Date' in pending_approval_orders.columns:
+                pa_with_date_mask = (
+                    (pending_approval_orders['Pending Approval Date'].notna()) &
+                    (pending_approval_orders['Pending Approval Date'] != 'No Date')
+                )
+                pending_approval_details = pending_approval_orders[pa_with_date_mask].copy()
+                pending_approval = pending_approval_details['Amount'].sum()
+                
+                # Pending Approval WITHOUT dates
+                pa_no_date_mask = ~pa_with_date_mask
+                pending_approval_no_date_details = pending_approval_orders[pa_no_date_mask].copy()
+                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum()
             
-            # Count pending approval WITHOUT dates
-            pending_approval_no_date = pending_approval_orders[
-                pending_approval_orders['Effective Date'].isna()
-            ]['Amount'].sum()
+            # Old Pending Approval (Order Start Date > 14 business days)
+            if 'Age_Business_Days' in pending_approval_orders.columns:
+                old_mask = pending_approval_orders['Age_Business_Days'] > 14
+                pending_approval_old_details = pending_approval_orders[old_mask].copy()
+                pending_approval_old = pending_approval_old_details['Amount'].sum()
         
-        # Old Pending Approval (over 2 weeks)
-        if 'Age_Days' in pending_approval_orders.columns:
-            pending_approval_old = pending_approval_orders[
-                pending_approval_orders['Age_Days'] > 14
-            ]['Amount'].sum()
+        # PENDING FULFILLMENT LOGIC
+        fulfillment_orders = rep_orders[
+            rep_orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
+        ].copy()
         
-        # Pending Fulfillment
-        if 'Effective Date' in rep_orders.columns:
-            pending_fulfillment = rep_orders[
-                (rep_orders['Status'] == 'Pending Fulfillment') &
-                (rep_orders['Effective Date'].notna())
-            ]['Amount'].sum()
+        if not fulfillment_orders.empty:
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
             
-            # Pending Fulfillment without dates
-            pending_fulfillment_no_date = rep_orders[
-                (rep_orders['Status'] == 'Pending Fulfillment') &
-                (rep_orders['Effective Date'].isna())
-            ]['Amount'].sum()
-        else:
-            pending_fulfillment = rep_orders[
-                rep_orders['Status'] == 'Pending Fulfillment'
-            ]['Amount'].sum()
+            # Check if Customer Promise Date OR Projected Date is in Q4
+            def has_q4_date(row):
+                if pd.notna(row.get('Customer Promise Date')):
+                    if q4_start <= row['Customer Promise Date'] <= q4_end:
+                        return True
+                if pd.notna(row.get('Projected Date')):
+                    if q4_start <= row['Projected Date'] <= q4_end:
+                        return True
+                return False
+            
+            fulfillment_orders['Has_Q4_Date'] = fulfillment_orders.apply(has_q4_date, axis=1)
+            
+            # Pending Fulfillment WITH Q4 dates
+            pending_fulfillment_details = fulfillment_orders[fulfillment_orders['Has_Q4_Date'] == True].copy()
+            pending_fulfillment = pending_fulfillment_details['Amount'].sum()
+            
+            # Pending Fulfillment WITHOUT dates
+            no_date_mask = (
+                (fulfillment_orders['Customer Promise Date'].isna()) &
+                (fulfillment_orders['Projected Date'].isna())
+            )
+            pending_fulfillment_no_date_details = fulfillment_orders[no_date_mask].copy()
+            pending_fulfillment_no_date = pending_fulfillment_no_date_details['Amount'].sum()
     
-    # Total Pending Fulfillment
+    # Total calculations
     total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
-    
-    # Total Progress calculation
     total_progress = orders + expect_commit + pending_approval + pending_fulfillment
-    
-    # Calculate gap
     gap = quota - total_progress
-    
-    # Calculate attainment
     attainment_pct = (total_progress / quota * 100) if quota > 0 else 0
-    
-    # Potential attainment
     potential_attainment = ((total_progress + best_opp) / quota * 100) if quota > 0 else 0
     
     return {
@@ -614,7 +629,15 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'pending_fulfillment_no_date': pending_fulfillment_no_date,
         'total_pending_fulfillment': total_pending_fulfillment,
         'q1_spillover': q1_spillover,
-        'deals': rep_deals_q4
+        'deals': rep_deals_q4,
+        # Add detail dataframes for drill-down
+        'pending_approval_details': pending_approval_details,
+        'pending_approval_no_date_details': pending_approval_no_date_details,
+        'pending_approval_old_details': pending_approval_old_details,
+        'pending_fulfillment_details': pending_fulfillment_details,
+        'pending_fulfillment_no_date_details': pending_fulfillment_no_date_details,
+        'expect_commit_deals': expect_commit_deals,
+        'best_opp_deals': best_opp_deals
     }
 
 def create_gap_chart(metrics, title):
@@ -888,6 +911,48 @@ def create_customer_invoice_table(invoices_df, rep_name):
     
     return pivot_table
 
+def display_drill_down_section(title, amount, details_df, key_suffix):
+    """Display a collapsible section with order details"""
+    
+    with st.expander(f"{title}: ${amount:,.2f} (Click to see {len(details_df)} items)"):
+        if not details_df.empty:
+            # Select relevant columns to display
+            display_cols = []
+            
+            # Prioritize important columns based on dataframe type
+            if 'Deal Name' in details_df.columns:  # HubSpot deals
+                priority_cols = ['Deal Name', 'Amount', 'Status', 'Pipeline', 'Close Date', 'Product Type']
+            else:  # Sales Orders
+                priority_cols = ['Document Number', 'Customer', 'Amount', 'Status', 
+                               'Order Start Date', 'Pending Approval Date', 
+                               'Customer Promise Date', 'Projected Date']
+            
+            for col in priority_cols:
+                if col in details_df.columns:
+                    display_cols.append(col)
+            
+            # Limit to available columns
+            display_cols = [col for col in display_cols if col in details_df.columns]
+            
+            if display_cols:
+                display_df = details_df[display_cols].copy()
+                
+                # Format amount column
+                if 'Amount' in display_df.columns:
+                    display_df['Amount'] = display_df['Amount'].apply(lambda x: f"${x:,.2f}")
+                
+                # Format date columns
+                for col in display_df.columns:
+                    if 'Date' in col and display_df[col].dtype == 'datetime64[ns]':
+                        display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
+                
+                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                
+                # Summary statistics
+                st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
+        else:
+            st.info("No items in this category")
+
 def display_progress_breakdown(metrics):
     """Display a beautiful progress breakdown card"""
     
@@ -931,66 +996,66 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     
     st.title("🔍 Forecast Reconciliation with Boss's Numbers")
     
-    # Boss's Q4 numbers from the UPDATED screenshot
+    # Boss's Q4 numbers from the LATEST screenshot
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 518981,
-            'pending_fulfillment': 291888,
-            'pending_approval': 42002,
-            'hubspot': 350386,
-            'total': 1203256,
-            'pending_fulfillment_so_no_date': 108306,
-            'pending_approval_so_no_date': 2107,
+            'invoiced': 577540,
+            'pending_fulfillment': 263183,
+            'pending_approval': 45220,
+            'hubspot': 340756,
+            'total': 1226699,
+            'pending_fulfillment_so_no_date': 87891,
+            'pending_approval_so_no_date': 0,
             'old_pending_approval': 33741,
-            'total_q4': 1347410
+            'total_q4': 1350638
         },
         'Dave Borkowski': {
-            'invoiced': 223593,
-            'pending_fulfillment': 146068,
-            'pending_approval': 15702,
-            'hubspot': 396043,
-            'total': 781406,
-            'pending_fulfillment_so_no_date': 48150,
+            'invoiced': 237849,
+            'pending_fulfillment': 160537,
+            'pending_approval': 13390,
+            'hubspot': 414768,
+            'total': 826545,
+            'pending_fulfillment_so_no_date': 45471,
             'pending_approval_so_no_date': 0,
-            'old_pending_approval': 81737,
-            'total_q4': 911294
+            'old_pending_approval': 12244,
+            'total_q4': 884260
         },
         'Alex Gonzalez': {
-            'invoiced': 311101,
-            'pending_fulfillment': 190589,
+            'invoiced': 314523,
+            'pending_fulfillment': 190865,
             'pending_approval': 0,
             'hubspot': 0,
-            'total': 501691,
-            'pending_fulfillment_so_no_date': 3183,
-            'pending_approval_so_no_date': 34846,
-            'old_pending_approval': 19300,
-            'total_q4': 559019
+            'total': 505387,
+            'pending_fulfillment_so_no_date': 41710,
+            'pending_approval_so_no_date': 79361,
+            'old_pending_approval': 4900,
+            'total_q4': 631358
         },
         'Brad Sherman': {
-            'invoiced': 107166,
-            'pending_fulfillment': 39759,
-            'pending_approval': 16878,
-            'hubspot': 211062,
-            'total': 374865,
-            'pending_fulfillment_so_no_date': 35390,
+            'invoiced': 118211,
+            'pending_fulfillment': 38330,
+            'pending_approval': 28984,
+            'hubspot': 183103,
+            'total': 368629,
+            'pending_fulfillment_so_no_date': 29970,
             'pending_approval_so_no_date': 0,
-            'old_pending_approval': 1006,
-            'total_q4': 411262
+            'old_pending_approval': 884,
+            'total_q4': 399482
         },
         'Lance Mitton': {
-            'invoiced': 21998,
-            'pending_fulfillment': 0,
-            'pending_approval': 2758,
+            'invoiced': 23948,
+            'pending_fulfillment': 2027,
+            'pending_approval': 3331,
             'hubspot': 11000,
-            'total': 35756,
-            'pending_fulfillment_so_no_date': 3735,
+            'total': 38356,
+            'pending_fulfillment_so_no_date': 1613,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 60527,
-            'total_q4': 100019
+            'total_q4': 100496
         },
         'House': {
             'invoiced': 0,
-            'pending_fulfillment': 0,
+            'pending_fulfillment': 899,
             'pending_approval': 0,
             'hubspot': 0,
             'total': 0,
@@ -1000,74 +1065,74 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'total_q4': 0
         },
         'Shopify ECommerce': {
-            'invoiced': 20404,
-            'pending_fulfillment': 1406,
+            'invoiced': 21348,
+            'pending_fulfillment': 0,
             'pending_approval': 1174,
             'hubspot': 0,
-            'total': 22984,
+            'total': 23421,
             'pending_fulfillment_so_no_date': 0,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 1544,
-            'total_q4': 24528
+            'total_q4': 24965
         }
     }
     
-    # Boss's pipeline numbers - UPDATED
+    # Boss's pipeline numbers - UPDATED from latest screenshot
     boss_pipeline_numbers = {
         'Retention (Existing Product)': {
-            'invoiced': 425514,
-            'pending_fulfillment': 387936,
-            'pending_approval': 46383,
-            'hubspot': 570164,
-            'total': 1429997,
-            'pending_fulfillment_so_no_date': 105199,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 114779,
-            'total_q4': 1649975
+            'invoiced': 492355,
+            'pending_fulfillment': 56113,
+            'pending_approval': 10795,
+            'hubspot': 610334,
+            'total': 1170400,
+            'pending_fulfillment_so_no_date': 69273,
+            'pending_approval_so_no_date': 13219,
+            'old_pending_approval': 2311,
+            'total_q4': 1255204
         },
         'Growth Pipeline (Upsell/Cross-sell)': {
             'invoiced': 219590,
-            'pending_fulfillment': 31655,
-            'pending_approval': 11321,
-            'hubspot': 176265,
-            'total': 438830,
-            'pending_fulfillment_so_no_date': 46582,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 1583,
-            'total_q4': 486994
-        },
-        'Acquisition (New Customer)': {
-            'invoiced': 108041,
-            'pending_fulfillment': 10066,
-            'pending_approval': 25295,
-            'hubspot': 222062,
-            'total': 365463,
-            'pending_fulfillment_so_no_date': 7447,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 60527,
-            'total_q4': 433437
-        },
-        'SO Manually Built': {
-            'invoiced': 429222,
-            'pending_fulfillment': 301858,
-            'pending_approval': 1174,
-            'hubspot': 0,
-            'total': 732254,
-            'pending_fulfillment_so_no_date': 39537,
-            'pending_approval_so_no_date': 36953,
-            'old_pending_approval': 20967,
-            'total_q4': 829711
-        },
-        'Ecommerce Pipeline': {
-            'invoiced': 25388,
-            'pending_fulfillment': 1406,
-            'pending_approval': 0,
-            'hubspot': 0,
-            'total': 26793,
-            'pending_fulfillment_so_no_date': 0,
+            'pending_fulfillment': 111923,
+            'pending_approval': 27141,
+            'hubspot': 194890,
+            'total': 503847,
+            'pending_fulfillment_so_no_date': 43848,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 0,
-            'total_q4': 26793
+            'total_q4': 547495
+        },
+        'Acquisition (New Customer)': {
+            'invoiced': 119086,
+            'pending_fulfillment': 84523,
+            'pending_approval': 18825,
+            'hubspot': 194103,
+            'total': 416537,
+            'pending_fulfillment_so_no_date': 34146,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 500,
+            'total_q4': 451183
+        },
+        'SO Manually Built': {
+            'invoiced': 438019,
+            'pending_fulfillment': 375415,
+            'pending_approval': 39032,
+            'hubspot': 0,
+            'total': 842467,
+            'pending_fulfillment_so_no_date': 31036,
+            'pending_approval_so_no_date': 66142,
+            'old_pending_approval': 95641,
+            'total_q4': 1035286
+        },
+        'Ecommerce Pipeline': {
+            'invoiced': 26586,
+            'pending_fulfillment': 91268,
+            'pending_approval': 9831,
+            'hubspot': 0,
+            'total': 127685,
+            'pending_fulfillment_so_no_date': 30484,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 15388,
+            'total_q4': 181343
         }
     }
     
@@ -1343,11 +1408,11 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     st.dataframe(rep_summary_df, use_container_width=True, hide_index=True)
 
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
-    """Display individual rep dashboard"""
+    """Display individual rep dashboard with drill-down capability"""
     
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
     
-    # Calculate metrics
+    # Calculate metrics with details
     metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
     
     if not metrics:
@@ -1375,34 +1440,34 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.metric(
             label="Invoiced",
             value=f"${metrics['orders']/1000:.0f}K" if metrics['orders'] < 1000000 else f"${metrics['orders']/1000000:.1f}M",
-            help="Orders shipped and invoiced"
+            help="Orders shipped and invoiced - click sections below for details"
         )
     
     with col3:
         st.metric(
             label="Pending Fulfillment",
-            value=f"${metrics['pending_fulfillment']/1000:.0f}K" if metrics['pending_fulfillment'] < 1000000 else f"${metrics['pending_fulfillment']/1000000:.1f}M",
-            help="Orders with Q4 ship dates"
+            value=f"${metrics['pending_fulfillment']/1000:.0f}K",
+            help="Click sections below to see order details"
         )
     
     with col4:
         st.metric(
             label="Pending Approval",
-            value=f"${metrics['pending_approval']/1000:.0f}K" if metrics['pending_approval'] < 1000000 else f"${metrics['pending_approval']/1000000:.1f}M",
-            help="Orders with dates in Projected/Customer Promise fields"
+            value=f"${metrics['pending_approval']/1000:.0f}K",
+            help="Click sections below to see order details"
         )
     
     with col5:
         st.metric(
             label="HubSpot (Q4)",
-            value=f"${metrics['expect_commit']/1000:.0f}K" if metrics['expect_commit'] < 1000000 else f"${metrics['expect_commit']/1000000:.1f}M",
-            help="Expect/Commit deals shipping in Q4"
+            value=f"${metrics['expect_commit']/1000:.0f}K",
+            help="Click sections below to see deal details"
         )
     
     with col6:
         st.metric(
             label="Gap to Goal",
-            value=f"${metrics['gap']/1000:.0f}K" if abs(metrics['gap']) < 1000000 else f"${metrics['gap']/1000000:.1f}M",
+            value=f"${metrics['gap']/1000:.0f}K",
             delta=f"${-metrics['gap']/1000:.0f}K" if metrics['gap'] < 0 else None,
             delta_color="inverse"
         )
@@ -1410,31 +1475,85 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     # Beautiful progress breakdown
     display_progress_breakdown(metrics)
     
+    # Drill-down sections for Section 1
+    st.markdown("#### 📊 Section 1 Detail Drill-Downs")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        display_drill_down_section(
+            "📤 Pending Fulfillment (with Q4 dates)",
+            metrics['pending_fulfillment'],
+            metrics.get('pending_fulfillment_details', pd.DataFrame()),
+            f"{rep_name}_pf"
+        )
+        
+        display_drill_down_section(
+            "⏳ Pending Approval (with dates)",
+            metrics['pending_approval'],
+            metrics.get('pending_approval_details', pd.DataFrame()),
+            f"{rep_name}_pa"
+        )
+    
+    with col2:
+        display_drill_down_section(
+            "✅ HubSpot Expect/Commit Deals",
+            metrics['expect_commit'],
+            metrics.get('expect_commit_deals', pd.DataFrame()),
+            f"{rep_name}_hs"
+        )
+        
+        display_drill_down_section(
+            "🎯 Best Case/Opportunity Deals",
+            metrics['best_opp'],
+            metrics.get('best_opp_deals', pd.DataFrame()),
+            f"{rep_name}_bo"
+        )
+    
     # Section 2: Additional Orders
     st.markdown("### 📊 Section 2: Additional Orders (Can be included)")
+    
     warning_col1, warning_col2, warning_col3 = st.columns(3)
     
     with warning_col1:
         st.metric(
             label="PF SO's No Date",
             value=f"${metrics['pending_fulfillment_no_date']:,.0f}",
-            help="Pending Fulfillment without ship dates"
+            help="Click below for details"
+        )
+        display_drill_down_section(
+            "PF Orders Without Dates",
+            metrics['pending_fulfillment_no_date'],
+            metrics.get('pending_fulfillment_no_date_details', pd.DataFrame()),
+            f"{rep_name}_pf_no_date"
         )
     
     with warning_col2:
         st.metric(
             label="PA SO's No Date",
             value=f"${metrics['pending_approval_no_date']:,.0f}",
-            help="Pending Approval without dates"
+            help="Click below for details"
+        )
+        display_drill_down_section(
+            "PA Orders Without Dates",
+            metrics['pending_approval_no_date'],
+            metrics.get('pending_approval_no_date_details', pd.DataFrame()),
+            f"{rep_name}_pa_no_date"
         )
     
     with warning_col3:
         st.metric(
             label="Old PA (>2 weeks)",
             value=f"${metrics['pending_approval_old']:,.0f}",
-            help="Pending Approval older than 14 days",
+            help="Click below for details",
             delta="Needs attention" if metrics['pending_approval_old'] > 0 else None,
             delta_color="off" if metrics['pending_approval_old'] > 0 else "normal"
+        )
+        display_drill_down_section(
+            "Old Pending Approval Orders",
+            metrics['pending_approval_old'],
+            metrics.get('pending_approval_old_details', pd.DataFrame()),
+            f"{rep_name}_pa_old"
         )
     
     # Final Total
@@ -1443,7 +1562,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     st.metric(
         label="📊 FINAL TOTAL Q4",
         value=f"${final_total:,.0f}",
-        delta=f"Including all additional orders"
+        delta=f"Section 1: ${metrics['total_progress']:,.0f} + Section 2: ${final_total - metrics['total_progress']:,.0f}"
     )
     
     # Charts
@@ -1467,42 +1586,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     timeline_chart = create_deals_timeline(deals_df, rep_name)
     if timeline_chart:
         st.plotly_chart(timeline_chart, use_container_width=True)
-    
-    # Detailed deals table
-    st.markdown("### 📋 Deal Details (Q4 Only)")
-    
-    # Add filters
-    col1, col2 = st.columns(2)
-    with col1:
-        status_filter = st.multiselect(
-            "Filter by Status",
-            options=['Expect', 'Commit', 'Best Case', 'Opportunity'],
-            default=['Expect', 'Commit', 'Best Case', 'Opportunity']
-        )
-    
-    with col2:
-        if 'Pipeline' in metrics['deals'].columns:
-            pipeline_filter = st.multiselect(
-                "Filter by Pipeline",
-                options=metrics['deals']['Pipeline'].unique(),
-                default=metrics['deals']['Pipeline'].unique()
-            )
-        else:
-            pipeline_filter = None
-    
-    # Filter deals
-    filtered_deals = metrics['deals'][metrics['deals']['Status'].isin(status_filter)]
-    if pipeline_filter:
-        filtered_deals = filtered_deals[filtered_deals['Pipeline'].isin(pipeline_filter)]
-    
-    # Display deals table
-    if not filtered_deals.empty:
-        display_deals = filtered_deals[['Deal Name', 'Close Date', 'Amount', 'Status', 'Pipeline']].copy()
-        display_deals['Amount'] = display_deals['Amount'].apply(lambda x: f"${x:,.0f}")
-        display_deals['Close Date'] = display_deals['Close Date'].dt.strftime('%Y-%m-%d')
-        st.dataframe(display_deals, use_container_width=True, hide_index=True)
-    else:
-        st.info("No deals match the selected filters.")
 
 # Main app
 def main():
