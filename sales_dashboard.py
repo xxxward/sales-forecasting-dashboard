@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v27_unboundlocalerror_fix"
+CACHE_VERSION = "v28_cosmetic_fixes"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1578,7 +1578,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
                 'Total Progress': f"${rep_metrics['total_progress']:,.0f}",
                 'Gap': f"${rep_metrics['gap']:,.0f}",
                 'Attainment': f"{rep_metrics['attainment_pct']:.1f}%",
-                'Q1 Spillover': f"${rep_metrics['q1_spillover']:,.0f}"
+                'Q1 Spillover': f"${rep_metrics.get('q1_spillover_total', 0):,.0f}"
             })
     
     if rep_summary:
@@ -1601,10 +1601,14 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     # Show summary of ALL Q4 2025 deals (closing in Q4)
     if metrics.get('total_q4_closing_deals', 0) > 0:
+        total_deals = metrics['total_q4_closing_deals']
+        total_amount = metrics['total_q4_closing_amount']
+        spillover_amount = metrics.get('q1_spillover_total', 0)
+        
         st.info(
-            f"📋 **Total Q4 2025 Pipeline**: {metrics['total_q4_closing_deals']} deals worth "
-            f"${metrics['total_q4_closing_amount']:,.0f} closing in Q4 2025. "
-            f"Of these, ${metrics.get('q1_spillover_total', 0):,.0f} will ship in Q1 2026 based on lead times."
+            f"📋 **Total Q4 2025 Pipeline Summary**\n\n"
+            f"• **{total_deals} deals** worth **${total_amount:,.0f}** closing in Q4 2025\n\n"
+            f"• **${spillover_amount:,.0f}** will ship in Q1 2026 based on lead times"
         )
     
     # Display key metrics - Section 1
