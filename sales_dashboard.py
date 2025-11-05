@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v25_pa_q4_filter"
+CACHE_VERSION = "v26_accuracy_fix"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1436,6 +1436,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     
     # Summary
     st.markdown("### 📊 Key Insights")
+    
+    # Debug: Show the actual totals being compared
+    st.caption(f"Debug: Your Total = ${additional_totals['final_you']:,.0f} | Boss Total = ${additional_totals['final_boss']:,.0f} | Diff = ${abs(final_diff):,.0f}")
+    
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -1449,8 +1453,21 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
                  delta=f"{'Under' if final_diff > 0 else 'Over'} by ${abs(final_diff):,.0f}")
     
     with col3:
-        accuracy = (1 - abs(final_diff) / additional_totals['final_boss']) * 100 if additional_totals['final_boss'] > 0 else 0
-        st.metric("Accuracy", f"{accuracy:.1f}%")
+        if additional_totals['final_boss'] > 0:
+            # Calculate accuracy as: 100% - (percentage difference)
+            accuracy = (1 - abs(final_diff) / additional_totals['final_boss']) * 100
+            
+            # Show color coding
+            if accuracy >= 95:
+                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Excellent match")
+            elif accuracy >= 90:
+                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Good match", delta_color="normal")
+            elif accuracy >= 80:
+                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Needs review", delta_color="off")
+            else:
+                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Large variance", delta_color="inverse")
+        else:
+            st.metric("Accuracy", "N/A", delta="No boss data")
 
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display the team-level dashboard"""
