@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v18"
+CACHE_VERSION = "v19"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -258,8 +258,8 @@ def load_all_data():
     
     st.sidebar.info("🔄 Loading data from Google Sheets...")
     
-    # Load deals data - extend range to include all columns
-    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:I", version=CACHE_VERSION)
+    # Load deals data - extend range to include all columns (A through Q for Pending Approval Date)
+    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:Q", version=CACHE_VERSION)
     
     # DEBUG: Show what we got from HubSpot
     if not deals_df.empty:
@@ -279,44 +279,64 @@ def load_all_data():
     # Load sales orders data from NetSuite - EXTEND to include Column AB
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AB", version=CACHE_VERSION)
     
-    # Clean and process deals data - FIXED VERSION
+    # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
         # Get column names from first row
         if len(deals_df) > 0:
-            # Standardize column names based on position
+            # Get actual column names
             col_names = deals_df.columns.tolist()
             
             st.sidebar.info(f"Processing {len(col_names)} HubSpot columns")
+            st.sidebar.info(f"First 10 columns: {col_names[:10]}")
             
-            # Build rename dictionary based on available columns
+            # Map based on ACTUAL column names from your sheet
+            # Your columns: Record ID, Deal Name, Deal Stage, Close Date, Deal Owner First Name, 
+            # Deal Owner Last Name, Amount, Close Status, Pipeline, Create Date, Netsuite SO#, etc.
+            
             rename_dict = {}
             
-            # Map the first 8 columns by position
-            if len(col_names) > 0:
-                rename_dict[col_names[0]] = 'Record ID'
-            if len(col_names) > 1:
-                rename_dict[col_names[1]] = 'Deal Name'
-            if len(col_names) > 2:
-                rename_dict[col_names[2]] = 'Deal Stage'
-            if len(col_names) > 3:
-                rename_dict[col_names[3]] = 'Close Date'
-            if len(col_names) > 4:
-                rename_dict[col_names[4]] = 'Deal Owner'
-            if len(col_names) > 5:
-                rename_dict[col_names[5]] = 'Amount'
-            if len(col_names) > 6:
-                rename_dict[col_names[6]] = 'Status'
-            if len(col_names) > 7:
-                rename_dict[col_names[7]] = 'Pipeline'
-            
-            # Check if we have Product Type column
-            if len(col_names) > 8:
-                rename_dict[col_names[8]] = 'Product Type'
+            # Map columns by actual names (case-sensitive)
+            for col in col_names:
+                if col == 'Record ID':
+                    rename_dict[col] = 'Record ID'
+                elif col == 'Deal Name':
+                    rename_dict[col] = 'Deal Name'
+                elif col == 'Deal Stage':
+                    rename_dict[col] = 'Deal Stage'
+                elif col == 'Close Date':
+                    rename_dict[col] = 'Close Date'
+                elif col == 'Deal Owner First Name':
+                    rename_dict[col] = 'Deal Owner First Name'
+                elif col == 'Deal Owner Last Name':
+                    rename_dict[col] = 'Deal Owner Last Name'
+                elif col == 'Amount':
+                    rename_dict[col] = 'Amount'
+                elif col == 'Close Status':
+                    rename_dict[col] = 'Status'  # Map Close Status to Status
+                elif col == 'Pipeline':
+                    rename_dict[col] = 'Pipeline'
+                elif col == 'Deal Type':
+                    rename_dict[col] = 'Product Type'  # Map Deal Type to Product Type for lead time logic
+                elif col == 'Average Leadtime':
+                    rename_dict[col] = 'Average Leadtime'
             
             deals_df = deals_df.rename(columns=rename_dict)
             
+            # Create a combined "Deal Owner" field from First Name + Last Name
+            if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
+                deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
+            else:
+                st.sidebar.error("Missing Deal Owner name columns!")
+            
             # Show what we have after renaming
-            st.sidebar.success(f"Renamed columns: {', '.join(deals_df.columns.tolist()[:8])}")
+            st.sidebar.success(f"✅ Columns after rename: {', '.join([c for c in deals_df.columns.tolist()[:10] if c])}")
+            
+            # Check if we have required columns
+            required_cols = ['Deal Name', 'Status', 'Close Date', 'Deal Owner', 'Amount', 'Pipeline']
+            missing_cols = [col for col in required_cols if col not in deals_df.columns]
+            if missing_cols:
+                st.sidebar.error(f"❌ Missing required columns: {missing_cols}")
             
             # Clean and convert amount to numeric
             def clean_numeric(value):
@@ -328,25 +348,39 @@ def load_all_data():
                 except:
                     return 0
             
-            deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
+            if 'Amount' in deals_df.columns:
+                deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
+            else:
+                st.sidebar.error("❌ No Amount column found!")
             
             # Convert close date to datetime
-            deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+            if 'Close Date' in deals_df.columns:
+                deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+            else:
+                st.sidebar.error("❌ No Close Date column found!")
             
             # Show data before filtering
             total_deals_before = len(deals_df)
-            total_amount_before = deals_df['Amount'].sum()
-            st.sidebar.info(f"Before filtering: {total_deals_before} deals, ${total_amount_before:,.0f}")
+            total_amount_before = deals_df['Amount'].sum() if 'Amount' in deals_df.columns else 0
+            st.sidebar.info(f"📊 Before filtering: {total_deals_before} deals, ${total_amount_before:,.0f}")
+            
+            # Show unique values in Status column
+            if 'Status' in deals_df.columns:
+                unique_statuses = deals_df['Status'].unique()
+                st.sidebar.info(f"🏷️ Unique Status values: {', '.join([str(s) for s in unique_statuses[:10]])}")
+            else:
+                st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
             # FILTER: Only Q4 2025 deals
             q4_start = pd.Timestamp('2025-10-01')
             q4_end = pd.Timestamp('2025-12-31')
-            deals_df = deals_df[
-                (deals_df['Close Date'] >= q4_start) & 
-                (deals_df['Close Date'] <= q4_end)
-            ]
             
-            st.sidebar.info(f"After Q4 filter: {len(deals_df)} deals")
+            if 'Close Date' in deals_df.columns:
+                deals_df = deals_df[
+                    (deals_df['Close Date'] >= q4_start) & 
+                    (deals_df['Close Date'] <= q4_end)
+                ]
+                st.sidebar.info(f"📅 After Q4 filter: {len(deals_df)} deals")
             
             # FILTER OUT unwanted deal stages
             excluded_stages = [
@@ -356,17 +390,20 @@ def load_all_data():
             ]
             
             # Convert Deal Stage to string and handle NaN
-            deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
-            deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
-            
-            # Show unique stages before filtering
-            unique_stages = deals_df['Deal Stage'].unique()
-            st.sidebar.info(f"Unique stages: {', '.join(unique_stages[:5])}")
-            
-            # Filter out excluded stages
-            deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
-            
-            st.sidebar.success(f"After stage filter: {len(deals_df)} deals, ${deals_df['Amount'].sum():,.0f}")
+            if 'Deal Stage' in deals_df.columns:
+                deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
+                deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
+                
+                # Show unique stages before filtering
+                unique_stages = deals_df['Deal Stage'].unique()
+                st.sidebar.info(f"🎯 Unique Deal Stages: {', '.join([str(s) for s in unique_stages[:10]])}")
+                
+                # Filter out excluded stages
+                deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
+                
+                st.sidebar.success(f"✅ After stage filter: {len(deals_df)} deals, ${deals_df['Amount'].sum():,.0f}")
+            else:
+                st.sidebar.warning("⚠️ No Deal Stage column found")
             
             # Apply Q4 fulfillment logic
             deals_df = apply_q4_fulfillment_logic(deals_df)
