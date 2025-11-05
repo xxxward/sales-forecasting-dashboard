@@ -15,7 +15,168 @@ from datetime import datetime, timedelta
 import time
 import base64
 import numpy as np
+from anthropic import Anthropic
+import json
 
+# Initialize Anthropic client
+@st.cache_resource
+def get_anthropic_client():
+    """Initialize Anthropic client with API key from secrets"""
+    if "ANTHROPIC_API_KEY" not in st.secrets:
+        return None
+    return Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+
+def get_dashboard_context(deals_df, dashboard_df, sales_orders_df, current_view, selected_rep=None):
+    """
+    Generate context about the current dashboard state for Claude
+    """
+    context = {
+        "view": current_view,
+        "data_summary": {
+            "total_deals": len(deals_df),
+            "total_deal_value": float(deals_df['Amount'].sum()) if not deals_df.empty else 0,
+            "reps": dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else [],
+            "date_range": "Q4 2025 (Oct 1 - Dec 31, 2025)"
+        }
+    }
+    
+    # Add team metrics if in team view
+    if current_view == "Team Overview" and not dashboard_df.empty:
+        team_metrics = calculate_team_metrics(deals_df, dashboard_df)
+        context["team_metrics"] = {
+            "total_quota": float(team_metrics['total_quota']),
+            "total_orders": float(team_metrics['total_orders']),
+            "expect_commit": float(team_metrics['expect_commit']),
+            "best_opp": float(team_metrics['best_opp']),
+            "gap": float(team_metrics['gap']),
+            "attainment_pct": float(team_metrics['attainment_pct']),
+            "q1_spillover": float(team_metrics['q1_spillover'])
+        }
+    
+    # Add rep-specific metrics if viewing individual rep
+    if selected_rep and not dashboard_df.empty:
+        rep_metrics = calculate_rep_metrics(selected_rep, deals_df, dashboard_df, sales_orders_df)
+        if rep_metrics:
+            context["rep_metrics"] = {
+                "rep_name": selected_rep,
+                "quota": float(rep_metrics['quota']),
+                "orders": float(rep_metrics['orders']),
+                "expect_commit": float(rep_metrics['expect_commit']),
+                "best_opp": float(rep_metrics['best_opp']),
+                "gap": float(rep_metrics['gap']),
+                "attainment_pct": float(rep_metrics['attainment_pct']),
+                "pending_approval": float(rep_metrics['pending_approval']),
+                "pending_fulfillment": float(rep_metrics['pending_fulfillment']),
+                "q1_spillover_total": float(rep_metrics.get('q1_spillover_total', 0))
+            }
+    
+    return context
+
+def create_system_prompt(context):
+    """
+    Create a system prompt with dashboard context and calculation explanations
+    """
+    return f"""You are a helpful sales forecasting assistant for Calyx Containers, a packaging company serving the cannabis industry. You're helping analyze Q4 2025 sales performance.
+
+**Current Dashboard Context:**
+{json.dumps(context, indent=2)}
+
+**Key Calculations & Business Logic:**
+
+1. **Q4 Gap to Goal (Section 1):**
+   - Invoiced: Orders that have been shipped and invoiced in Q4
+   - Pending Fulfillment: Sales orders with Q4 promise/projected dates
+   - Pending Approval: Sales orders pending approval with Q4 approval dates
+   - HubSpot Expect/Commit: Pipeline deals marked as Expect or Commit, shipping in Q4
+
+2. **Q1 2026 Spillover:**
+   - Deals that close in late Q4 but ship in Q1 2026 due to lead times
+   - Lead times vary by product type (5-40 business days)
+   - These deals DON'T count toward Q4 quota
+
+3. **Additional Orders (Section 2):**
+   - Sales orders without dates or old pending approvals (>14 business days)
+   - Can optionally be included in forecasts
+
+**Your Role:**
+- Answer questions about the data, metrics, and calculations
+- Explain variances and gaps
+- Provide insights on rep performance
+- Help troubleshoot data discrepancies
+- Suggest actions to close gaps
+
+Keep responses concise and actionable. Use dollar formatting for currency values. Reference specific reps or metrics when relevant."""
+
+def render_claude_chat(deals_df, dashboard_df, sales_orders_df, current_view, selected_rep=None):
+    """
+    Render the Claude chat interface in the sidebar
+    """
+    client = get_anthropic_client()
+    
+    if client is None:
+        st.sidebar.warning("⚠️ Claude AI not configured. Add ANTHROPIC_API_KEY to secrets.")
+        return
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🤖 Ask Claude")
+    st.sidebar.caption("Get insights about your forecast data")
+    
+    # Initialize chat history in session state
+    if "claude_messages" not in st.session_state:
+        st.session_state.claude_messages = []
+    
+    # Display chat history
+    chat_container = st.sidebar.container()
+    with chat_container:
+        for message in st.session_state.claude_messages[-6:]:  # Show last 6 messages
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+    
+    # Chat input
+    user_input = st.sidebar.chat_input("Ask about your forecast...")
+    
+    if user_input:
+        # Add user message
+        st.session_state.claude_messages.append({
+            "role": "user",
+            "content": user_input
+        })
+        
+        # Get current context
+        context = get_dashboard_context(deals_df, dashboard_df, sales_orders_df, current_view, selected_rep)
+        system_prompt = create_system_prompt(context)
+        
+        # Prepare messages for Claude (limit to last 10 for cost control)
+        api_messages = st.session_state.claude_messages[-10:]
+        
+        # Call Claude API
+        try:
+            with st.spinner("Claude is thinking..."):
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1024,
+                    system=system_prompt,
+                    messages=api_messages
+                )
+            
+            assistant_message = response.content[0].text
+            
+            # Add assistant response
+            st.session_state.claude_messages.append({
+                "role": "assistant",
+                "content": assistant_message
+            })
+            
+            # Rerun to show new messages
+            st.rerun()
+            
+        except Exception as e:
+            st.sidebar.error(f"Error: {str(e)}")
+    
+    # Clear chat button
+    if st.sidebar.button("🗑️ Clear Chat"):
+        st.session_state.claude_messages = []
+        st.rerun()
 # Page configuration
 st.set_page_config(
     page_title="Sales Forecasting Dashboard",
@@ -1981,7 +2142,59 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
 
 # Main app
 def main():
+    def main():
     
+    # Sidebar
+    with st.sidebar:
+        # Display company name
+        st.markdown("""
+        <div style="text-align: center; padding: 20px;">
+            <h2>CALYX</h2>
+            <p style="font-size: 12px; letter-spacing: 3px;">CONTAINERS</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.markdown("---")
+        
+        st.markdown("### 🎯 Dashboard Navigation")
+        view_mode = st.radio(
+            "Select View:",
+            ["Team Overview", "Individual Rep", "Reconciliation"],
+            label_visibility="collapsed"
+        )
+        
+        # Rep selection if needed
+        selected_rep = None
+        if view_mode == "Individual Rep" and not dashboard_df.empty:
+            selected_rep = st.selectbox(
+                "Select Rep:",
+                options=dashboard_df['Rep Name'].tolist()
+            )
+        
+        st.markdown("---")
+        
+        # ... rest of your sidebar code ...
+    
+    # Load data
+    with st.spinner("Loading data from Google Sheets..."):
+        deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
+    
+    # Check if data loaded
+    if deals_df.empty and dashboard_df.empty:
+        st.error("❌ Unable to load data...")
+        return
+    
+    # **ADD CLAUDE CHAT HERE - after data loads, before displaying dashboards**
+    with st.sidebar:
+        render_claude_chat(deals_df, dashboard_df, sales_orders_df, view_mode, selected_rep)
+    
+    # Display appropriate dashboard
+    if view_mode == "Team Overview":
+        display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
+    elif view_mode == "Individual Rep":
+        if selected_rep:
+            display_rep_dashboard(selected_rep, deals_df, dashboard_df, invoices_df, sales_orders_df)
+    else:
+        display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
     # Sidebar
     with st.sidebar:
         # Display company name
