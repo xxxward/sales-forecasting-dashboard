@@ -257,7 +257,7 @@ def load_all_data():
             
             # Clean and convert amount to numeric
             def clean_numeric(value):
-                if pd.isna(value) or value == '':
+                if pd.isna(value) or str(value).strip() == '':
                     return 0
                 cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
                 try:
@@ -305,7 +305,7 @@ def load_all_data():
             
             # Clean and convert numeric columns
             def clean_numeric(value):
-                if pd.isna(value) or value == '':
+                if pd.isna(value) or str(value).strip() == '':
                     return 0
                 cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
                 try:
@@ -315,8 +315,6 @@ def load_all_data():
             
             dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
             dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
-        else:
-            st.error(f"Dashboard Info sheet has wrong number of columns: {len(dashboard_df.columns)}")
     
     # Process invoice data
     if not invoices_df.empty:
@@ -331,7 +329,7 @@ def load_all_data():
             })
             
             def clean_numeric(value):
-                if pd.isna(value) or value == '':
+                if pd.isna(value) or str(value).strip() == '':
                     return 0
                 cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
                 try:
@@ -386,7 +384,7 @@ def load_all_data():
             col_lower = str(col).lower()
             if 'status' in col_lower:
                 rename_dict[col] = 'Status'
-            if 'amount' in col_lower or 'total' in col_lower:
+            if ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
                 rename_dict[col] = 'Amount'
             if 'sales rep' in col_lower or 'salesrep' in col_lower:
                 rename_dict[col] = 'Sales Rep'
@@ -395,7 +393,7 @@ def load_all_data():
             if 'doc' in col_lower or 'document' in col_lower:
                 rename_dict[col] = 'Document Number'
         
-        # Map specific columns by position
+        # Map specific columns by position (0-indexed)
         if len(col_names) > 8:
             rename_dict[col_names[8]] = 'Order Start Date'  # Column I
         if len(col_names) > 11:
@@ -407,21 +405,27 @@ def load_all_data():
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
-        # Clean numeric values
+        # Clean numeric values - FIXED VERSION
         def clean_numeric_so(value):
-            if pd.isna(value) or value == '':
+            # Convert to string first to handle any type
+            value_str = str(value).strip()
+            if value_str == '' or value_str == 'nan' or value_str == 'None':
                 return 0
-            cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+            cleaned = value_str.replace(',', '').replace('$', '').replace(' ', '')
             try:
                 return float(cleaned)
             except:
                 return 0
         
-        sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+        # Apply cleaning only if Amount column exists
+        if 'Amount' in sales_orders_df.columns:
+            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+        
         if 'Sales Rep' in sales_orders_df.columns:
-            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].str.strip()
+            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].astype(str).str.strip()
+        
         if 'Status' in sales_orders_df.columns:
-            sales_orders_df['Status'] = sales_orders_df['Status'].str.strip()
+            sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
         
         # Convert date columns
         date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']
@@ -430,9 +434,10 @@ def load_all_data():
                 sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
         
         # Filter to include Pending Approval, Pending Fulfillment, AND Pending Billing/Partially Fulfilled
-        sales_orders_df = sales_orders_df[
-            sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
-        ]
+        if 'Status' in sales_orders_df.columns:
+            sales_orders_df = sales_orders_df[
+                sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
+            ]
         
         # Calculate age for Old Pending Approval
         if 'Order Start Date' in sales_orders_df.columns:
@@ -451,11 +456,13 @@ def load_all_data():
             sales_orders_df['Age_Business_Days'] = 0
         
         # Remove rows without amount or sales rep
-        sales_orders_df = sales_orders_df[
-            (sales_orders_df['Amount'] > 0) & 
-            (sales_orders_df['Sales Rep'].notna()) & 
-            (sales_orders_df['Sales Rep'] != '')
-        ]
+        if 'Amount' in sales_orders_df.columns and 'Sales Rep' in sales_orders_df.columns:
+            sales_orders_df = sales_orders_df[
+                (sales_orders_df['Amount'] > 0) & 
+                (sales_orders_df['Sales Rep'].notna()) & 
+                (sales_orders_df['Sales Rep'] != '') &
+                (sales_orders_df['Sales Rep'] != 'nan')
+            ]
     else:
         st.warning("Could not find required columns in NS Sales Orders")
         sales_orders_df = pd.DataFrame()
