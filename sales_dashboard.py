@@ -881,16 +881,18 @@ def create_gap_chart(metrics, title):
         y=[metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']],
         marker_color='#1E88E5',
         text=[f"${metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
-    
+
     fig.add_trace(go.Bar(
         name='Expect/Commit',
         x=['Progress'],
         y=[metrics['expect_commit']],
         marker_color='#43A047',
         text=[f"${metrics['expect_commit']:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
     
     # Add quota line
@@ -997,7 +999,9 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
         text_auto='.2s',
         barmode='stack'
     )
-    
+
+    fig.update_traces(textfont_size=14, textposition='auto')
+
     fig.update_layout(
         height=400,
         yaxis_title="Amount ($)",
@@ -1631,34 +1635,38 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_invoiced],
         marker_color='#1E88E5',
         text=[f"${team_invoiced:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
-   
+
     fig.add_trace(go.Bar(
         name='Pending Fulfillment',
         x=['Progress'],
         y=[team_pf],
         marker_color='#FFC107',
         text=[f"${team_pf:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
-   
+
     fig.add_trace(go.Bar(
         name='Pending Approval',
         x=['Progress'],
         y=[team_pa],
         marker_color='#FB8C00',
         text=[f"${team_pa:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
-   
+
     fig.add_trace(go.Bar(
         name='Expect/Commit',
         x=['Progress'],
         y=[team_hs],
         marker_color='#43A047',
         text=[f"${team_hs:,.0f}"],
-        textposition='inside'
+        textposition='auto',
+        textfont=dict(size=14)
     ))
    
     # Quota line
