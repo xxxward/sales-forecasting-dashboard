@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v30_enhanced_viz"
+CACHE_VERSION = "v31_waterfall_charts"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -933,140 +933,142 @@ def create_gap_chart(metrics, title):
     
     return fig
 
-def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
+def create_enhanced_waterfall_chart(metrics, title, mode):
     """
-    Create an enhanced stacked bar chart with annotations for smaller segments
-    chart_type: "base" or "full"
+    Creates a waterfall chart for forecast progress to address visibility issues with small segments.
+    Each component gets its own visible bar height proportional to its value, making small segments readable.
+    
+    Args:
+        metrics: dict with keys like 'orders', 'pending_fulfillment', etc., and 'total_quota', 'total_progress'
+        title: Chart title
+        mode: 'base' or 'full' to determine which components to include
     """
-    
-    fig = go.Figure()
-    
-    if chart_type == "base":
-        # Base Forecast components
-        components = [
-            ('Invoiced', metrics['orders'], '#1E88E5'),
-            ('Pending Fulfillment (with dates)', metrics['pending_fulfillment'], '#FFC107'),
-            ('Pending Approval (with dates)', metrics['pending_approval'], '#FB8C00'),
-            ('HubSpot Expect/Commit', metrics['expect_commit'], '#43A047')
+    # Define the steps based on mode
+    if mode == "base":
+        steps = [
+            {'label': 'Invoiced', 'value': metrics['orders'], 'color': '#1E88E5'},
+            {'label': 'Pending Fulfillment', 'value': metrics['pending_fulfillment'], 'color': '#FFC107'},
+            {'label': 'Pending Approval', 'value': metrics['pending_approval'], 'color': '#FB8C00'},
+            {'label': 'HubSpot Expect/Commit', 'value': metrics['expect_commit'], 'color': '#43A047'},
         ]
-        total = metrics['total_progress']
+    elif mode == "full":
+        steps = [
+            {'label': 'Invoiced', 'value': metrics['orders'], 'color': '#1E88E5'},
+            {'label': 'Pending Fulfillment', 'value': metrics['pending_fulfillment'], 'color': '#FFC107'},
+            {'label': 'PF No Date', 'value': metrics.get('pending_fulfillment_no_date', 0), 'color': '#FFE082'},
+            {'label': 'Pending Approval', 'value': metrics['pending_approval'], 'color': '#FB8C00'},
+            {'label': 'PA No Date', 'value': metrics.get('pending_approval_no_date', 0), 'color': '#FFCC80'},
+            {'label': 'Old PA (>2 weeks)', 'value': metrics.get('pending_approval_old', 0), 'color': '#FF9800'},
+            {'label': 'HubSpot Expect/Commit', 'value': metrics['expect_commit'], 'color': '#43A047'},
+        ]
     else:
-        # Full Forecast components
-        components = [
-            ('Invoiced', metrics['orders'], '#1E88E5'),
-            ('Pending Fulfillment (with dates)', metrics['pending_fulfillment'], '#FFC107'),
-            ('Pending Fulfillment (no dates)', metrics['pending_fulfillment_no_date'], '#FFE082'),
-            ('Pending Approval (with dates)', metrics['pending_approval'], '#FB8C00'),
-            ('Pending Approval (no dates)', metrics['pending_approval_no_date'], '#FFCC80'),
-            ('Old Pending Approval', metrics['pending_approval_old'], '#FF9800'),
-            ('HubSpot Expect/Commit', metrics['expect_commit'], '#43A047')
-        ]
-        total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
-                metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
+        return None
+
+    # Filter out zero-value steps to avoid clutter
+    steps = [step for step in steps if step['value'] > 0]
     
-    # Add stacked bars with forced readable text
-    cumulative = 0
-    annotations = []
-    
-    for name, value, color in components:
-        # Calculate what % this segment is of the total
-        pct_of_total = (value / total * 100) if total > 0 else 0
-        
-        # ALL segments get readable 13px font, but position differently
-        if pct_of_total < 4:
-            # Small segment - show text OUTSIDE to the right
-            show_text = ""  # Don't show on bar
-            # Add as annotation instead
-            annotations.append(dict(
-                xref='x',
-                yref='y',
-                x=0,  # At the bar
-                y=cumulative + (value / 2),
-                xanchor='right',
-                xshift=250,  # Pixels to the right
-                text=f"<b>${value:,.0f}</b>",
-                showarrow=True,
-                arrowhead=2,
-                arrowwidth=2,
-                arrowcolor=color,
-                ax=-80,  # Arrow points left to the bar
-                ay=0,
-                font=dict(size=13, color='black', family='Arial Black'),
-                bgcolor='white',
-                bordercolor=color,
-                borderwidth=2,
-                borderpad=4
-            ))
-        else:
-            # Large enough - show inside
-            show_text = f"${value:,.0f}"
-        
-        # Add bar
-        fig.add_trace(go.Bar(
-            name=name,
-            x=['Progress'],
-            y=[value],
-            marker_color=color,
-            text=[show_text],
-            textposition='inside',
-            textfont=dict(size=13, color='black', family='Arial Black'),
-            hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>",
-            cliponaxis=False  # Allow text to show outside bar area
-        ))
-        
-        cumulative += value
-    
-    # Add quota line
+    if not steps:
+        return None
+
+    # Calculate totals
+    current_total = sum(step['value'] for step in steps)
     quota = metrics.get('total_quota', metrics.get('quota', 0))
-    fig.add_trace(go.Scatter(
-        name='Quota Goal',
-        x=['Progress'],
-        y=[quota],
-        mode='markers',
-        marker=dict(size=14, color='#DC3912', symbol='diamond', line=dict(width=2, color='white')),
-        hovertemplate=f"<b>Quota Goal</b><br>${quota:,.0f}<extra></extra>"
+    gap = quota - current_total
+    
+    # Prepare waterfall data - all as relative measures
+    x_labels = [step['label'] for step in steps]
+    y_values = [step['value'] for step in steps]
+    colors = [step['color'] for step in steps]
+    
+    # Add gap as final bar if exists
+    if gap != 0:
+        x_labels.append('Gap to Goal')
+        y_values.append(gap)
+        colors.append('#DC3912' if gap > 0 else '#43A047')
+    
+    # All measures are relative (incremental)
+    measure = ['relative'] * len(x_labels)
+    
+    # Create the waterfall figure
+    fig = go.Figure(go.Waterfall(
+        name="Forecast Components",
+        orientation="v",
+        measure=measure,
+        x=x_labels,
+        y=y_values,
+        textposition="outside",
+        text=[f"${val:,.0f}" for val in y_values],
+        textfont=dict(size=12, color='black'),
+        connector={"line": {"color": "rgba(63, 63, 63, 0.5)", "width": 1}},
+        decreasing={"marker": {"color": "#DC3912"}},
+        increasing={"marker": {"color": "#43A047"}},
     ))
     
-    # Add potential line
+    # Manually set colors for each bar to match our color scheme
+    fig.data[0].marker.color = colors
+    
+    # Add quota reference line
+    fig.add_hline(
+        y=quota,
+        line_dash="dash",
+        line_color="#DC3912",
+        line_width=2,
+        annotation_text=f"Quota Goal: ${quota:,.0f}",
+        annotation_position="right"
+    )
+    
+    # Add best case potential line if in base mode
     best_opp = metrics.get('best_opp', 0)
-    potential = total + best_opp
-    fig.add_trace(go.Scatter(
-        name='Potential (if all deals close)',
-        x=['Progress'],
-        y=[potential],
-        mode='markers',
-        marker=dict(size=14, color='#FB8C00', symbol='diamond', line=dict(width=2, color='white')),
-        hovertemplate=f"<b>Potential</b><br>${potential:,.0f}<extra></extra>"
-    ))
+    if best_opp > 0:
+        potential = current_total + best_opp
+        fig.add_hline(
+            y=potential,
+            line_dash="dot",
+            line_color="#FB8C00",
+            line_width=2,
+            annotation_text=f"Potential: ${potential:,.0f}",
+            annotation_position="right"
+        )
     
+    # Customize layout
     fig.update_layout(
         title=dict(
             text=title,
             font=dict(size=18, color='#333333')
         ),
-        barmode='stack',
-        height=500,
-        showlegend=True,
-        legend=dict(
-            orientation="v",
-            yanchor="top",
-            y=0.99,
-            xanchor="left",
-            x=1.02,
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="#333333",
-            borderwidth=1
-        ),
-        yaxis=dict(
-            title="Amount ($)",
-            gridcolor='#E5E5E5',
-            range=[0, max(quota, potential) * 1.1]  # Add 10% padding above
-        ),
-        xaxis_title="",
-        hovermode='closest',
+        xaxis_title="Forecast Components",
+        yaxis_title="Amount ($)",
+        waterfallgap=0.25,
+        height=600,
+        showlegend=False,
         plot_bgcolor='white',
-        annotations=annotations,
-        margin=dict(l=50, r=200, t=80, b=50)  # Extra right margin for annotations
+        yaxis=dict(
+            gridcolor='#E5E5E5',
+            zeroline=True,
+            zerolinecolor='#999999',
+            zerolinewidth=1
+        ),
+        xaxis=dict(
+            tickangle=-45,
+            automargin=True
+        ),
+        margin=dict(l=70, r=150, t=100, b=120),
+        annotations=[
+            dict(
+                x=1.02,
+                y=1.05,
+                xref='paper',
+                yref='paper',
+                text=f"<b>Current Total:</b> ${current_total:,.0f}<br><b>Quota:</b> ${quota:,.0f}<br><b>Gap:</b> ${gap:,.0f}",
+                showarrow=False,
+                font=dict(size=13, color="black"),
+                align="left",
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor="#333333",
+                borderwidth=1,
+                borderpad=8
+            )
+        ]
     )
     
     return fig
@@ -1807,7 +1809,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         'total_quota': team_quota
     }
     
-    base_chart = create_enhanced_stacked_chart(base_metrics, "Base Forecast Progress to Goal", "base")
+    base_chart = create_enhanced_waterfall_chart(base_metrics, "Base Forecast Progress to Goal", "base")
     st.plotly_chart(base_chart, use_container_width=True)
 
     # Full Forecast Chart with Enhanced Annotations
@@ -1827,7 +1829,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         'total_quota': team_quota
     }
     
-    full_chart = create_enhanced_stacked_chart(full_metrics, "Full Forecast Progress to Goal", "full")
+    full_chart = create_enhanced_waterfall_chart(full_metrics, "Full Forecast Progress to Goal", "full")
     st.plotly_chart(full_chart, use_container_width=True)
 
     # Other charts remain the same
