@@ -964,8 +964,7 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
     
     # Add stacked bars
     cumulative = 0
-    annotations = []
-    small_segments = []  # Track small segments for smart positioning
+    small_segments = []  # Track small segments for annotation
     
     for name, value, color in components:
         # Determine if this segment is small (needs annotation)
@@ -977,62 +976,64 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
             x=['Progress'],
             y=[value],
             marker_color=color,
-            text=[f"${value:,.0f}" if not is_small_segment else ""],  # Show text for large segments only
+            text=[f"${value:,.0f}" if not is_small_segment else ""],
             textposition='inside',
             textfont=dict(size=13, color='white', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
         ))
         
-        # Store small segments for annotation
+        # Store small segments
         if is_small_segment:
             small_segments.append({
                 'name': name,
                 'value': value,
                 'color': color,
-                'y_position': cumulative + (value / 2)
+                'y_mid': cumulative + (value / 2),
+                'y_bottom': cumulative,
+                'y_top': cumulative + value
             })
         
         cumulative += value
     
-    # Add annotations with smart positioning to avoid overlap
-    if small_segments:
-        # Sort by y position
-        small_segments.sort(key=lambda x: x['y_position'])
+    # Add invisible scatter points as annotation anchors
+    annotations = []
+    for i, segment in enumerate(small_segments):
+        # Add invisible point at the segment position
+        fig.add_trace(go.Scatter(
+            x=['Progress'],
+            y=[segment['y_mid']],
+            mode='markers',
+            marker=dict(size=8, color=segment['color'], opacity=0.01),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
         
-        # Calculate spacing to avoid overlap
-        min_spacing = cumulative * 0.05  # Minimum 5% of total height between annotations
+        # Calculate vertical offset to prevent overlap
+        offset = i * (cumulative * 0.08)  # Stack annotations vertically
+        adjusted_y = segment['y_mid'] + offset
         
-        for i, segment in enumerate(small_segments):
-            # Base y position
-            y_pos = segment['y_position']
-            
-            # Adjust if too close to previous annotation
-            if i > 0:
-                prev_y = small_segments[i-1]['y_position']
-                if abs(y_pos - prev_y) < min_spacing:
-                    y_pos = prev_y + min_spacing
-            
-            annotations.append(dict(
-                x=1.0,  # Start exactly at the right edge of the bar
-                y=y_pos,
-                xref='x',
-                yref='y',
-                text=f"<b>{segment['name']}</b><br>${segment['value']:,.0f}",
-                showarrow=True,
-                arrowhead=2,
-                arrowsize=1,
-                arrowwidth=2,
-                arrowcolor=segment['color'],
-                ax=100,  # Arrow extends to the right
-                ay=0,    # No vertical offset
-                font=dict(size=11, color='#333333', family='Arial'),
-                bgcolor="rgba(255,255,255,0.95)",
-                bordercolor=segment['color'],
-                borderwidth=2,
-                borderpad=5,
-                align='left',
-                xanchor='left'
-            ))
+        # Add annotation with text mode
+        annotations.append(dict(
+            x=1.05,
+            y=adjusted_y,
+            xref='paper',
+            yref='y',
+            text=f"<b>{segment['name']}</b><br>${segment['value']:,.0f}",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=2.5,
+            arrowcolor=segment['color'],
+            ax=-80,  # Point arrow back to the left (toward bar)
+            ay=-(offset * 0.5),  # Diagonal arrow
+            font=dict(size=11, color='#333333', family='Arial'),
+            bgcolor="rgba(255,255,255,0.98)",
+            bordercolor=segment['color'],
+            borderwidth=2,
+            borderpad=5,
+            align='left',
+            xanchor='left'
+        ))
     
     # Add quota line
     quota = metrics.get('total_quota', metrics.get('quota', 0))
