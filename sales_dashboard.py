@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v29_force_refresh"
+CACHE_VERSION = "v30_enhanced_viz"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -871,24 +871,18 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
 
 def create_gap_chart(metrics, title):
     """Create a waterfall/combo chart showing progress to goal"""
-
+    
     fig = go.Figure()
-
-    # Calculate total for percentage threshold (hide text if segment < 5% of total)
-    orders_val = metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']
-    chart_total = orders_val + metrics['expect_commit']
-    min_threshold = chart_total * 0.05
-
+    
     # Create stacked bar
     fig.add_trace(go.Bar(
         name='NetSuite Orders',
         x=['Progress'],
-        y=[orders_val],
+        y=[metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']],
         marker_color='#1E88E5',
-        text=[f"${orders_val:,.0f}" if orders_val >= min_threshold else ""],
-        textposition='inside',
-        textfont=dict(size=14),
-        hovertemplate='NetSuite Orders: $%{y:,.0f}<extra></extra>'
+        text=[f"${metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']:,.0f}"],
+        textposition='auto',
+        textfont=dict(size=14)
     ))
 
     fig.add_trace(go.Bar(
@@ -896,10 +890,9 @@ def create_gap_chart(metrics, title):
         x=['Progress'],
         y=[metrics['expect_commit']],
         marker_color='#43A047',
-        text=[f"${metrics['expect_commit']:,.0f}" if metrics['expect_commit'] >= min_threshold else ""],
-        textposition='inside',
-        textfont=dict(size=14),
-        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
+        text=[f"${metrics['expect_commit']:,.0f}"],
+        textposition='auto',
+        textfont=dict(size=14)
     ))
     
     # Add quota line
@@ -934,6 +927,136 @@ def create_gap_chart(metrics, title):
         yaxis_title="Amount ($)",
         xaxis_title="",
         hovermode='x unified'
+    )
+    
+    return fig
+
+def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
+    """
+    Create an enhanced stacked bar chart with annotations for smaller segments
+    chart_type: "base" or "full"
+    """
+    
+    fig = go.Figure()
+    
+    if chart_type == "base":
+        # Base Forecast components
+        components = [
+            ('Invoiced', metrics['orders'], '#1E88E5'),
+            ('Pending Fulfillment (with dates)', metrics['pending_fulfillment'], '#FFC107'),
+            ('Pending Approval (with dates)', metrics['pending_approval'], '#FB8C00'),
+            ('HubSpot Expect/Commit', metrics['expect_commit'], '#43A047')
+        ]
+        total = metrics['total_progress']
+    else:
+        # Full Forecast components
+        components = [
+            ('Invoiced', metrics['orders'], '#1E88E5'),
+            ('Pending Fulfillment (with dates)', metrics['pending_fulfillment'], '#FFC107'),
+            ('Pending Fulfillment (no dates)', metrics['pending_fulfillment_no_date'], '#FFE082'),
+            ('Pending Approval (with dates)', metrics['pending_approval'], '#FB8C00'),
+            ('Pending Approval (no dates)', metrics['pending_approval_no_date'], '#FFCC80'),
+            ('Old Pending Approval', metrics['pending_approval_old'], '#FF9800'),
+            ('HubSpot Expect/Commit', metrics['expect_commit'], '#43A047')
+        ]
+        total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
+                metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
+    
+    # Add stacked bars
+    cumulative = 0
+    annotations = []
+    
+    for name, value, color in components:
+        # Determine if this segment is small (needs annotation)
+        is_small_segment = (value > 0 and total > 0 and value < total * 0.08)
+        
+        # Add bar
+        fig.add_trace(go.Bar(
+            name=name,
+            x=['Progress'],
+            y=[value],
+            marker_color=color,
+            text=[f"${value:,.0f}" if not is_small_segment else ""],  # Show text for large segments only
+            textposition='inside',
+            textfont=dict(size=13, color='white', family='Arial Black'),
+            hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
+        ))
+        
+        # Add annotation for small segments
+        if is_small_segment:
+            # Position annotation to the right of the bar
+            annotations.append(dict(
+                x=0.55,  # To the right of the bar
+                y=cumulative + (value / 2),  # Middle of the segment
+                text=f"<b>{name}</b><br>${value:,.0f}",
+                showarrow=True,
+                arrowhead=2,
+                arrowsize=1,
+                arrowwidth=2,
+                arrowcolor=color,
+                ax=120,  # Arrow length in x direction
+                ay=0,    # No y offset
+                font=dict(size=12, color='#333333', family='Arial'),
+                bgcolor="rgba(255,255,255,0.95)",
+                bordercolor=color,
+                borderwidth=2,
+                borderpad=6,
+                align='left'
+            ))
+        
+        cumulative += value
+    
+    # Add quota line
+    quota = metrics.get('total_quota', metrics.get('quota', 0))
+    fig.add_trace(go.Scatter(
+        name='Quota Goal',
+        x=['Progress'],
+        y=[quota],
+        mode='markers',
+        marker=dict(size=14, color='#DC3912', symbol='diamond', line=dict(width=2, color='white')),
+        hovertemplate=f"<b>Quota Goal</b><br>${quota:,.0f}<extra></extra>"
+    ))
+    
+    # Add potential line
+    best_opp = metrics.get('best_opp', 0)
+    potential = total + best_opp
+    fig.add_trace(go.Scatter(
+        name='Potential (if all deals close)',
+        x=['Progress'],
+        y=[potential],
+        mode='markers',
+        marker=dict(size=14, color='#FB8C00', symbol='diamond', line=dict(width=2, color='white')),
+        hovertemplate=f"<b>Potential</b><br>${potential:,.0f}<extra></extra>"
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text=title,
+            font=dict(size=18, color='#333333')
+        ),
+        barmode='stack',
+        height=500,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="#333333",
+            borderwidth=1
+        ),
+        yaxis=dict(
+            title="Amount ($)",
+            gridcolor='#E5E5E5',
+            range=[0, max(quota, potential) * 1.1]  # Add 10% padding above
+        ),
+        xaxis_title="",
+        hovermode='closest',
+        plot_bgcolor='white',
+        annotations=annotations,
+        margin=dict(l=50, r=200, t=80, b=50)  # Extra right margin for annotations
     )
     
     return fig
@@ -1599,24 +1722,23 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         st.metric(
             label="Total Quota",
             value=f"${team_quota:,.0f}",
-            delta=None,
-            help="The team's total Q4 2025 sales quota target"
+            delta=None
         )
-
+   
     with col2:
         st.metric(
-            label="Base Forecast (Breakdown 1)",
+            label="Base Forecast",
             value=f"${base_forecast:,.0f}",
             delta=f"{base_attainment_pct:.1f}% of quota",
-            help="Invoiced revenue + Pending Fulfillment (with dates) + Pending Approval (with dates) + HubSpot Expect/Commit. Shows what we'll achieve if everything with a stated date ships."
+            help="Invoiced + Pending Fulfillment (with dates) + Pending Approval (with dates) + HubSpot Expect/Commit"
         )
-
+   
     with col3:
         st.metric(
-            label="Full Forecast (Breakdown 2)",
+            label="Full Forecast",
             value=f"${full_forecast:,.0f}",
             delta=f"{full_attainment_pct:.1f}% of quota",
-            help="Base Forecast plus all orders without ship dates and old pending approvals. Best-case scenario if everything ships in Q4."
+            help="ALL Pending Approval + ALL Pending Fulfillment + HubSpot Expect/Commit + Invoiced"
         )
    
     with col4:
@@ -1632,236 +1754,63 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         st.metric(
             label="Potential Attainment",
             value=f"{potential_attainment:.1f}%",
-            delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside",
-            help="Base Forecast plus all Best Case and Opportunity deals. Shows maximum possible attainment if every deal in the pipeline closes."
+            delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside"
         )
    
     # Progress bars for both breakdowns
     st.markdown("### 📈 Progress to Quota")
-    st.caption("Shows current progress toward quota based on invoiced revenue plus Expected + Commit forecast.")
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("**Base Forecast**")
+        st.markdown("**Base Forecast Progress**")
+        st.caption("Orders with confirmed ship dates + HubSpot Expected/Commit forecast")
         base_progress = min(base_attainment_pct / 100, 1.0)
         st.progress(base_progress)
         st.caption(f"Current: {base_attainment_pct:.1f}% | Potential: {potential_attainment:.1f}%")
    
     with col2:
-        st.markdown("**Full Forecast**")
+        st.markdown("**Full Forecast Progress**")
+        st.caption("All pending orders (including those without dates) + HubSpot forecast")
         full_progress = min(full_attainment_pct / 100, 1.0)
         st.progress(full_progress)
         st.caption(f"Current: {full_attainment_pct:.1f}%")
    
-    # Updated Gap Chart for Base Forecast
-    st.markdown("### 📊 Base Forecast Breakdown 1")
-    st.caption("This includes all Pending Approval and Pending Fulfillment orders that have ship dates, the HubSpot Expected + Commit forecast, and our invoiced revenue. This view represents what Q4 should look like if everything with a stated date actually ships within the quarter.")
-    fig = go.Figure()
+    # Base Forecast Chart with Enhanced Annotations
+    st.markdown("### 📊 Base Forecast Breakdown")
+    st.caption("Shows orders with confirmed Q4 ship dates plus HubSpot Expected + Commit forecast")
+    
+    # Create metrics dict for base chart
+    base_metrics = {
+        'orders': team_invoiced,
+        'pending_fulfillment': team_pf,
+        'pending_approval': team_pa,
+        'expect_commit': team_hs,
+        'best_opp': team_best_opp,
+        'total_progress': base_forecast,
+        'total_quota': team_quota
+    }
+    
+    base_chart = create_enhanced_stacked_chart(base_metrics, "Base Forecast Progress to Goal", "base")
+    st.plotly_chart(base_chart, use_container_width=True)
 
-    # Calculate total for smart text positioning (inside for large, outside for small)
-    base_total = team_invoiced + team_pf + team_pa + team_hs
-    threshold_inside = base_total * 0.10  # 10% threshold for inside text
-
-    fig.add_trace(go.Bar(
-        name='Invoiced',
-        x=['Progress'],
-        y=[team_invoiced],
-        marker_color='#1E88E5',
-        text=[f"${team_invoiced:,.0f}"],
-        textposition='inside' if team_invoiced >= threshold_inside else 'outside',
-        textfont=dict(size=16, color='white' if team_invoiced >= threshold_inside else '#1E88E5'),
-        hovertemplate='Invoiced: $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig.add_trace(go.Bar(
-        name='Pending Fulfillment',
-        x=['Progress'],
-        y=[team_pf],
-        marker_color='#FFC107',
-        text=[f"${team_pf:,.0f}"],
-        textposition='inside' if team_pf >= threshold_inside else 'outside',
-        textfont=dict(size=16, color='white' if team_pf >= threshold_inside else '#FFC107'),
-        hovertemplate='Pending Fulfillment: $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig.add_trace(go.Bar(
-        name='Pending Approval',
-        x=['Progress'],
-        y=[team_pa],
-        marker_color='#FB8C00',
-        text=[f"${team_pa:,.0f}"],
-        textposition='inside' if team_pa >= threshold_inside else 'outside',
-        textfont=dict(size=16, color='white' if team_pa >= threshold_inside else '#FB8C00'),
-        hovertemplate='Pending Approval: $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig.add_trace(go.Bar(
-        name='Expect/Commit',
-        x=['Progress'],
-        y=[team_hs],
-        marker_color='#43A047',
-        text=[f"${team_hs:,.0f}"],
-        textposition='inside' if team_hs >= threshold_inside else 'outside',
-        textfont=dict(size=16, color='white' if team_hs >= threshold_inside else '#43A047'),
-        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
-    ))
-   
-    # Quota line
-    fig.add_trace(go.Scatter(
-        name='Quota Goal',
-        x=['Progress'],
-        y=[team_quota],
-        mode='markers',
-        marker=dict(size=12, color='#DC3912', symbol='diamond'),
-        text=[f"Goal: ${team_quota:,.0f}"],
-        textposition='top center'
-    ))
-   
-    # Potential
-    potential = base_forecast + team_best_opp
-    fig.add_trace(go.Scatter(
-        name='Potential (if all deals close)',
-        x=['Progress'],
-        y=[potential],
-        mode='markers',
-        marker=dict(size=12, color='#FB8C00', symbol='diamond'),
-        text=[f"Potential: ${potential:,.0f}"],
-        textposition='bottom center'
-    ))
-   
-    fig.update_layout(
-        title="Team Base Progress to Goal",
-        barmode='stack',
-        height=500,
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_title="Amount ($)",
-        xaxis_title="",
-        hovermode='x unified',
-        uniformtext=dict(mode='hide', minsize=10)
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Full Forecast Breakdown 2 - includes all orders (even without dates)
-    st.markdown("### 📊 Full Forecast Breakdown 2")
-    st.caption("This includes all Pending Approval and Pending Fulfillment orders (including those without ship dates), the HubSpot Expected + Commit forecast, and invoiced revenue. This represents a best-case scenario if everything ships.")
-    fig2 = go.Figure()
-
-    # Calculate total for smart text positioning (inside for large, outside for small)
-    full_total = team_invoiced + team_pf + team_pf_no_date + team_pa + team_pa_no_date + team_old_pa + team_hs
-    threshold_inside_full = full_total * 0.08  # 8% threshold for inside text (more segments in this chart)
-
-    fig2.add_trace(go.Bar(
-        name='Invoiced',
-        x=['Progress'],
-        y=[team_invoiced],
-        marker_color='#1E88E5',
-        text=[f"${team_invoiced:,.0f}"],
-        textposition='inside' if team_invoiced >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='white' if team_invoiced >= threshold_inside_full else '#1E88E5'),
-        hovertemplate='Invoiced: $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Pending Fulfillment (with dates)',
-        x=['Progress'],
-        y=[team_pf],
-        marker_color='#FFC107',
-        text=[f"${team_pf:,.0f}"],
-        textposition='inside' if team_pf >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='#333' if team_pf >= threshold_inside_full else '#FFC107'),
-        hovertemplate='Pending Fulfillment (with dates): $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Pending Fulfillment (no dates)',
-        x=['Progress'],
-        y=[team_pf_no_date],
-        marker_color='#FFE082',
-        text=[f"${team_pf_no_date:,.0f}"],
-        textposition='inside' if team_pf_no_date >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='#333' if team_pf_no_date >= threshold_inside_full else '#FFE082'),
-        hovertemplate='Pending Fulfillment (no dates): $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Pending Approval (with dates)',
-        x=['Progress'],
-        y=[team_pa],
-        marker_color='#FB8C00',
-        text=[f"${team_pa:,.0f}"],
-        textposition='inside' if team_pa >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='white' if team_pa >= threshold_inside_full else '#FB8C00'),
-        hovertemplate='Pending Approval (with dates): $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Pending Approval (no dates)',
-        x=['Progress'],
-        y=[team_pa_no_date],
-        marker_color='#FFCC80',
-        text=[f"${team_pa_no_date:,.0f}"],
-        textposition='inside' if team_pa_no_date >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='#333' if team_pa_no_date >= threshold_inside_full else '#FFCC80'),
-        hovertemplate='Pending Approval (no dates): $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Old Pending Approval',
-        x=['Progress'],
-        y=[team_old_pa],
-        marker_color='#FF9800',
-        text=[f"${team_old_pa:,.0f}"],
-        textposition='inside' if team_old_pa >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='white' if team_old_pa >= threshold_inside_full else '#FF9800'),
-        hovertemplate='Old Pending Approval: $%{y:,.0f}<extra></extra>'
-    ))
-
-    fig2.add_trace(go.Bar(
-        name='Expect/Commit',
-        x=['Progress'],
-        y=[team_hs],
-        marker_color='#43A047',
-        text=[f"${team_hs:,.0f}"],
-        textposition='inside' if team_hs >= threshold_inside_full else 'outside',
-        textfont=dict(size=16, color='white' if team_hs >= threshold_inside_full else '#43A047'),
-        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
-    ))
-
-    # Quota line
-    fig2.add_trace(go.Scatter(
-        name='Quota Goal',
-        x=['Progress'],
-        y=[team_quota],
-        mode='markers',
-        marker=dict(size=12, color='#DC3912', symbol='diamond'),
-        text=[f"Goal: ${team_quota:,.0f}"],
-        textposition='top center'
-    ))
-
-    # Potential
-    potential2 = full_forecast + team_best_opp
-    fig2.add_trace(go.Scatter(
-        name='Potential (if all deals close)',
-        x=['Progress'],
-        y=[potential2],
-        mode='markers',
-        marker=dict(size=12, color='#FB8C00', symbol='diamond'),
-        text=[f"Potential: ${potential2:,.0f}"],
-        textposition='bottom center'
-    ))
-
-    fig2.update_layout(
-        title="Team Full Forecast Progress to Goal",
-        barmode='stack',
-        height=550,
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        yaxis_title="Amount ($)",
-        xaxis_title="",
-        hovermode='x unified',
-        uniformtext=dict(mode='hide', minsize=10)
-    )
-    st.plotly_chart(fig2, use_container_width=True)
+    # Full Forecast Chart with Enhanced Annotations
+    st.markdown("### 📊 Full Forecast Breakdown")
+    st.caption("Best-case scenario including all orders, even those without ship dates")
+    
+    full_metrics = {
+        'orders': team_invoiced,
+        'pending_fulfillment': team_pf,
+        'pending_fulfillment_no_date': team_pf_no_date,
+        'pending_approval': team_pa,
+        'pending_approval_no_date': team_pa_no_date,
+        'pending_approval_old': team_old_pa,
+        'expect_commit': team_hs,
+        'best_opp': team_best_opp,
+        'total_progress': base_forecast,
+        'total_quota': team_quota
+    }
+    
+    full_chart = create_enhanced_stacked_chart(full_metrics, "Full Forecast Progress to Goal", "full")
+    st.plotly_chart(full_chart, use_container_width=True)
 
     # Other charts remain the same
     col1, col2 = st.columns(2)
@@ -1894,19 +1843,21 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             st.plotly_chart(invoice_chart, use_container_width=True)
    
     # Display the two sections
-    st.markdown("### 👥 Section 1: Q4 Gap to Goal")
+    st.markdown("### 👥 Base Forecast by Rep")
+    st.caption("Orders with confirmed ship dates + HubSpot Expected/Commit")
     if section1_data:
         section1_df = pd.DataFrame(section1_data)
         st.dataframe(section1_df, use_container_width=True, hide_index=True)
     else:
-        st.warning("No data for Section 1")
+        st.warning("No data for Base Forecast")
    
-    st.markdown("### 👥 Section 2: Additional Orders (Can be included)")
+    st.markdown("### 👥 Full Forecast by Rep")
+    st.caption("All orders (including those without dates) + HubSpot forecast")
     if section2_data:
         section2_df = pd.DataFrame(section2_data)
         st.dataframe(section2_df, use_container_width=True, hide_index=True)
     else:
-        st.warning("No data for Section 2")
+        st.warning("No data for Full Forecast")
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
     
