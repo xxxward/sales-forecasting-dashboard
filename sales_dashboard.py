@@ -106,7 +106,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v31_waterfall_charts"
+CACHE_VERSION = "v32_pa_logic_fix_total_bar"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -744,7 +744,8 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         if rep_orders.columns.duplicated().any():
             rep_orders = rep_orders.loc[:, ~rep_orders.columns.duplicated()]
         
-        # PENDING APPROVAL LOGIC
+        # PENDING APPROVAL LOGIC - FIXED TO PREVENT DOUBLE COUNTING
+        # Priority: Age > 14 days takes precedence over date field status
         pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
         
         if not pending_approval_orders.empty:
@@ -752,29 +753,12 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             q4_start = pd.Timestamp('2025-10-01')
             q4_end = pd.Timestamp('2025-12-31')
             
-            # Pending Approval WITH dates (Column AB has a date AND it's in Q4 2025)
-            if 'Pending Approval Date' in pending_approval_orders.columns:
-                pa_with_date_mask = (
-                    (pending_approval_orders['Pending Approval Date'].notna()) &
-                    (pending_approval_orders['Pending Approval Date'] != 'No Date') &
-                    (pending_approval_orders['Pending Approval Date'] >= q4_start) &
-                    (pending_approval_orders['Pending Approval Date'] <= q4_end)
-                )
-                pending_approval_details = pending_approval_orders[pa_with_date_mask].copy()
-                # Remove duplicate columns
-                if pending_approval_details.columns.duplicated().any():
-                    pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
-                pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
-                
-                # Pending Approval WITHOUT dates OR outside Q4
-                pa_no_date_mask = ~pa_with_date_mask
-                pending_approval_no_date_details = pending_approval_orders[pa_no_date_mask].copy()
-                # Remove duplicate columns
-                if pending_approval_no_date_details.columns.duplicated().any():
-                    pending_approval_no_date_details = pending_approval_no_date_details.loc[:, ~pending_approval_no_date_details.columns.duplicated()]
-                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum() if not pending_approval_no_date_details.empty else 0
+            # Check if we have the Age_Business_Days column
+            if 'Age_Business_Days' not in pending_approval_orders.columns:
+                st.warning("⚠️ Age_Business_Days column missing from Sales Orders. Cannot calculate Old PA correctly.")
             
-            # Old Pending Approval (Order Start Date > 14 business days)
+            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age > 14 business days)
+            # This takes priority and removes orders from other categories
             if 'Age_Business_Days' in pending_approval_orders.columns:
                 old_mask = pending_approval_orders['Age_Business_Days'] > 14
                 pending_approval_old_details = pending_approval_orders[old_mask].copy()
@@ -782,6 +766,45 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                 if pending_approval_old_details.columns.duplicated().any():
                     pending_approval_old_details = pending_approval_old_details.loc[:, ~pending_approval_old_details.columns.duplicated()]
                 pending_approval_old = pending_approval_old_details['Amount'].sum() if not pending_approval_old_details.empty else 0
+                
+                # Create a mask for orders that are NOT old (Age <= 14 days)
+                # These are the only ones eligible for Categories 1 and 2
+                young_orders_mask = pending_approval_orders['Age_Business_Days'] <= 14
+                young_orders = pending_approval_orders[young_orders_mask].copy()
+            else:
+                pending_approval_old = 0
+                pending_approval_old_details = pd.DataFrame()
+                young_orders = pending_approval_orders.copy()
+            
+            # Now process only the "young" orders (Age <= 14 days) for Categories 1 and 2
+            if not young_orders.empty and 'Pending Approval Date' in young_orders.columns:
+                
+                # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age <= 14 days)
+                pa_with_date_mask = (
+                    (young_orders['Pending Approval Date'].notna()) &
+                    (young_orders['Pending Approval Date'] != 'No Date') &
+                    (young_orders['Pending Approval Date'] >= q4_start) &
+                    (young_orders['Pending Approval Date'] <= q4_end)
+                )
+                pending_approval_details = young_orders[pa_with_date_mask].copy()
+                # Remove duplicate columns
+                if pending_approval_details.columns.duplicated().any():
+                    pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
+                pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
+                
+                # CATEGORY 2: Pending Approval with "No Date" string (and Age <= 14 days)
+                pa_no_date_mask = (young_orders['Pending Approval Date'] == 'No Date')
+                pending_approval_no_date_details = young_orders[pa_no_date_mask].copy()
+                # Remove duplicate columns
+                if pending_approval_no_date_details.columns.duplicated().any():
+                    pending_approval_no_date_details = pending_approval_no_date_details.loc[:, ~pending_approval_no_date_details.columns.duplicated()]
+                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum() if not pending_approval_no_date_details.empty else 0
+            else:
+                # No young orders or missing date column
+                pending_approval = 0
+                pending_approval_details = pd.DataFrame()
+                pending_approval_no_date = 0
+                pending_approval_no_date_details = pd.DataFrame()
         
         # PENDING FULFILLMENT LOGIC
         fulfillment_orders = rep_orders[
@@ -993,6 +1016,20 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
             showlegend=True
         ))
         cumulative += step['value']
+    
+    # Add total bar showing cumulative sum
+    fig.add_trace(go.Bar(
+        name='TOTAL FORECAST',
+        x=['TOTAL'],
+        y=[current_total],
+        marker_color='#7B1FA2',
+        marker_line=dict(width=2, color='#4A148C'),
+        text=[f"${current_total:,.0f}"],
+        textposition='outside',
+        textfont=dict(size=14, color='black', family='Arial Black'),
+        hovertemplate=f"<b>Total Forecast</b><br>${current_total:,.0f}<extra></extra>",
+        showlegend=True
+    ))
     
     # Add gap bar if exists
     if gap != 0:
