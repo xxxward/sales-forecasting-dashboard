@@ -964,14 +964,18 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
         total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
                 metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
     
-    # Add stacked bars with smaller, centered text
+    # Add stacked bars with annotations for tiny segments
     cumulative = 0
+    annotations = []
     
     for name, value, color in components:
         # Calculate what % this segment is of the total
         pct_of_total = (value / total * 100) if total > 0 else 0
         
-        # Smaller font sizes for better fit
+        # Determine if segment is too small for text
+        is_tiny = pct_of_total < 3
+        
+        # Font size based on segment size
         if pct_of_total > 15:
             font_size = 14
         elif pct_of_total > 8:
@@ -979,26 +983,45 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
         elif pct_of_total > 4:
             font_size = 12
         else:
-            font_size = 11
+            font_size = 10
         
-        # Add bar with centered text
+        # Add bar
         fig.add_trace(go.Bar(
             name=name,
             x=['Progress'],
             y=[value],
             marker_color=color,
-            text=[f"${value:,.0f}"],
+            text=[f"${value:,.0f}" if not is_tiny else ""],  # Hide text for tiny segments
             textposition='inside',
-            textangle=0,  # Horizontal text
+            textangle=0,
             textfont=dict(size=font_size, color='black', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>",
-            insidetextanchor='middle'  # Center the text
+            insidetextanchor='middle'
         ))
         
+        # Add annotation for tiny segments
+        if is_tiny:
+            annotations.append(dict(
+                x=1.01,
+                y=cumulative + (value / 2),
+                xref='paper',
+                yref='y',
+                text=f"<b>{name}:</b> ${value:,.0f}",
+                showarrow=True,
+                arrowhead=2,
+                arrowwidth=2,
+                arrowcolor=color,
+                ax=60,
+                ay=0,
+                font=dict(size=10, color='#333333'),
+                bgcolor='white',
+                bordercolor=color,
+                borderwidth=2,
+                borderpad=3,
+                xanchor='left'
+            ))
+        
         cumulative += value
-    
-    # No additional annotations needed
-    annotations = []
     
     # Add quota line
     quota = metrics.get('total_quota', metrics.get('quota', 0))
