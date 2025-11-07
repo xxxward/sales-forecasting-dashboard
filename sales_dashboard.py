@@ -964,25 +964,43 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
         total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
                 metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
     
-    # Add stacked bars with consistent text styling
+    # Add stacked bars with smart text sizing
     cumulative = 0
     
     for name, value, color in components:
-        # Add bar with large black bold text for ALL segments
+        # Calculate what % this segment is of the total
+        pct_of_total = (value / total * 100) if total > 0 else 0
+        
+        # Smart font sizing based on segment size
+        if pct_of_total > 15:
+            font_size = 18
+            text_position = 'inside'
+        elif pct_of_total > 8:
+            font_size = 16
+            text_position = 'inside'
+        elif pct_of_total > 4:
+            font_size = 14
+            text_position = 'inside'
+        else:
+            font_size = 12
+            text_position = 'outside'  # Show outside for very small segments
+        
+        # Add bar
         fig.add_trace(go.Bar(
             name=name,
             x=['Progress'],
             y=[value],
             marker_color=color,
             text=[f"${value:,.0f}"],
-            textposition='auto',  # Let Plotly decide best position
-            textfont=dict(size=18, color='black', family='Arial Black'),
-            hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
+            textposition=text_position,
+            textfont=dict(size=font_size, color='black' if text_position == 'inside' else color, family='Arial Black'),
+            hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>",
+            constraintext='none'  # Allow text to overflow if needed
         ))
         
         cumulative += value
     
-    # No annotations needed - all text on bars
+    # No additional annotations needed
     annotations = []
     
     # Add quota line
@@ -1693,7 +1711,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
    
     # Display key metrics with two breakdowns
     st.markdown("### 📊 Key Metrics")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
    
     with col1:
         st.metric(
@@ -1717,8 +1735,18 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             delta=f"{full_attainment_pct:.1f}% of quota",
             help="ALL Pending Approval + ALL Pending Fulfillment + HubSpot Expect/Commit + Invoiced"
         )
-   
+    
     with col4:
+        adjusted_forecast = full_forecast - team_q1_spillover
+        adjusted_attainment = (adjusted_forecast / team_quota * 100) if team_quota > 0 else 0
+        st.metric(
+            label="Adjusted Forecast",
+            value=f"${adjusted_forecast:,.0f}",
+            delta=f"{adjusted_attainment:.1f}% of quota",
+            help="Full Forecast minus Q1 2026 Spillover (deals shipping in Q1)"
+        )
+   
+    with col5:
         st.metric(
             label="Base Gap to Goal",
             value=f"${base_gap:,.0f}",
@@ -1727,7 +1755,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             help="Invoiced revenue (orders shipped) plus our HubSpot Expected + Commit forecast. This shows our current baseline toward our goal."
         )
 
-    with col5:
+    with col6:
         st.metric(
             label="Potential Attainment",
             value=f"{potential_attainment:.1f}%",
