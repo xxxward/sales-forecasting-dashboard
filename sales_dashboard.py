@@ -258,8 +258,8 @@ def load_all_data():
     
     st.sidebar.info("🔄 Loading data from Google Sheets...")
     
-    # Load deals data - extend range to include all columns (A through Q for Pending Approval Date)
-    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:Q", version=CACHE_VERSION)
+    # Load deals data - extend range to include Q1 2026 Spillover column
+    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:R", version=CACHE_VERSION)
     
     # DEBUG: Show what we got from HubSpot
     if not deals_df.empty:
@@ -321,6 +321,8 @@ def load_all_data():
                     rename_dict[col] = 'Product Type'  # Map Deal Type to Product Type for lead time logic
                 elif col == 'Average Leadtime':
                     rename_dict[col] = 'Average Leadtime'
+                elif col == 'Q1 2026 Spillover':
+                    rename_dict[col] = 'Q1 2026 Spillover'
             
             deals_df = deals_df.rename(columns=rename_dict)
             
@@ -966,7 +968,7 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
     cumulative = 0
     
     for name, value, color in components:
-        # Add bar with black bold text for ALL segments
+        # Add bar with large black bold text for ALL segments
         fig.add_trace(go.Bar(
             name=name,
             x=['Progress'],
@@ -974,7 +976,7 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
             marker_color=color,
             text=[f"${value:,.0f}"],
             textposition='inside',
-            textfont=dict(size=14, color='black', family='Arial Black'),
+            textfont=dict(size=18, color='black', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
         ))
         
