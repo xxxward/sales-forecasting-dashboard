@@ -975,7 +975,7 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
             y=[value],
             marker_color=color,
             text=[f"${value:,.0f}"],
-            textposition='inside',
+            textposition='auto',  # Let Plotly decide best position
             textfont=dict(size=18, color='black', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
         ))
@@ -1609,7 +1609,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     # Aggregate full team metrics from per-rep calculations
     team_quota = basic_metrics['total_quota']
     team_best_opp = basic_metrics['best_opp']
-    team_q1_spillover = basic_metrics['q1_spillover']
+    team_q1_spillover = 0  # Calculate fresh from rep metrics
    
     team_invoiced = 0
     team_pf = 0
