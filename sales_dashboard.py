@@ -871,18 +871,24 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
 
 def create_gap_chart(metrics, title):
     """Create a waterfall/combo chart showing progress to goal"""
-    
+
     fig = go.Figure()
-    
+
+    # Calculate total for percentage threshold (hide text if segment < 5% of total)
+    orders_val = metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']
+    chart_total = orders_val + metrics['expect_commit']
+    min_threshold = chart_total * 0.05
+
     # Create stacked bar
     fig.add_trace(go.Bar(
         name='NetSuite Orders',
         x=['Progress'],
-        y=[metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']],
+        y=[orders_val],
         marker_color='#1E88E5',
-        text=[f"${metrics['total_orders'] if 'total_orders' in metrics else metrics['orders']:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        text=[f"${orders_val:,.0f}" if orders_val >= min_threshold else ""],
+        textposition='inside',
+        textfont=dict(size=14),
+        hovertemplate='NetSuite Orders: $%{y:,.0f}<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
@@ -890,9 +896,10 @@ def create_gap_chart(metrics, title):
         x=['Progress'],
         y=[metrics['expect_commit']],
         marker_color='#43A047',
-        text=[f"${metrics['expect_commit']:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        text=[f"${metrics['expect_commit']:,.0f}" if metrics['expect_commit'] >= min_threshold else ""],
+        textposition='inside',
+        textfont=dict(size=14),
+        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
     ))
     
     # Add quota line
@@ -1592,21 +1599,24 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         st.metric(
             label="Total Quota",
             value=f"${team_quota:,.0f}",
-            delta=None
+            delta=None,
+            help="The team's total Q4 2025 sales quota target"
         )
-   
+
     with col2:
         st.metric(
             label="Base Forecast (Breakdown 1)",
             value=f"${base_forecast:,.0f}",
-            delta=f"{base_attainment_pct:.1f}% of quota"
+            delta=f"{base_attainment_pct:.1f}% of quota",
+            help="Invoiced revenue + Pending Fulfillment (with dates) + Pending Approval (with dates) + HubSpot Expect/Commit. Shows what we'll achieve if everything with a stated date ships."
         )
-   
+
     with col3:
         st.metric(
             label="Full Forecast (Breakdown 2)",
             value=f"${full_forecast:,.0f}",
-            delta=f"{full_attainment_pct:.1f}% of quota"
+            delta=f"{full_attainment_pct:.1f}% of quota",
+            help="Base Forecast plus all orders without ship dates and old pending approvals. Best-case scenario if everything ships in Q4."
         )
    
     with col4:
@@ -1622,7 +1632,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         st.metric(
             label="Potential Attainment",
             value=f"{potential_attainment:.1f}%",
-            delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside"
+            delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside",
+            help="Base Forecast plus all Best Case and Opportunity deals. Shows maximum possible attainment if every deal in the pipeline closes."
         )
    
     # Progress bars for both breakdowns
@@ -1645,15 +1656,20 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     st.markdown("### 📊 Base Forecast Breakdown 1")
     st.caption("This includes all Pending Approval and Pending Fulfillment orders that have ship dates, the HubSpot Expected + Commit forecast, and our invoiced revenue. This view represents what Q4 should look like if everything with a stated date actually ships within the quarter.")
     fig = go.Figure()
-   
+
+    # Calculate total for smart text positioning (inside for large, outside for small)
+    base_total = team_invoiced + team_pf + team_pa + team_hs
+    threshold_inside = base_total * 0.10  # 10% threshold for inside text
+
     fig.add_trace(go.Bar(
         name='Invoiced',
         x=['Progress'],
         y=[team_invoiced],
         marker_color='#1E88E5',
         text=[f"${team_invoiced:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_invoiced >= threshold_inside else 'outside',
+        textfont=dict(size=16, color='white' if team_invoiced >= threshold_inside else '#1E88E5'),
+        hovertemplate='Invoiced: $%{y:,.0f}<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
@@ -1662,8 +1678,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pf],
         marker_color='#FFC107',
         text=[f"${team_pf:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pf >= threshold_inside else 'outside',
+        textfont=dict(size=16, color='white' if team_pf >= threshold_inside else '#FFC107'),
+        hovertemplate='Pending Fulfillment: $%{y:,.0f}<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
@@ -1672,8 +1689,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pa],
         marker_color='#FB8C00',
         text=[f"${team_pa:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pa >= threshold_inside else 'outside',
+        textfont=dict(size=16, color='white' if team_pa >= threshold_inside else '#FB8C00'),
+        hovertemplate='Pending Approval: $%{y:,.0f}<extra></extra>'
     ))
 
     fig.add_trace(go.Bar(
@@ -1682,8 +1700,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_hs],
         marker_color='#43A047',
         text=[f"${team_hs:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_hs >= threshold_inside else 'outside',
+        textfont=dict(size=16, color='white' if team_hs >= threshold_inside else '#43A047'),
+        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
     ))
    
     # Quota line
@@ -1712,12 +1731,13 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     fig.update_layout(
         title="Team Base Progress to Goal",
         barmode='stack',
-        height=400,
+        height=500,
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         yaxis_title="Amount ($)",
         xaxis_title="",
-        hovermode='x unified'
+        hovermode='x unified',
+        uniformtext=dict(mode='hide', minsize=10)
     )
     st.plotly_chart(fig, use_container_width=True)
 
@@ -1726,14 +1746,19 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     st.caption("This includes all Pending Approval and Pending Fulfillment orders (including those without ship dates), the HubSpot Expected + Commit forecast, and invoiced revenue. This represents a best-case scenario if everything ships.")
     fig2 = go.Figure()
 
+    # Calculate total for smart text positioning (inside for large, outside for small)
+    full_total = team_invoiced + team_pf + team_pf_no_date + team_pa + team_pa_no_date + team_old_pa + team_hs
+    threshold_inside_full = full_total * 0.08  # 8% threshold for inside text (more segments in this chart)
+
     fig2.add_trace(go.Bar(
         name='Invoiced',
         x=['Progress'],
         y=[team_invoiced],
         marker_color='#1E88E5',
         text=[f"${team_invoiced:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_invoiced >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='white' if team_invoiced >= threshold_inside_full else '#1E88E5'),
+        hovertemplate='Invoiced: $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1742,8 +1767,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pf],
         marker_color='#FFC107',
         text=[f"${team_pf:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pf >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='#333' if team_pf >= threshold_inside_full else '#FFC107'),
+        hovertemplate='Pending Fulfillment (with dates): $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1752,8 +1778,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pf_no_date],
         marker_color='#FFE082',
         text=[f"${team_pf_no_date:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pf_no_date >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='#333' if team_pf_no_date >= threshold_inside_full else '#FFE082'),
+        hovertemplate='Pending Fulfillment (no dates): $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1762,8 +1789,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pa],
         marker_color='#FB8C00',
         text=[f"${team_pa:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pa >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='white' if team_pa >= threshold_inside_full else '#FB8C00'),
+        hovertemplate='Pending Approval (with dates): $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1772,8 +1800,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_pa_no_date],
         marker_color='#FFCC80',
         text=[f"${team_pa_no_date:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_pa_no_date >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='#333' if team_pa_no_date >= threshold_inside_full else '#FFCC80'),
+        hovertemplate='Pending Approval (no dates): $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1782,8 +1811,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_old_pa],
         marker_color='#FF9800',
         text=[f"${team_old_pa:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_old_pa >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='white' if team_old_pa >= threshold_inside_full else '#FF9800'),
+        hovertemplate='Old Pending Approval: $%{y:,.0f}<extra></extra>'
     ))
 
     fig2.add_trace(go.Bar(
@@ -1792,8 +1822,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         y=[team_hs],
         marker_color='#43A047',
         text=[f"${team_hs:,.0f}"],
-        textposition='auto',
-        textfont=dict(size=14)
+        textposition='inside' if team_hs >= threshold_inside_full else 'outside',
+        textfont=dict(size=16, color='white' if team_hs >= threshold_inside_full else '#43A047'),
+        hovertemplate='Expect/Commit: $%{y:,.0f}<extra></extra>'
     ))
 
     # Quota line
@@ -1822,12 +1853,13 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     fig2.update_layout(
         title="Team Full Forecast Progress to Goal",
         barmode='stack',
-        height=400,
+        height=550,
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         yaxis_title="Amount ($)",
         xaxis_title="",
-        hovermode='x unified'
+        hovermode='x unified',
+        uniformtext=dict(mode='hide', minsize=10)
     )
     st.plotly_chart(fig2, use_container_width=True)
 
