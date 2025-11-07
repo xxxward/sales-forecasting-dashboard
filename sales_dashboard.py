@@ -989,7 +989,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
     # All measures are relative (incremental)
     measure = ['relative'] * len(x_labels)
     
-    # Create the waterfall figure
+    # Create the waterfall figure with custom colors
     fig = go.Figure(go.Waterfall(
         name="Forecast Components",
         orientation="v",
@@ -1002,10 +1002,8 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
         connector={"line": {"color": "rgba(63, 63, 63, 0.5)", "width": 1}},
         decreasing={"marker": {"color": "#DC3912"}},
         increasing={"marker": {"color": "#43A047"}},
+        marker={"color": colors}  # Set custom colors here
     ))
-    
-    # Manually set colors for each bar to match our color scheme
-    fig.data[0].marker.color = colors
     
     # Add quota reference line
     fig.add_hline(
