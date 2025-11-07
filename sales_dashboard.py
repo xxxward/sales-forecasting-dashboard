@@ -965,6 +965,7 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
     # Add stacked bars
     cumulative = 0
     annotations = []
+    small_segments = []  # Track small segments for smart positioning
     
     for name, value, color in components:
         # Determine if this segment is small (needs annotation)
@@ -982,29 +983,56 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
         ))
         
-        # Add annotation for small segments
+        # Store small segments for annotation
         if is_small_segment:
-            # Position annotation to the right of the bar
+            small_segments.append({
+                'name': name,
+                'value': value,
+                'color': color,
+                'y_position': cumulative + (value / 2)
+            })
+        
+        cumulative += value
+    
+    # Add annotations with smart positioning to avoid overlap
+    if small_segments:
+        # Sort by y position
+        small_segments.sort(key=lambda x: x['y_position'])
+        
+        # Calculate spacing to avoid overlap
+        min_spacing = cumulative * 0.05  # Minimum 5% of total height between annotations
+        
+        for i, segment in enumerate(small_segments):
+            # Base y position
+            y_pos = segment['y_position']
+            
+            # Adjust if too close to previous annotation
+            if i > 0:
+                prev_y = small_segments[i-1]['y_position']
+                if abs(y_pos - prev_y) < min_spacing:
+                    y_pos = prev_y + min_spacing
+            
             annotations.append(dict(
-                x=0.55,  # To the right of the bar
-                y=cumulative + (value / 2),  # Middle of the segment
-                text=f"<b>{name}</b><br>${value:,.0f}",
+                x=1.0,  # Start exactly at the right edge of the bar
+                y=y_pos,
+                xref='x',
+                yref='y',
+                text=f"<b>{segment['name']}</b><br>${segment['value']:,.0f}",
                 showarrow=True,
                 arrowhead=2,
                 arrowsize=1,
                 arrowwidth=2,
-                arrowcolor=color,
-                ax=120,  # Arrow length in x direction
-                ay=0,    # No y offset
-                font=dict(size=12, color='#333333', family='Arial'),
+                arrowcolor=segment['color'],
+                ax=100,  # Arrow extends to the right
+                ay=0,    # No vertical offset
+                font=dict(size=11, color='#333333', family='Arial'),
                 bgcolor="rgba(255,255,255,0.95)",
-                bordercolor=color,
+                bordercolor=segment['color'],
                 borderwidth=2,
-                borderpad=6,
-                align='left'
+                borderpad=5,
+                align='left',
+                xanchor='left'
             ))
-        
-        cumulative += value
     
     # Add quota line
     quota = metrics.get('total_quota', metrics.get('quota', 0))
