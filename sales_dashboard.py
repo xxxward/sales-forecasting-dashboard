@@ -975,35 +975,40 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
     quota = metrics.get('total_quota', metrics.get('quota', 0))
     gap = quota - current_total
     
-    # Prepare waterfall data - all as relative measures
-    x_labels = [step['label'] for step in steps]
-    y_values = [step['value'] for step in steps]
-    colors = [step['color'] for step in steps]
+    # Create figure
+    fig = go.Figure()
     
-    # Add gap as final bar if exists
+    # Add each component as a separate bar trace for full color control
+    cumulative = 0
+    for step in steps:
+        fig.add_trace(go.Bar(
+            name=step['label'],
+            x=[step['label']],
+            y=[step['value']],
+            marker_color=step['color'],
+            text=[f"${step['value']:,.0f}"],
+            textposition='outside',
+            textfont=dict(size=12, color='black'),
+            hovertemplate=f"<b>{step['label']}</b><br>${step['value']:,.0f}<br>Cumulative: ${cumulative + step['value']:,.0f}<extra></extra>",
+            showlegend=True
+        ))
+        cumulative += step['value']
+    
+    # Add gap bar if exists
     if gap != 0:
-        x_labels.append('Gap to Goal')
-        y_values.append(gap)
-        colors.append('#DC3912' if gap > 0 else '#43A047')
-    
-    # All measures are relative (incremental)
-    measure = ['relative'] * len(x_labels)
-    
-    # Create the waterfall figure with custom colors
-    fig = go.Figure(go.Waterfall(
-        name="Forecast Components",
-        orientation="v",
-        measure=measure,
-        x=x_labels,
-        y=y_values,
-        textposition="outside",
-        text=[f"${val:,.0f}" for val in y_values],
-        textfont=dict(size=12, color='black'),
-        connector={"line": {"color": "rgba(63, 63, 63, 0.5)", "width": 1}},
-        decreasing={"marker": {"color": "#DC3912"}},
-        increasing={"marker": {"color": "#43A047"}},
-        marker={"color": colors}  # Set custom colors here
-    ))
+        gap_color = '#DC3912' if gap > 0 else '#43A047'
+        gap_label = 'Gap to Goal' if gap > 0 else 'Over Goal'
+        fig.add_trace(go.Bar(
+            name=gap_label,
+            x=[gap_label],
+            y=[abs(gap)],
+            marker_color=gap_color,
+            text=[f"${gap:,.0f}"],
+            textposition='outside',
+            textfont=dict(size=12, color='black'),
+            hovertemplate=f"<b>{gap_label}</b><br>${gap:,.0f}<extra></extra>",
+            showlegend=True
+        ))
     
     # Add quota reference line
     fig.add_hline(
@@ -1036,9 +1041,19 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
         ),
         xaxis_title="Forecast Components",
         yaxis_title="Amount ($)",
-        waterfallgap=0.25,
+        barmode='group',
         height=600,
-        showlegend=False,
+        showlegend=True,
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=0.99,
+            xanchor="left",
+            x=1.02,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="#333333",
+            borderwidth=1
+        ),
         plot_bgcolor='white',
         yaxis=dict(
             gridcolor='#E5E5E5',
@@ -1050,7 +1065,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
             tickangle=-45,
             automargin=True
         ),
-        margin=dict(l=70, r=150, t=100, b=120),
+        margin=dict(l=70, r=200, t=100, b=120),
         annotations=[
             dict(
                 x=1.02,
