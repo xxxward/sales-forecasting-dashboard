@@ -962,78 +962,26 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
         total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
                 metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
     
-    # Add stacked bars
+    # Add stacked bars with consistent text styling
     cumulative = 0
-    small_segments = []  # Track small segments for annotation
     
     for name, value, color in components:
-        # Determine if this segment is small (needs annotation)
-        is_small_segment = (value > 0 and total > 0 and value < total * 0.08)
-        
-        # Add bar
+        # Add bar with black bold text for ALL segments
         fig.add_trace(go.Bar(
             name=name,
             x=['Progress'],
             y=[value],
             marker_color=color,
-            text=[f"${value:,.0f}" if not is_small_segment else ""],
+            text=[f"${value:,.0f}"],
             textposition='inside',
-            textfont=dict(size=13, color='white', family='Arial Black'),
+            textfont=dict(size=14, color='black', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>"
         ))
         
-        # Store small segments
-        if is_small_segment:
-            small_segments.append({
-                'name': name,
-                'value': value,
-                'color': color,
-                'y_mid': cumulative + (value / 2),
-                'y_bottom': cumulative,
-                'y_top': cumulative + value
-            })
-        
         cumulative += value
     
-    # Add invisible scatter points as annotation anchors
+    # No annotations needed - all text on bars
     annotations = []
-    for i, segment in enumerate(small_segments):
-        # Add invisible point at the segment position
-        fig.add_trace(go.Scatter(
-            x=['Progress'],
-            y=[segment['y_mid']],
-            mode='markers',
-            marker=dict(size=8, color=segment['color'], opacity=0.01),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
-        
-        # Calculate vertical offset to prevent overlap
-        offset = i * (cumulative * 0.08)  # Stack annotations vertically
-        adjusted_y = segment['y_mid'] + offset
-        
-        # Add annotation with text mode
-        annotations.append(dict(
-            x=1.05,
-            y=adjusted_y,
-            xref='paper',
-            yref='y',
-            text=f"<b>{segment['name']}</b><br>${segment['value']:,.0f}",
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=1,
-            arrowwidth=2.5,
-            arrowcolor=segment['color'],
-            ax=-80,  # Point arrow back to the left (toward bar)
-            ay=-(offset * 0.5),  # Diagonal arrow
-            font=dict(size=11, color='#333333', family='Arial'),
-            bgcolor="rgba(255,255,255,0.98)",
-            bordercolor=segment['color'],
-            borderwidth=2,
-            borderpad=5,
-            align='left',
-            xanchor='left'
-        ))
     
     # Add quota line
     quota = metrics.get('total_quota', metrics.get('quota', 0))
@@ -1705,8 +1653,6 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             team_pf_no_date += rep_metrics['pending_fulfillment_no_date']
             team_pa_no_date += rep_metrics['pending_approval_no_date']
             team_old_pa += rep_metrics['pending_approval_old']
-            team_q1_spillover = max(team_q1_spillover, rep_metrics.get('q1_spillover_total', 0))  # Use max if not summing, but should sum if per rep
-            # Actually sum q1 spillover
             team_q1_spillover += rep_metrics.get('q1_spillover_total', 0)
    
     # Calculate team totals
