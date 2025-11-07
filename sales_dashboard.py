@@ -964,38 +964,35 @@ def create_enhanced_stacked_chart(metrics, title, chart_type="base"):
         total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
                 metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
     
-    # Add stacked bars with smart text sizing
+    # Add stacked bars with smaller, centered text
     cumulative = 0
     
     for name, value, color in components:
         # Calculate what % this segment is of the total
         pct_of_total = (value / total * 100) if total > 0 else 0
         
-        # Smart font sizing based on segment size
+        # Smaller font sizes for better fit
         if pct_of_total > 15:
-            font_size = 18
-            text_position = 'inside'
-        elif pct_of_total > 8:
-            font_size = 16
-            text_position = 'inside'
-        elif pct_of_total > 4:
             font_size = 14
-            text_position = 'inside'
-        else:
+        elif pct_of_total > 8:
+            font_size = 13
+        elif pct_of_total > 4:
             font_size = 12
-            text_position = 'outside'  # Show outside for very small segments
+        else:
+            font_size = 11
         
-        # Add bar
+        # Add bar with centered text
         fig.add_trace(go.Bar(
             name=name,
             x=['Progress'],
             y=[value],
             marker_color=color,
             text=[f"${value:,.0f}"],
-            textposition=text_position,
-            textfont=dict(size=font_size, color='black' if text_position == 'inside' else color, family='Arial Black'),
+            textposition='inside',
+            textangle=0,  # Horizontal text
+            textfont=dict(size=font_size, color='black', family='Arial Black'),
             hovertemplate=f"<b>{name}</b><br>${value:,.0f}<extra></extra>",
-            constraintext='none'  # Allow text to overflow if needed
+            insidetextanchor='middle'  # Center the text
         ))
         
         cumulative += value
