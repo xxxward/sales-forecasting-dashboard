@@ -114,48 +114,50 @@ The CSV data contains all the information you need to answer questions accuratel
     except Exception as e:
         return f"Error getting response from Claude: {str(e)}"
 
-def generate_daily_summary(deals_df, dashboard_df):
+def generate_daily_summary(deals_df, dashboard_df, team_metrics=None):
     """Generate automated daily change summary for executives"""
     client = initialize_claude()
     if not client:
         return "Unable to generate daily summary. Please check your API key."
     
-    # Safely get metrics from dashboard_df by checking column existence
-    total_goal = 0
-    total_booked = 0
-    total_pending_fulfillment = 0
-    total_pending_approval = 0
-    q1_spillover = 0
-    
-    if not dashboard_df.empty:
-        # Find the goal column (might be named differently)
-        goal_cols = [col for col in dashboard_df.columns if 'goal' in col.lower() and 'q4' in col.lower()]
-        if goal_cols:
-            total_goal = dashboard_df[goal_cols[0]].sum()
+    # Use pre-calculated team metrics if provided, otherwise fallback to manual calculation
+    if team_metrics:
+        total_goal = team_metrics['total_quota']
+        total_booked = team_metrics['total_orders']
+        total_pending = team_metrics['expect_commit']
+        total_committed = total_booked + total_pending
+        gap_to_goal = team_metrics['gap']
+        percent_to_goal = team_metrics['attainment_pct']
+        q1_spillover = team_metrics['q1_spillover']
+        best_opp = team_metrics['best_opp']
+        potential_total = total_committed + best_opp
+        potential_attainment = team_metrics['potential_attainment']
+    else:
+        # Fallback to manual calculation if no team_metrics provided
+        total_goal = 0
+        total_booked = 0
+        total_pending = 0
+        total_committed = 0
+        gap_to_goal = 0
+        percent_to_goal = 0
+        q1_spillover = 0
+        best_opp = 0
+        potential_total = 0
+        potential_attainment = 0
         
-        # Find booked/closed won column
-        booked_cols = [col for col in dashboard_df.columns if 'closed' in col.lower() or 'booked' in col.lower()]
-        if booked_cols:
-            total_booked = dashboard_df[booked_cols[0]].sum()
-        
-        # Find pending fulfillment
-        pf_cols = [col for col in dashboard_df.columns if 'pending' in col.lower() and 'fulfillment' in col.lower()]
-        if pf_cols:
-            total_pending_fulfillment = dashboard_df[pf_cols[0]].sum()
-        
-        # Find pending approval
-        pa_cols = [col for col in dashboard_df.columns if 'pending' in col.lower() and 'approval' in col.lower()]
-        if pa_cols:
-            total_pending_approval = dashboard_df[pa_cols[0]].sum()
-        
-        # Find Q1 spillover
-        q1_cols = [col for col in dashboard_df.columns if 'q1' in col.lower() and 'spillover' in col.lower()]
-        if q1_cols:
-            q1_spillover = dashboard_df[q1_cols[0]].sum()
-    
-    total_committed = total_booked + total_pending_fulfillment + total_pending_approval
-    gap_to_goal = total_goal - total_committed
-    percent_to_goal = (total_committed / total_goal * 100) if total_goal > 0 else 0
+        if not dashboard_df.empty:
+            # Find columns dynamically
+            goal_cols = [col for col in dashboard_df.columns if 'quota' in col.lower()]
+            if goal_cols:
+                total_goal = dashboard_df[goal_cols[0]].sum()
+            
+            booked_cols = [col for col in dashboard_df.columns if 'orders' in col.lower()]
+            if booked_cols:
+                total_booked = dashboard_df[booked_cols[0]].sum()
+                
+            total_committed = total_booked + total_pending
+            gap_to_goal = total_goal - total_committed
+            percent_to_goal = (total_committed / total_goal * 100) if total_goal > 0 else 0
     
     # Get deal stage breakdown
     stage_counts = {}
@@ -214,9 +216,13 @@ def generate_daily_summary(deals_df, dashboard_df):
     context = f"""
 Q4 2025 PERFORMANCE SNAPSHOT:
 - Q4 Goal: ${total_goal:,.0f}
-- Currently Committed (Booked + Pending): ${total_committed:,.0f}
+- Currently Booked (NetSuite Orders): ${total_booked:,.0f}  
+- Expected/Committed Pipeline: ${total_pending:,.0f}
+- Total Committed: ${total_committed:,.0f}
 - Progress to Goal: {percent_to_goal:.1f}%
 - Gap Remaining: ${gap_to_goal:,.0f}
+- Best Case/Opportunity Pipeline: ${best_opp:,.0f}
+- Potential Total (if all close): ${potential_total:,.0f} ({potential_attainment:.1f}% of goal)
 - Q1 2026 Spillover: ${q1_spillover:,.0f}
 
 PIPELINE BY STAGE:
@@ -277,7 +283,7 @@ Keep it under 400 words. Use bullet points. Be honest about the challenges. This
     except Exception as e:
         return f"Error generating summary: {str(e)}"
 
-def display_insights_dashboard(deals_df, dashboard_df):
+def display_insights_dashboard(deals_df, dashboard_df, team_metrics=None):
     """Main function to display the AI Insights dashboard"""
     
     st.markdown("## 🤖 AI-Powered Insights")
@@ -358,7 +364,7 @@ def display_insights_dashboard(deals_df, dashboard_df):
         
         if st.button("🔄 Generate Fresh Summary", type="primary"):
             with st.spinner("Claude is generating your daily summary..."):
-                summary = generate_daily_summary(deals_df, dashboard_df)
+                summary = generate_daily_summary(deals_df, dashboard_df, team_metrics)
                 st.markdown(summary)
                 
                 # Store in session state so it persists
