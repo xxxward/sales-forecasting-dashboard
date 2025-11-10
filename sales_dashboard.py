@@ -2516,7 +2516,9 @@ def main():
         else:
             st.error("No rep data available")
     elif view_mode == "AI Insights":
-        claude_insights.display_insights_dashboard(deals_df, dashboard_df)
+        # Calculate team metrics for Claude to use
+        team_metrics = calculate_team_metrics(deals_df, dashboard_df)
+        claude_insights.display_insights_dashboard(deals_df, dashboard_df, team_metrics)
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
