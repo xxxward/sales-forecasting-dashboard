@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v34_calyx_logo_added"
+CACHE_VERSION = "v35_hyperlinks_added"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1590,12 +1590,38 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
                         if 'Date' in col and pd.api.types.is_datetime64_any_dtype(display_df[col]):
                             display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
                     
+                    # Add hyperlinks based on data type
+                    if 'Deal Name' in details_df.columns and 'Record ID' in details_df.columns:
+                        # HubSpot deals - create clickable links
+                        display_df.insert(0, 'Link', details_df['Record ID'].apply(
+                            lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
+                        ))
+                    elif 'Document Number' in details_df.columns and 'Internal ID' in details_df.columns:
+                        # NetSuite sales orders - create clickable links
+                        display_df.insert(0, 'Link', details_df['Internal ID'].apply(
+                            lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
+                        ))
+                    
                     # Final check before display
                     if display_df.columns.duplicated().any():
                         st.error("Cannot display: duplicate columns persist")
                         st.write(f"Columns: {display_df.columns.tolist()}")
                     else:
-                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        # Use column_config to make links clickable
+                        column_config = {}
+                        if 'Link' in display_df.columns:
+                            column_config['Link'] = st.column_config.LinkColumn(
+                                "🔗 View",
+                                help="Click to view in HubSpot or NetSuite",
+                                display_text="Open"
+                            )
+                        
+                        st.dataframe(
+                            display_df, 
+                            use_container_width=True, 
+                            hide_index=True,
+                            column_config=column_config if column_config else None
+                        )
                         
                         # Summary statistics
                         st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
