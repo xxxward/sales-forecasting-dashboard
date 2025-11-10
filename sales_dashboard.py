@@ -474,14 +474,25 @@ def load_all_data():
     # Process invoice data
     if not invoices_df.empty:
         if len(invoices_df.columns) >= 15:
-            invoices_df = invoices_df.rename(columns={
+            # Map additional columns for Shopify identification
+            rename_dict = {
                 invoices_df.columns[0]: 'Invoice Number',
                 invoices_df.columns[1]: 'Status',
                 invoices_df.columns[2]: 'Date',
                 invoices_df.columns[6]: 'Customer',
                 invoices_df.columns[10]: 'Amount',
                 invoices_df.columns[14]: 'Sales Rep'
-            })
+            }
+            
+            # Try to find HubSpot Pipeline and CSM columns
+            for idx, col in enumerate(invoices_df.columns):
+                col_str = str(col).lower()
+                if 'hubspot' in col_str and 'pipeline' in col_str:
+                    rename_dict[col] = 'HubSpot_Pipeline'
+                elif col_str == 'csm' or 'csm' in col_str:
+                    rename_dict[col] = 'CSM'
+            
+            invoices_df = invoices_df.rename(columns=rename_dict)
             
             def clean_numeric(value):
                 if pd.isna(value) or str(value).strip() == '':
@@ -512,6 +523,46 @@ def load_all_data():
                 (invoices_df['Sales Rep'] != '')
             ]
             
+            # NEW: Create Shopify ECommerce virtual rep for invoices
+            # Priority: If actual sales rep is mentioned, attribute to them. Otherwise, Shopify bucket.
+            actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
+            
+            if 'HubSpot_Pipeline' in invoices_df.columns:
+                invoices_df['HubSpot_Pipeline'] = invoices_df['HubSpot_Pipeline'].astype(str).str.strip()
+            if 'CSM' in invoices_df.columns:
+                invoices_df['CSM'] = invoices_df['CSM'].astype(str).str.strip()
+            
+            # Identify potential Shopify/Ecommerce orders
+            shopify_invoice_mask = pd.Series([False] * len(invoices_df), index=invoices_df.index)
+            
+            if 'HubSpot_Pipeline' in invoices_df.columns:
+                shopify_invoice_mask |= (invoices_df['HubSpot_Pipeline'] == 'Ecommerce Pipeline')
+            if 'CSM' in invoices_df.columns:
+                shopify_invoice_mask |= (invoices_df['CSM'] == 'Shopify ECommerce')
+            
+            # For Shopify/Ecommerce orders, check if an actual sales rep is mentioned
+            if shopify_invoice_mask.any():
+                shopify_candidates = invoices_df[shopify_invoice_mask].copy()
+                
+                for idx, row in shopify_candidates.iterrows():
+                    # Check if any actual sales rep is mentioned in Sales Rep or CSM fields
+                    sales_rep = str(row.get('Sales Rep', ''))
+                    csm = str(row.get('CSM', '')) if 'CSM' in shopify_candidates.columns else ''
+                    
+                    # Check if one of the 5 actual reps is mentioned
+                    actual_rep_found = None
+                    for rep in actual_sales_reps:
+                        if rep in sales_rep or rep in csm:
+                            actual_rep_found = rep
+                            break
+                    
+                    if actual_rep_found:
+                        # Attribute to the actual sales rep
+                        invoices_df.at[idx, 'Sales Rep'] = actual_rep_found
+                    else:
+                        # Attribute to Shopify ECommerce
+                        invoices_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
+            
             # Calculate total invoices by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
@@ -523,6 +574,17 @@ def load_all_data():
             
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
+            
+            # NEW: Add Shopify ECommerce to dashboard if it has invoices but isn't already in dashboard
+            if 'Shopify ECommerce' in invoice_totals['Rep Name'].values:
+                if 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
+                    shopify_invoice_total = invoice_totals[invoice_totals['Rep Name'] == 'Shopify ECommerce']['Invoice Total'].iloc[0]
+                    new_shopify_row = pd.DataFrame([{
+                        'Rep Name': 'Shopify ECommerce',
+                        'Quota': 0,  # No quota for Shopify
+                        'NetSuite Orders': shopify_invoice_total
+                    }])
+                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     
     # Process sales orders data with NEW LOGIC
     if not sales_orders_df.empty:
@@ -554,6 +616,13 @@ def load_all_data():
             rename_dict[col_names[12]] = 'Projected Date'  # Column M
         if len(col_names) > 27 and 'Pending Approval Date' not in rename_dict.values():
             rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
+        
+        # NEW: Map PI || CSM column (Column G based on screenshot)
+        for idx, col in enumerate(col_names):
+            col_str = str(col).lower()
+            if ('pi' in col_str and 'csm' in col_str) or col_str == 'pi || csm':
+                rename_dict[col] = 'PI_CSM'
+                break
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
@@ -618,6 +687,52 @@ def load_all_data():
                 (sales_orders_df['Sales Rep'] != '') &
                 (sales_orders_df['Sales Rep'] != 'nan')
             ]
+        
+        # NEW: Create Shopify ECommerce virtual rep for sales orders
+        # Priority: If actual sales rep is mentioned, attribute to them. Otherwise, Shopify bucket.
+        if 'PI_CSM' in sales_orders_df.columns:
+            sales_orders_df['PI_CSM'] = sales_orders_df['PI_CSM'].astype(str).str.strip()
+            
+            actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
+            
+            # Identify potential Shopify orders
+            shopify_mask = (
+                (sales_orders_df['Sales Rep'] == 'Shopify ECommerce') | 
+                (sales_orders_df['PI_CSM'] == 'Shopify ECommerce')
+            )
+            
+            # For Shopify orders, check if an actual sales rep is mentioned
+            if shopify_mask.any():
+                shopify_candidates = sales_orders_df[shopify_mask].copy()
+                
+                for idx, row in shopify_candidates.iterrows():
+                    # Check if any actual sales rep is mentioned in Sales Rep or PI_CSM fields
+                    sales_rep = str(row.get('Sales Rep', ''))
+                    pi_csm = str(row.get('PI_CSM', ''))
+                    
+                    # Check if one of the 5 actual reps is mentioned
+                    actual_rep_found = None
+                    for rep in actual_sales_reps:
+                        if rep in sales_rep or rep in pi_csm:
+                            actual_rep_found = rep
+                            break
+                    
+                    if actual_rep_found:
+                        # Attribute to the actual sales rep
+                        sales_orders_df.at[idx, 'Sales Rep'] = actual_rep_found
+                    else:
+                        # Attribute to Shopify ECommerce
+                        sales_orders_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
+                
+                # Ensure Shopify ECommerce exists in dashboard_df only if it has attributed orders
+                shopify_order_count = (sales_orders_df['Sales Rep'] == 'Shopify ECommerce').sum()
+                if shopify_order_count > 0 and 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
+                    new_shopify_row = pd.DataFrame([{
+                        'Rep Name': 'Shopify ECommerce',
+                        'Quota': 0,
+                        'NetSuite Orders': 0  # Will be calculated from sales orders in calculate_rep_metrics
+                    }])
+                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     else:
         st.warning("Could not find required columns in NS Sales Orders")
         sales_orders_df = pd.DataFrame()
