@@ -250,9 +250,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
         
-        # Success message (only in sidebar to avoid clutter)
-        st.sidebar.success(f"✅ Loaded {len(df)} rows from {sheet_name}")
-        
         return df
         
     except Exception as e:
@@ -344,28 +341,27 @@ def apply_q4_fulfillment_logic(deals_df):
         excluded_value = deals_df[~deals_df['Counts_In_Q4']]['Amount'].sum()
         
         if excluded_count > 0:
-            st.sidebar.info(f"📊 {excluded_count} deals (${excluded_value:,.0f}) deferred to Q1 2026 due to lead times")
+            #st.sidebar.info(f"📊 {excluded_count} deals (${excluded_value:,.0f}) deferred to Q1 2026 due to lead times")
     else:
-        st.sidebar.warning("⚠️ No 'Product Type' column found - lead time logic not applied")
+        #st.sidebar.warning("⚠️ No 'Product Type' column found - lead time logic not applied")
     
     return deals_df
 
 def load_all_data():
     """Load all necessary data from Google Sheets"""
     
-    st.sidebar.info("🔄 Loading data from Google Sheets...")
+    #st.sidebar.info("🔄 Loading data from Google Sheets...")
     
     # Load deals data - extend range to include Q1 2026 Spillover column
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:R", version=CACHE_VERSION)
     
     # DEBUG: Show what we got from HubSpot
     if not deals_df.empty:
-        st.sidebar.success(f"📊 HubSpot raw data: {len(deals_df)} rows, {len(deals_df.columns)} columns")
-        with st.sidebar.expander("🔍 HubSpot Column Names"):
-            for i, col in enumerate(deals_df.columns):
-                st.write(f"{i}: {col}")
+        #st.sidebar.success(f"📊 HubSpot raw data: {len(deals_df)} rows, {len(deals_df.columns)} columns")
+        pass  # Debug info removed
     else:
-        st.sidebar.error("❌ No HubSpot data loaded!")
+        #st.sidebar.error("❌ No HubSpot data loaded!")
+        pass
     
     # Load dashboard info (rep quotas and orders)
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
@@ -383,8 +379,8 @@ def load_all_data():
             # Get actual column names
             col_names = deals_df.columns.tolist()
             
-            st.sidebar.info(f"Processing {len(col_names)} HubSpot columns")
-            st.sidebar.info(f"First 10 columns: {col_names[:10]}")
+            #st.sidebar.info(f"Processing {len(col_names)} HubSpot columns")
+            #st.sidebar.info(f"First 10 columns: {col_names[:10]}")
             
             # Map based on ACTUAL column names from your sheet
             # Note: Column 4 appears to be "Deal Owner First Name Deal Owner Last Name" combined
@@ -429,22 +425,22 @@ def load_all_data():
                 if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
                     deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
                     deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-                    st.sidebar.success("✅ Created Deal Owner from First + Last Name")
+                    #st.sidebar.success("✅ Created Deal Owner from First + Last Name")
                 else:
-                    st.sidebar.error("❌ Missing Deal Owner column!")
+                    #st.sidebar.error("❌ Missing Deal Owner column!")
             else:
-                st.sidebar.success("✅ Deal Owner column already exists")
+                #st.sidebar.success("✅ Deal Owner column already exists")
                 # Clean up the Deal Owner field
                 deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
             
             # Show what we have after renaming
-            st.sidebar.success(f"✅ Columns after rename: {', '.join([c for c in deals_df.columns.tolist()[:10] if c])}")
+            #st.sidebar.success(f"✅ Columns after rename: {', '.join([c for c in deals_df.columns.tolist()[:10] if c])}")
             
             # Check if we have required columns
             required_cols = ['Deal Name', 'Status', 'Close Date', 'Deal Owner', 'Amount', 'Pipeline']
             missing_cols = [col for col in required_cols if col not in deals_df.columns]
             if missing_cols:
-                st.sidebar.error(f"❌ Missing required columns: {missing_cols}")
+                #st.sidebar.error(f"❌ Missing required columns: {missing_cols}")
             
             # Clean and convert amount to numeric
             def clean_numeric(value):
@@ -459,7 +455,7 @@ def load_all_data():
             if 'Amount' in deals_df.columns:
                 deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
             else:
-                st.sidebar.error("❌ No Amount column found!")
+                #st.sidebar.error("❌ No Amount column found!")
             
             # Convert close date to datetime
             if 'Close Date' in deals_df.columns:
@@ -470,7 +466,7 @@ def load_all_data():
                 if len(valid_dates) > 0:
                     min_date = valid_dates.min()
                     max_date = valid_dates.max()
-                    st.sidebar.info(f"📅 Date range in data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
+                    #st.sidebar.info(f"📅 Date range in data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')}")
                     
                     # Count deals in each quarter
                     q4_2024_count = len(deals_df[(deals_df['Close Date'] >= '2024-10-01') & (deals_df['Close Date'] <= '2024-12-31')])
@@ -479,23 +475,23 @@ def load_all_data():
                     q3_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-07-01') & (deals_df['Close Date'] <= '2025-09-30')])
                     q4_2025_count = len(deals_df[(deals_df['Close Date'] >= '2025-10-01') & (deals_df['Close Date'] <= '2025-12-31')])
                     
-                    st.sidebar.info(f"Q4 2024: {q4_2024_count} | Q1 2025: {q1_2025_count} | Q2 2025: {q2_2025_count} | Q3 2025: {q3_2025_count} | Q4 2025: {q4_2025_count}")
+                    #st.sidebar.info(f"Q4 2024: {q4_2024_count} | Q1 2025: {q1_2025_count} | Q2 2025: {q2_2025_count} | Q3 2025: {q3_2025_count} | Q4 2025: {q4_2025_count}")
                 else:
-                    st.sidebar.error("❌ No valid dates found in Close Date column!")
+                    #st.sidebar.error("❌ No valid dates found in Close Date column!")
             else:
-                st.sidebar.error("❌ No Close Date column found!")
+                #st.sidebar.error("❌ No Close Date column found!")
             
             # Show data before filtering
             total_deals_before = len(deals_df)
             total_amount_before = deals_df['Amount'].sum() if 'Amount' in deals_df.columns else 0
-            st.sidebar.info(f"📊 Before filtering: {total_deals_before} deals, ${total_amount_before:,.0f}")
+            #st.sidebar.info(f"📊 Before filtering: {total_deals_before} deals, ${total_amount_before:,.0f}")
             
             # Show unique values in Status column
             if 'Status' in deals_df.columns:
                 unique_statuses = deals_df['Status'].unique()
-                st.sidebar.info(f"🏷️ Unique Status values: {', '.join([str(s) for s in unique_statuses[:10]])}")
+                #st.sidebar.info(f"🏷️ Unique Status values: {', '.join([str(s) for s in unique_statuses[:10]])}")
             else:
-                st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
+                #st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
             # FILTER: Only Q4 2025 deals (Oct 1 - Dec 31, 2025)
             q4_start = pd.Timestamp('2025-10-01')
@@ -509,15 +505,15 @@ def load_all_data():
                 ]
                 after_count = len(deals_df)
                 
-                st.sidebar.info(f"📅 Q4 2025 Filter: {before_count} deals → {after_count} deals")
+                #st.sidebar.info(f"📅 Q4 2025 Filter: {before_count} deals → {after_count} deals")
                 
                 if after_count == 0:
-                    st.sidebar.error("❌ No deals found in Q4 2025 (Oct-Dec 2025)")
-                    st.sidebar.info("💡 Your data range is 2019-2021. You may need to refresh your Google Sheet with current HubSpot data.")
+                    #st.sidebar.error("❌ No deals found in Q4 2025 (Oct-Dec 2025)")
+                    #st.sidebar.info("💡 Your data range is 2019-2021. You may need to refresh your Google Sheet with current HubSpot data.")
                 else:
-                    st.sidebar.success(f"✅ Found {after_count} Q4 2025 deals worth ${deals_df['Amount'].sum():,.0f}")
+                    #st.sidebar.success(f"✅ Found {after_count} Q4 2025 deals worth ${deals_df['Amount'].sum():,.0f}")
             else:
-                st.sidebar.error("❌ Cannot apply date filter - no Close Date column")
+                #st.sidebar.error("❌ Cannot apply date filter - no Close Date column")
             
             # FILTER OUT unwanted deal stages
             excluded_stages = [
@@ -533,19 +529,19 @@ def load_all_data():
                 
                 # Show unique stages before filtering
                 unique_stages = deals_df['Deal Stage'].unique()
-                st.sidebar.info(f"🎯 Unique Deal Stages: {', '.join([str(s) for s in unique_stages[:10]])}")
+                #st.sidebar.info(f"🎯 Unique Deal Stages: {', '.join([str(s) for s in unique_stages[:10]])}")
                 
                 # Filter out excluded stages
                 deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
                 
-                st.sidebar.success(f"✅ After stage filter: {len(deals_df)} deals, ${deals_df['Amount'].sum():,.0f}")
+                #st.sidebar.success(f"✅ After stage filter: {len(deals_df)} deals, ${deals_df['Amount'].sum():,.0f}")
             else:
-                st.sidebar.warning("⚠️ No Deal Stage column found")
+                #st.sidebar.warning("⚠️ No Deal Stage column found")
             
             # Apply Q4 fulfillment logic
             deals_df = apply_q4_fulfillment_logic(deals_df)
     else:
-        st.sidebar.error(f"❌ HubSpot data has insufficient columns: {len(deals_df.columns) if not deals_df.empty else 0}")
+        #st.sidebar.error(f"❌ HubSpot data has insufficient columns: {len(deals_df.columns) if not deals_df.empty else 0}")
     
     if not dashboard_df.empty:
         # Ensure we have the right column names
@@ -726,7 +722,7 @@ def load_all_data():
         
         # CRITICAL: Remove any duplicate columns that may have been created
         if sales_orders_df.columns.duplicated().any():
-            st.sidebar.warning(f"⚠️ Removed duplicate columns in Sales Orders: {sales_orders_df.columns[sales_orders_df.columns.duplicated()].tolist()}")
+            #st.sidebar.warning(f"⚠️ Removed duplicate columns in Sales Orders: {sales_orders_df.columns[sales_orders_df.columns.duplicated()].tolist()}")
             sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
         
         # Clean numeric values
