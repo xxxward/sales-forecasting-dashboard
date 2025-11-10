@@ -24,76 +24,127 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for styling
+# Custom CSS for styling - Dark Mode Compatible
 st.markdown("""
     <style>
+    /* Force light mode compatibility for embedded iframes */
+    .stApp {
+        color-scheme: light dark;
+    }
+    
+    /* Ensure text is always visible in both modes */
+    .stMarkdown, .stText, p, span, div {
+        color: inherit !important;
+    }
+    
     .big-font {
         font-size: 28px !important;
         font-weight: bold;
     }
+    
+    /* Metric cards - adapt to theme */
     .metric-card {
-        background-color: #f0f2f6;
+        background-color: rgba(240, 242, 246, 0.5);
         padding: 20px;
         border-radius: 10px;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
     }
+    
     .stMetric {
-        background-color: #ffffff;
+        background-color: rgba(255, 255, 255, 0.05);
         padding: 15px;
         border-radius: 8px;
         box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
+        border: 1px solid rgba(128, 128, 128, 0.2);
     }
+    
+    /* Progress breakdown - high contrast gradient */
     .progress-breakdown {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 25px;
         border-radius: 15px;
-        color: white;
+        color: white !important;
         margin: 20px 0;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+        box-shadow: 0 10px 20px rgba(0,0,0,0.3);
     }
+    
     .progress-breakdown h3 {
-        color: white;
+        color: white !important;
         margin-bottom: 15px;
         font-size: 24px;
     }
+    
     .progress-item {
         display: flex;
         justify-content: space-between;
         padding: 10px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.2);
+        border-bottom: 1px solid rgba(255,255,255,0.3);
+        color: white !important;
     }
+    
     .progress-item:last-child {
         border-bottom: none;
         font-weight: bold;
         font-size: 18px;
         padding-top: 15px;
-        border-top: 2px solid rgba(255,255,255,0.4);
+        border-top: 2px solid rgba(255,255,255,0.5);
     }
+    
     .progress-label {
         font-size: 16px;
+        color: white !important;
     }
+    
     .progress-value {
         font-size: 16px;
         font-weight: 600;
+        color: white !important;
     }
+    
+    /* Tables and sections - theme adaptive */
     .reconciliation-table {
-        background: #f8f9fa;
+        background: rgba(248, 249, 250, 0.5);
         padding: 15px;
         border-radius: 10px;
         margin: 10px 0;
+        border: 1px solid rgba(128, 128, 128, 0.2);
     }
+    
     .section-header {
-        background: #f0f2f6;
+        background: rgba(240, 242, 246, 0.5);
         padding: 10px 15px;
         border-radius: 8px;
         margin: 15px 0;
         font-weight: bold;
+        border: 1px solid rgba(128, 128, 128, 0.2);
     }
+    
     .drill-down-section {
-        background: #f8f9fa;
+        background: rgba(248, 249, 250, 0.5);
         padding: 10px;
         border-radius: 8px;
         margin: 10px 0;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    
+    /* Ensure dataframes are readable in dark mode */
+    .stDataFrame, [data-testid="stDataFrame"] {
+        border: 1px solid rgba(128, 128, 128, 0.3);
+    }
+    
+    /* Force metric labels to be visible */
+    [data-testid="stMetricLabel"] {
+        color: inherit !important;
+    }
+    
+    [data-testid="stMetricValue"] {
+        color: inherit !important;
+    }
+    
+    /* Captions should be visible in both modes */
+    .caption, [data-testid="caption"] {
+        opacity: 0.7;
+        color: inherit !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -520,7 +571,8 @@ def load_all_data():
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
-                (invoices_df['Sales Rep'] != '')
+                (invoices_df['Sales Rep'] != '') &
+                (~invoices_df['Sales Rep'].str.lower().isin(['house']))
             ]
             
             # NEW: Create Shopify ECommerce virtual rep for invoices
@@ -685,7 +737,8 @@ def load_all_data():
                 (sales_orders_df['Amount'] > 0) & 
                 (sales_orders_df['Sales Rep'].notna()) & 
                 (sales_orders_df['Sales Rep'] != '') &
-                (sales_orders_df['Sales Rep'] != 'nan')
+                (sales_orders_df['Sales Rep'] != 'nan') &
+                (~sales_orders_df['Sales Rep'].str.lower().isin(['house']))
             ]
         
         # NEW: Create Shopify ECommerce virtual rep for sales orders
@@ -1828,7 +1881,14 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     section1_data = []
     section2_data = []
    
+    # Filter out unwanted reps
+    excluded_reps = ['House', 'house', 'HOUSE']
+    
     for rep_name in dashboard_df['Rep Name']:
+        # Skip excluded reps
+        if rep_name in excluded_reps:
+            continue
+            
         rep_metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
         if rep_metrics:
             section1_total = (rep_metrics['orders'] + rep_metrics['pending_fulfillment'] +
@@ -2062,21 +2122,21 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             st.plotly_chart(invoice_chart, use_container_width=True)
    
     # Display the two sections
-    st.markdown("### 👥 The Safe Bet by Rep")
-    st.caption("Confirmed ship dates + solid HubSpot forecasts (no fluff)")
+    st.markdown("### 👥 High Confidence Forecast by Rep")
+    st.caption("Invoiced + Pending Fulfillment (with date) + Pending Approval (with date) + HubSpot Expect/Commit")
     if section1_data:
         section1_df = pd.DataFrame(section1_data)
         st.dataframe(section1_df, use_container_width=True, hide_index=True)
     else:
-        st.warning("📭 No data for The Safe Bet")
+        st.warning("📭 No data for High Confidence Forecast")
    
-    st.markdown("### 👥 The Full Picture by Rep")
-    st.caption("Everything we hope will happen (including orders without dates + ancient approvals)")
+    st.markdown("### 👥 Additional Forecast Items by Rep")
+    st.caption("Section 1 (above) + items below = Total Q4. Items below: Pending Fulfillment (without date) + Pending Approval (without date) + Old Pending Approval (>2 weeks)")
     if section2_data:
         section2_df = pd.DataFrame(section2_data)
         st.dataframe(section2_df, use_container_width=True, hide_index=True)
     else:
-        st.warning("📭 No data for The Full Picture")
+        st.warning("📭 No additional forecast items")
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
     """Display individual rep dashboard with drill-down capability"""
     
