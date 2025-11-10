@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v36_internal_id_fixed"
+CACHE_VERSION = "v37_drill_down_rewritten"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -1546,7 +1546,7 @@ def create_invoice_status_chart(invoices_df, rep_name=None):
     return fig
 
 def display_drill_down_section(title, amount, details_df, key_suffix):
-    """Display a collapsible section with order details - FIXED for duplicate columns"""
+    """Display a collapsible section with order details - WITH PROPER SO# AND LINKS"""
     
     item_count = len(details_df)
     with st.expander(f"{title}: ${amount:,.2f} (👀 Click to see {item_count} {'item' if item_count == 1 else 'items'})"):
@@ -1557,86 +1557,110 @@ def display_drill_down_section(title, amount, details_df, key_suffix):
                 # Remove duplicates
                 details_df = details_df.loc[:, ~details_df.columns.duplicated()]
             
-            # Select relevant columns to display
-            display_cols = []
-            
-            # Prioritize important columns based on dataframe type
-            if 'Deal Name' in details_df.columns:  # HubSpot deals
-                priority_cols = ['Deal Name', 'Amount', 'Status', 'Pipeline', 'Close Date', 'Product Type']
-            else:  # Sales Orders
-                priority_cols = ['Document Number', 'Customer', 'Amount', 'Status', 
-                               'Order Start Date', 'Pending Approval Date', 
-                               'Customer Promise Date', 'Projected Date']
-            
-            for col in priority_cols:
-                if col in details_df.columns and col not in display_cols:
-                    display_cols.append(col)
-            
-            # Limit to available columns (no duplicates)
-            display_cols_unique = []
-            for col in display_cols:
-                if col not in display_cols_unique:
-                    display_cols_unique.append(col)
-            
-            if display_cols_unique:
-                try:
-                    display_df = details_df[display_cols_unique].copy()
+            try:
+                # Determine data type and prepare display
+                is_hubspot = 'Deal Name' in details_df.columns
+                is_netsuite = 'Document Number' in details_df.columns or 'Internal ID' in details_df.columns
+                
+                # Create display dataframe
+                display_df = pd.DataFrame()
+                column_config = {}
+                
+                if is_hubspot and 'Record ID' in details_df.columns:
+                    # HubSpot deals
+                    display_df['🔗 Link'] = details_df['Record ID'].apply(
+                        lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
+                    )
+                    column_config['🔗 Link'] = st.column_config.LinkColumn(
+                        "🔗 Link",
+                        help="Click to view deal in HubSpot",
+                        display_text="View Deal"
+                    )
                     
-                    # Double-check for duplicates in display_df
-                    if display_df.columns.duplicated().any():
-                        st.error(f"Still have duplicates: {display_df.columns.tolist()}")
-                        display_df = display_df.loc[:, ~display_df.columns.duplicated()]
-                    
-                    # Format amount column
-                    if 'Amount' in display_df.columns:
-                        display_df['Amount'] = display_df['Amount'].apply(lambda x: f"${x:,.2f}")
-                    
-                    # Format date columns
-                    for col in display_df.columns:
-                        if 'Date' in col and pd.api.types.is_datetime64_any_dtype(display_df[col]):
-                            display_df[col] = display_df[col].dt.strftime('%Y-%m-%d')
-                    
-                    # Add hyperlinks based on data type
-                    if 'Deal Name' in details_df.columns and 'Record ID' in details_df.columns:
-                        # HubSpot deals - create clickable links
-                        display_df.insert(0, 'Link', details_df['Record ID'].apply(
-                            lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
-                        ))
-                    elif 'Document Number' in details_df.columns and 'Internal ID' in details_df.columns:
-                        # NetSuite sales orders - create clickable links
-                        display_df.insert(0, 'Link', details_df['Internal ID'].apply(
+                    # Add other HubSpot columns
+                    if 'Deal Name' in details_df.columns:
+                        display_df['Deal Name'] = details_df['Deal Name']
+                    if 'Amount' in details_df.columns:
+                        display_df['Amount'] = details_df['Amount'].apply(lambda x: f"${x:,.2f}")
+                    if 'Status' in details_df.columns:
+                        display_df['Status'] = details_df['Status']
+                    if 'Pipeline' in details_df.columns:
+                        display_df['Pipeline'] = details_df['Pipeline']
+                    if 'Close Date' in details_df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(details_df['Close Date']):
+                            display_df['Close Date'] = details_df['Close Date'].dt.strftime('%Y-%m-%d')
+                        else:
+                            display_df['Close Date'] = details_df['Close Date']
+                    if 'Product Type' in details_df.columns:
+                        display_df['Product Type'] = details_df['Product Type']
+                
+                elif is_netsuite:
+                    # NetSuite sales orders - ALWAYS show Internal ID and create link if available
+                    if 'Internal ID' in details_df.columns:
+                        display_df['🔗 Link'] = details_df['Internal ID'].apply(
                             lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
-                        ))
-                    
-                    # Final check before display
-                    if display_df.columns.duplicated().any():
-                        st.error("Cannot display: duplicate columns persist")
-                        st.write(f"Columns: {display_df.columns.tolist()}")
-                    else:
-                        # Use column_config to make links clickable
-                        column_config = {}
-                        if 'Link' in display_df.columns:
-                            column_config['Link'] = st.column_config.LinkColumn(
-                                "🔗 View",
-                                help="Click to view in HubSpot or NetSuite",
-                                display_text="Open"
-                            )
-                        
-                        st.dataframe(
-                            display_df, 
-                            use_container_width=True, 
-                            hide_index=True,
-                            column_config=column_config if column_config else None
                         )
-                        
-                        # Summary statistics
-                        st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
-                except Exception as e:
-                    st.error(f"Error displaying data: {str(e)}")
-                    st.write(f"Available columns: {details_df.columns.tolist()}")
-                    st.write(f"Attempted to display: {display_cols_unique}")
-            else:
-                st.info("No columns available to display")
+                        column_config['🔗 Link'] = st.column_config.LinkColumn(
+                            "🔗 Link",
+                            help="Click to view sales order in NetSuite",
+                            display_text="View SO"
+                        )
+                        # Also show Internal ID as a regular column
+                        display_df['Internal ID'] = details_df['Internal ID']
+                    
+                    # Add SO# (Document Number)
+                    if 'Document Number' in details_df.columns:
+                        display_df['SO#'] = details_df['Document Number']
+                    
+                    # Add other NetSuite columns
+                    if 'Customer' in details_df.columns:
+                        display_df['Customer'] = details_df['Customer']
+                    if 'Amount' in details_df.columns:
+                        display_df['Amount'] = details_df['Amount'].apply(lambda x: f"${x:,.2f}")
+                    if 'Status' in details_df.columns:
+                        display_df['Status'] = details_df['Status']
+                    if 'Order Start Date' in details_df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(details_df['Order Start Date']):
+                            display_df['Order Start Date'] = details_df['Order Start Date'].dt.strftime('%Y-%m-%d')
+                        else:
+                            display_df['Order Start Date'] = details_df['Order Start Date']
+                    if 'Pending Approval Date' in details_df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(details_df['Pending Approval Date']):
+                            display_df['Pending Approval Date'] = details_df['Pending Approval Date'].dt.strftime('%Y-%m-%d')
+                        else:
+                            display_df['Pending Approval Date'] = details_df['Pending Approval Date']
+                    if 'Customer Promise Date' in details_df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(details_df['Customer Promise Date']):
+                            display_df['Customer Promise Date'] = details_df['Customer Promise Date'].dt.strftime('%Y-%m-%d')
+                        else:
+                            display_df['Customer Promise Date'] = details_df['Customer Promise Date']
+                    if 'Projected Date' in details_df.columns:
+                        if pd.api.types.is_datetime64_any_dtype(details_df['Projected Date']):
+                            display_df['Projected Date'] = details_df['Projected Date'].dt.strftime('%Y-%m-%d')
+                        else:
+                            display_df['Projected Date'] = details_df['Projected Date']
+                
+                # Display the dataframe
+                if not display_df.empty:
+                    st.dataframe(
+                        display_df, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config=column_config if column_config else None
+                    )
+                    
+                    # Summary statistics
+                    st.caption(f"Total: ${details_df['Amount'].sum():,.2f} | Count: {len(details_df)} items")
+                else:
+                    # Fallback - show available columns for debugging
+                    st.warning(f"Could not format data. Available columns: {details_df.columns.tolist()}")
+                    st.dataframe(details_df, use_container_width=True, hide_index=True)
+                    
+            except Exception as e:
+                st.error(f"Error displaying data: {str(e)}")
+                st.write(f"Available columns: {details_df.columns.tolist()}")
+                # Show raw data as fallback
+                st.dataframe(details_df.head(), use_container_width=True, hide_index=True)
         else:
             st.info("📭 Nothing to see here... yet!")
 
