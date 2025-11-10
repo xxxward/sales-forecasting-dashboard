@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v37_drill_down_rewritten"
+CACHE_VERSION = "v38_rep_dashboard_redesigned"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2223,7 +2223,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     else:
         st.warning("📭 No additional forecast items")
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
-    """Display individual rep dashboard with drill-down capability"""
+    """Display individual rep dashboard with drill-down capability - REDESIGNED"""
     
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
     
@@ -2234,71 +2234,109 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.error(f"No data found for {rep_name}")
         return
     
-    # Show summary of ALL Q4 2025 deals (closing in Q4)
-    if metrics.get('total_q4_closing_deals', 0) > 0:
-        total_deals = metrics['total_q4_closing_deals']
-        total_amount = metrics['total_q4_closing_amount']
-        spillover_amount = metrics.get('q1_spillover_total', 0)
-        
-        st.info(
-            f"📋 **Total Q4 2025 Pipeline Summary**\n\n"
-            f"• **{total_deals} deals** worth **${total_amount:,.0f}** closing in Q4 2025\n\n"
-            f"• **${spillover_amount:,.0f}** will ship in Q1 2026 based on lead times"
-        )
+    # Calculate the key forecast totals
+    high_confidence = metrics['total_progress']  # Invoiced + PF(date) + PA(date) + HS E/C
     
-    # Display key metrics - Section 1
-    st.markdown("### 💪 High Confidence Forecast (With Confirmed Dates)")
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    full_forecast = (high_confidence + 
+                    metrics['pending_fulfillment_no_date'] + 
+                    metrics['pending_approval_no_date'] + 
+                    metrics['pending_approval_old'])
     
-    with col1:
+    q4_adjusted = full_forecast + metrics.get('q1_spillover_expect_commit', 0)
+    
+    gap_to_quota = metrics['quota'] - high_confidence
+    
+    potential_attainment_value = high_confidence + metrics['best_opp']
+    potential_attainment_pct = (potential_attainment_value / metrics['quota'] * 100) if metrics['quota'] > 0 else 0
+    
+    # NEW: Top Metrics Row (mirroring Team Scorecard)
+    st.markdown("### 📊 Rep Scorecard")
+    
+    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5, metric_col6 = st.columns(6)
+    
+    with metric_col1:
         st.metric(
-            label="Quota",
+            label="💰 Quota",
             value=f"${metrics['quota']/1000:.0f}K" if metrics['quota'] < 1000000 else f"${metrics['quota']/1000000:.1f}M",
-            help="Q4 2025 Sales Target"
+            help="Your Q4 2025 sales quota"
         )
     
-    with col2:
+    with metric_col2:
+        high_conf_pct = (high_confidence / metrics['quota'] * 100) if metrics['quota'] > 0 else 0
         st.metric(
-            label="✅ Invoiced",
-            value=f"${metrics['orders']/1000:.0f}K" if metrics['orders'] < 1000000 else f"${metrics['orders']/1000000:.1f}M",
-            help="Invoiced Orders - Billed and recognized revenue"
+            label="💪 High Confidence Forecast",
+            value=f"${high_confidence/1000:.0f}K" if high_confidence < 1000000 else f"${high_confidence/1000000:.1f}M",
+            delta=f"{high_conf_pct:.1f}% of quota",
+            help="Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit"
         )
     
-    with col3:
+    with metric_col3:
+        full_forecast_pct = (full_forecast / metrics['quota'] * 100) if metrics['quota'] > 0 else 0
         st.metric(
-            label="📦 Pending Fulfillment",
-            value=f"${metrics['pending_fulfillment']/1000:.0f}K",
-            help="Pending Fulfillment (with date) - Orders with confirmed Q4 ship dates"
+            label="📊 Full Forecast (All Sources)",
+            value=f"${full_forecast/1000:.0f}K" if full_forecast < 1000000 else f"${full_forecast/1000000:.1f}M",
+            delta=f"{full_forecast_pct:.1f}% of quota",
+            help="Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old)"
         )
     
-    with col4:
+    with metric_col4:
+        q4_adjusted_pct = (q4_adjusted / metrics['quota'] * 100) if metrics['quota'] > 0 else 0
         st.metric(
-            label="⏳ Pending Approval",
-            value=f"${metrics['pending_approval']/1000:.0f}K",
-            help="Pending Approval (with date) - Orders with Q4 approval dates scheduled"
+            label="📈 Q4 Adjusted Forecast",
+            value=f"${q4_adjusted/1000:.0f}K" if q4_adjusted < 1000000 else f"${q4_adjusted/1000000:.1f}M",
+            delta=f"{q4_adjusted_pct:.1f}% of quota",
+            help="Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old) + Q1 Spillover Expect/Commit"
         )
     
-    with col5:
+    with metric_col5:
         st.metric(
-            label="🎯 HubSpot (Q4)",
-            value=f"${metrics['expect_commit']/1000:.0f}K",
-            help="HubSpot Expect/Commit - High probability forecasted deals"
-        )
-    
-    with col6:
-        st.metric(
-            label="Gap to Quota",
-            value=f"${metrics['gap']/1000:.0f}K",
-            delta=f"${-metrics['gap']/1000:.0f}K" if metrics['gap'] < 0 else None,
+            label="📉 Gap to Quota",
+            value=f"${gap_to_quota/1000:.0f}K" if abs(gap_to_quota) < 1000000 else f"${gap_to_quota/1000000:.1f}M",
+            delta=f"${-gap_to_quota/1000:.0f}K" if gap_to_quota < 0 else None,
             delta_color="inverse",
-            help="Remaining amount needed to reach quota"
+            help="Quota - (Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit)"
         )
     
-    # Beautiful progress breakdown
-    display_progress_breakdown(metrics)
+    with metric_col6:
+        upside = potential_attainment_pct - high_conf_pct
+        st.metric(
+            label="⭐ Potential Attainment",
+            value=f"{potential_attainment_pct:.1f}%",
+            delta=f"+{upside:.1f}% upside",
+            help="(Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit + HS Best Case/Opp) ÷ Quota"
+        )
+    
+    st.markdown("---")
+    
+    # SECTION 1: What's in NetSuite with Dates and HubSpot Expect/Commit
+    st.markdown(f"""
+    <div class="progress-breakdown">
+        <h3>💰 Section 1: What's in NetSuite with Dates and HubSpot Expect/Commit</h3>
+        <div class="progress-item">
+            <span class="progress-label">✅ Invoiced & Shipped</span>
+            <span class="progress-value">${metrics['orders']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📦 Pending Fulfillment (with date)</span>
+            <span class="progress-value">${metrics['pending_fulfillment']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval (with date)</span>
+            <span class="progress-value">${metrics['pending_approval']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">🎯 HubSpot Expect/Commit</span>
+            <span class="progress-value">${metrics['expect_commit']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">💪 THE SAFE BET TOTAL</span>
+            <span class="progress-value">${high_confidence:,.0f}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Drill-down sections for Section 1
-    st.markdown("#### 📊 High Confidence Forecast Details")
+    st.markdown("#### 📊 Section 1 Details")
     
     col1, col2 = st.columns(2)
     
@@ -2332,17 +2370,53 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             f"{rep_name}_bo"
         )
     
-    # Section 2: Additional Orders
-    st.markdown("### 📊 Additional Forecast Items (Without Confirmed Dates)")
+    st.markdown("---")
+    
+    # SECTION 2: Full Forecast
+    st.markdown(f"""
+    <div class="progress-breakdown">
+        <h3>📊 Section 2: Full Forecast</h3>
+        <div class="progress-item">
+            <span class="progress-label">✅ Invoiced & Shipped</span>
+            <span class="progress-value">${metrics['orders']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📦 Pending Fulfillment (with date)</span>
+            <span class="progress-value">${metrics['pending_fulfillment']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval (with date)</span>
+            <span class="progress-value">${metrics['pending_approval']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">🎯 HubSpot Expect/Commit</span>
+            <span class="progress-value">${metrics['expect_commit']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📦 Pending Fulfillment (without date)</span>
+            <span class="progress-value">${metrics['pending_fulfillment_no_date']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval (without date)</span>
+            <span class="progress-value">${metrics['pending_approval_no_date']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏱️ Pending Approval (>2 weeks old)</span>
+            <span class="progress-value">${metrics['pending_approval_old']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📊 FULL FORECAST TOTAL</span>
+            <span class="progress-value">${full_forecast:,.0f}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Drill-down sections for Section 2 (additional items)
+    st.markdown("#### 📊 Section 2 Additional Details")
     
     warning_col1, warning_col2, warning_col3 = st.columns(3)
     
     with warning_col1:
-        st.metric(
-            label="📦 PF (without date)",
-            value=f"${metrics['pending_fulfillment_no_date']:,.0f}",
-            help="Pending Fulfillment (without date) - Orders without confirmed ship dates"
-        )
         display_drill_down_section(
             "📦 Pending Fulfillment (without date)",
             metrics['pending_fulfillment_no_date'],
@@ -2351,11 +2425,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         )
     
     with warning_col2:
-        st.metric(
-            label="⏳ PA (without date)",
-            value=f"${metrics['pending_approval_no_date']:,.0f}",
-            help="Pending Approval (without date) - Orders without approval dates (age ≤2 weeks)"
-        )
         display_drill_down_section(
             "⏳ Pending Approval (without date)",
             metrics['pending_approval_no_date'],
@@ -2364,13 +2433,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         )
     
     with warning_col3:
-        st.metric(
-            label="⏱️ Old PA (>2 weeks)",
-            value=f"${metrics['pending_approval_old']:,.0f}",
-            help="Old Pending Approval (>2 weeks) - Orders over 14 business days old",
-            delta="Review needed" if metrics['pending_approval_old'] > 0 else None,
-            delta_color="off" if metrics['pending_approval_old'] > 0 else "normal"
-        )
         display_drill_down_section(
             "⏱️ Old Pending Approval (>2 weeks)",
             metrics['pending_approval_old'],
@@ -2378,18 +2440,58 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             f"{rep_name}_pa_old"
         )
     
-    # NEW: Section 3 - Q1 2026 Spillover
-    st.markdown("### 🦘 Q1 2026 Spillover Deals")
-    st.caption("Deals closing in Q4 2025 but shipping in Q1 2026 due to lead times")
+    st.markdown("---")
     
-    spillover_col1, spillover_col2, spillover_col3 = st.columns(3)
+    # SECTION 3: Q4 Adjusted Forecast
+    st.markdown(f"""
+    <div class="progress-breakdown">
+        <h3>📈 Section 3: Q4 Adjusted Forecast (Includes Q1 Spillover - Review Needed)</h3>
+        <div class="progress-item">
+            <span class="progress-label">✅ Invoiced & Shipped</span>
+            <span class="progress-value">${metrics['orders']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📦 Pending Fulfillment (with date)</span>
+            <span class="progress-value">${metrics['pending_fulfillment']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval (with date)</span>
+            <span class="progress-value">${metrics['pending_approval']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">🎯 HubSpot Expect/Commit</span>
+            <span class="progress-value">${metrics['expect_commit']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📦 Pending Fulfillment (without date)</span>
+            <span class="progress-value">${metrics['pending_fulfillment_no_date']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏳ Pending Approval (without date)</span>
+            <span class="progress-value">${metrics['pending_approval_no_date']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">⏱️ Pending Approval (>2 weeks old)</span>
+            <span class="progress-value">${metrics['pending_approval_old']:,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">🦘 Q1 Spillover - Expect/Commit (⚠️ Review)</span>
+            <span class="progress-value">${metrics.get('q1_spillover_expect_commit', 0):,.0f}</span>
+        </div>
+        <div class="progress-item">
+            <span class="progress-label">📈 Q4 ADJUSTED TOTAL</span>
+            <span class="progress-value">${q4_adjusted:,.0f}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Drill-down for Section 3 (Q1 Spillover)
+    st.markdown("#### 🦘 Q1 2026 Spillover Details")
+    st.caption("⚠️ These deals close in Q4 2025 but will ship in Q1 2026 due to lead times")
+    
+    spillover_col1, spillover_col2 = st.columns(2)
     
     with spillover_col1:
-        st.metric(
-            label="🎯 Expect/Commit (Q1 Spillover)",
-            value=f"${metrics.get('q1_spillover_expect_commit', 0):,.0f}",
-            help="High confidence deals closing Q4 2025, shipping Q1 2026"
-        )
         display_drill_down_section(
             "🎯 Expect/Commit (Q1 Spillover)",
             metrics.get('q1_spillover_expect_commit', 0),
@@ -2398,41 +2500,17 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         )
     
     with spillover_col2:
-        st.metric(
-            label="🎲 Best Case/Opp (Q1 Spillover)",
-            value=f"${metrics.get('q1_spillover_best_opp', 0):,.0f}",
-            help="Lower probability deals closing Q4 2025, shipping Q1 2026"
-        )
         display_drill_down_section(
-            "🎲 Best Case/Opp (Q1 Spillover)",
-            metrics.get('q1_spillover_best_opp', 0),
-            metrics.get('best_opp_q1_spillover_deals', pd.DataFrame()),
-            f"{rep_name}_bo_q1"
-        )
-    
-    with spillover_col3:
-        st.metric(
-            label="📦 Total Q1 Spillover",
-            value=f"${metrics.get('q1_spillover_total', 0):,.0f}",
-            help="All deals closing Q4 2025 but shipping Q1 2026"
-        )
-        display_drill_down_section(
-            "📦 Total Q1 2026 Spillover",
+            "📦 All Q1 2026 Spillover",
             metrics.get('q1_spillover_total', 0),
             metrics.get('all_q1_spillover_deals', pd.DataFrame()),
             f"{rep_name}_all_q1"
         )
     
-    # Final Total
-    final_total = (metrics['total_progress'] + metrics['pending_fulfillment_no_date'] + 
-                   metrics['pending_approval_no_date'] + metrics['pending_approval_old'])
-    st.metric(
-        label="📊 FINAL TOTAL Q4",
-        value=f"${final_total:,.0f}",
-        delta=f"Section 1: ${metrics['total_progress']:,.0f} + Section 2: ${final_total - metrics['total_progress']:,.0f}"
-    )
+    st.markdown("---")
     
     # Charts
+    st.markdown("### 📊 Visual Analysis")
     col1, col2 = st.columns(2)
     
     with col1:
