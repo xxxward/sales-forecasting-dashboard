@@ -2067,28 +2067,6 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     full_chart = create_enhanced_waterfall_chart(full_metrics, "📊 Full Forecast - All Sources Included", "full")
     st.plotly_chart(full_chart, use_container_width=True)
 
-    # Quick Translation Guide
-    st.markdown("""
-    ---
-    ### 📋 Metric Definitions
-
-    **High Confidence Forecast includes:**
-    - ✅ **Invoiced Orders** - Billed and recognized revenue
-    - 📦 **Pending Fulfillment (with date)** - Orders with confirmed Q4 ship dates
-    - ⏳ **Pending Approval (with date)** - Orders with Q4 approval dates scheduled
-    - 🎯 **HubSpot Expect/Commit** - High probability forecasted deals
-
-    **Full Forecast adds:**
-    - 📦 **Pending Fulfillment (without date)** - Orders without confirmed ship dates
-    - ⏳ **Pending Approval (without date)** - Orders without approval dates (age ≤2 weeks)
-    - ⏱️ **Old Pending Approval (>2 weeks)** - Orders over 14 business days old
-
-    **Other:**
-    - 🦘 **Q1 2026 Spillover** - Deals closing in Q4 2025 but shipping in Q1 2026 due to lead times
-    - 🎲 **Best Case/Opportunity** - Lower confidence pipeline deals
-    ---
-    """)
-
     # Other charts remain the same
     col1, col2 = st.columns(2)
    
