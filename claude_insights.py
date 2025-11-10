@@ -20,7 +20,7 @@ def initialize_claude():
         return None
 
 def get_pipeline_summary(deals_df, rep_name=None):
-    """Generate a summary of pipeline data for Claude context"""
+    """Generate a detailed summary of pipeline data for Claude context"""
     if rep_name:
         rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
     else:
@@ -29,14 +29,42 @@ def get_pipeline_summary(deals_df, rep_name=None):
     if rep_deals.empty:
         return "No deals in pipeline."
     
-    summary = {
-        "total_deals": len(rep_deals),
-        "total_value": rep_deals['Amount'].sum() if 'Amount' in rep_deals.columns else 0,
-        "deals_by_stage": rep_deals.groupby('Deal Stage')['Amount'].agg(['count', 'sum']).to_dict() if 'Deal Stage' in rep_deals.columns else {},
-        "recent_activity": rep_deals.nlargest(5, 'Last Modified Date')[['Deal Name', 'Amount', 'Deal Stage', 'Close Date']].to_dict() if 'Last Modified Date' in rep_deals.columns else {}
-    }
+    # Convert DataFrame to CSV string with all relevant columns
+    # This gives Claude access to ALL the data in a format it can analyze
+    important_columns = [
+        'Deal Name', 'Amount', 'Deal Stage', 'Close Date', 'Deal Owner',
+        'Account Name', 'Pipeline', 'Lead Time (Days)', 'Est. Fulfillment Date',
+        'Last Modified Date', 'Create Date', 'Forecast Category'
+    ]
     
-    return json.dumps(summary, indent=2, default=str)
+    # Only include columns that exist in the DataFrame
+    available_columns = [col for col in important_columns if col in rep_deals.columns]
+    
+    if available_columns:
+        summary_df = rep_deals[available_columns].copy()
+        # Convert to CSV string for Claude
+        csv_data = summary_df.to_csv(index=False)
+        
+        # Add a header explaining the data
+        data_summary = f"""
+PIPELINE DATA FOR {'ALL REPS' if not rep_name else rep_name}:
+
+Total Deals: {len(rep_deals)}
+Total Pipeline Value: ${rep_deals['Amount'].sum() if 'Amount' in rep_deals.columns else 0:,.0f}
+
+DETAILED DEAL DATA (CSV format):
+{csv_data}
+
+This CSV contains all deal information. You can analyze:
+- Deal stages (Pending Fulfillment, Pending Approval, Closed Won, etc.)
+- Deal amounts and timing
+- Customer names
+- Lead times and fulfillment dates
+- Any other fields present in the data
+"""
+        return data_summary
+    else:
+        return "No deal data available."
 
 def ask_claude(question, context_data, rep_name=None):
     """Send a question to Claude with pipeline context"""
@@ -52,22 +80,29 @@ def ask_claude(question, context_data, rep_name=None):
     
     system_message = f"""{context_intro}
 
-You are a helpful sales operations analyst. Provide clear, actionable insights based on the data.
+You are a helpful sales operations analyst with access to complete pipeline data from HubSpot and NetSuite.
 
-Current Pipeline Data:
 {context_data}
 
-When answering:
-- Be specific and cite numbers from the data
-- Focus on actionable recommendations
-- Keep responses concise but thorough
-- Use bullet points for clarity when appropriate
-"""
+When answering questions:
+1. Analyze the CSV data provided above to find specific deals
+2. Be specific - cite deal names, amounts, and stages
+3. For questions about "Pending Fulfillment" or "Pending Approval", look at the 'Deal Stage' column
+4. Format your response clearly:
+   - Use markdown headers (## and ###) to organize sections
+   - Use bullet points (- or *) for lists of deals
+   - Use tables when comparing multiple items
+   - Bold important numbers with **$XX,XXX**
+5. Always include dollar amounts when discussing deals
+6. If asked about specific deal stages, filter the data by the 'Deal Stage' column and list ALL matching deals
+7. Keep responses scannable - executives should be able to skim and get the key info
+
+The CSV data contains all the information you need to answer questions accurately."""
 
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=1500,
+            max_tokens=2000,
             messages=[
                 {"role": "user", "content": question}
             ],
@@ -80,52 +115,122 @@ When answering:
         return f"Error getting response from Claude: {str(e)}"
 
 def generate_daily_summary(deals_df, dashboard_df):
-    """Generate automated daily change summary"""
+    """Generate automated daily change summary for executives"""
     client = initialize_claude()
     if not client:
         return "Unable to generate daily summary. Please check your API key."
     
-    # Calculate key metrics for summary
-    total_pipeline = deals_df['Amount'].sum() if 'Amount' in deals_df.columns else 0
-    total_deals = len(deals_df)
-    
-    # Get deals by stage
-    stage_breakdown = deals_df.groupby('Deal Stage')['Amount'].agg(['count', 'sum']).to_dict() if 'Deal Stage' in deals_df.columns else {}
-    
-    # Get recent changes (last 7 days)
-    if 'Last Modified Date' in deals_df.columns:
-        deals_df['Last Modified Date'] = pd.to_datetime(deals_df['Last Modified Date'], errors='coerce')
-        recent_changes = deals_df[deals_df['Last Modified Date'] >= datetime.now() - timedelta(days=7)]
-        recent_summary = f"{len(recent_changes)} deals modified in last 7 days"
+    # Get comprehensive metrics from dashboard_df
+    if not dashboard_df.empty and 'Q4 2025 Goal' in dashboard_df.columns:
+        total_goal = dashboard_df['Q4 2025 Goal'].sum()
+        total_booked = dashboard_df['Closed Won (Booked)'].sum() if 'Closed Won (Booked)' in dashboard_df.columns else 0
+        total_pending_fulfillment = dashboard_df['Pending Fulfillment (With Date)'].sum() if 'Pending Fulfillment (With Date)' in dashboard_df.columns else 0
+        total_pending_approval = dashboard_df['Pending Approval (With Date)'].sum() if 'Pending Approval (With Date)' in dashboard_df.columns else 0
+        total_committed = total_booked + total_pending_fulfillment + total_pending_approval
+        gap_to_goal = total_goal - total_committed
+        percent_to_goal = (total_committed / total_goal * 100) if total_goal > 0 else 0
+        
+        # Get Q1 spillover if available
+        q1_spillover = dashboard_df['Q1 2026 Spillover'].sum() if 'Q1 2026 Spillover' in dashboard_df.columns else 0
+        
+        # Calculate what's needed
+        deals_remaining_needed = gap_to_goal
     else:
-        recent_summary = "Date information not available"
+        total_goal = 0
+        total_committed = 0
+        gap_to_goal = 0
+        percent_to_goal = 0
+        q1_spillover = 0
+        deals_remaining_needed = 0
     
+    # Get deal stage breakdown
+    stage_counts = {}
+    stage_values = {}
+    if 'Deal Stage' in deals_df.columns:
+        for stage in deals_df['Deal Stage'].unique():
+            stage_deals = deals_df[deals_df['Deal Stage'] == stage]
+            stage_counts[stage] = len(stage_deals)
+            stage_values[stage] = stage_deals['Amount'].sum() if 'Amount' in deals_df.columns else 0
+    
+    # Get deals closing this week/month
+    if 'Close Date' in deals_df.columns:
+        deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+        deals_this_week = deals_df[
+            (deals_df['Close Date'] >= datetime.now()) & 
+            (deals_df['Close Date'] <= datetime.now() + timedelta(days=7))
+        ]
+        deals_this_month = deals_df[
+            (deals_df['Close Date'] >= datetime.now()) & 
+            (deals_df['Close Date'] <= datetime.now() + timedelta(days=30))
+        ]
+    else:
+        deals_this_week = pd.DataFrame()
+        deals_this_month = pd.DataFrame()
+    
+    # Get at-risk deals (closing soon but still in early stages)
+    at_risk_deals = deals_df[
+        (deals_df['Deal Stage'].isin(['Qualification', 'Proposal', 'Negotiation'])) &
+        (deals_df['Close Date'] <= datetime.now() + timedelta(days=14))
+    ] if 'Deal Stage' in deals_df.columns and 'Close Date' in deals_df.columns else pd.DataFrame()
+    
+    # Build comprehensive context
     context = f"""
-Current Pipeline Overview:
-- Total Deals: {total_deals}
-- Total Pipeline Value: ${total_pipeline:,.0f}
-- Recent Activity: {recent_summary}
+Q4 2025 PERFORMANCE SNAPSHOT:
+- Q4 Goal: ${total_goal:,.0f}
+- Currently Committed (Booked + Pending): ${total_committed:,.0f}
+- Progress to Goal: {percent_to_goal:.1f}%
+- Gap Remaining: ${gap_to_goal:,.0f}
+- Q1 2026 Spillover: ${q1_spillover:,.0f}
 
-Stage Breakdown:
-{json.dumps(stage_breakdown, indent=2, default=str)}
+PIPELINE BY STAGE:
+{json.dumps(stage_counts, indent=2)}
+
+VALUE BY STAGE:
+{json.dumps({k: f"${v:,.0f}" for k, v in stage_values.items()}, indent=2)}
+
+TIMING:
+- Deals closing this week: {len(deals_this_week)} deals worth ${deals_this_week['Amount'].sum() if 'Amount' in deals_this_week.columns else 0:,.0f}
+- Deals closing this month: {len(deals_this_month)} deals worth ${deals_this_month['Amount'].sum() if 'Amount' in deals_this_month.columns else 0:,.0f}
+- At-risk deals (closing soon, early stage): {len(at_risk_deals)} deals worth ${at_risk_deals['Amount'].sum() if 'Amount' in at_risk_deals.columns else 0:,.0f}
+
+TOP AT-RISK DEALS:
+{at_risk_deals[['Deal Name', 'Amount', 'Deal Stage', 'Close Date', 'Deal Owner']].head(10).to_string() if not at_risk_deals.empty else "None"}
+
+REP PERFORMANCE BREAKDOWN:
+{dashboard_df[['Rep Name', 'Q4 2025 Goal', 'Closed Won (Booked)', 'Gap to Goal']].to_string() if not dashboard_df.empty else "No rep data available"}
 """
 
-    system_message = """You are a sales operations analyst providing a daily executive summary.
+    system_message = """You are the VP of Sales Operations writing a daily brief for the executive team and sales leadership.
 
-Create a concise daily summary that highlights:
-1. Key pipeline metrics and health
-2. Notable changes or trends
-3. Deals requiring attention
-4. Quick wins or opportunities
+Your tone: Direct, data-driven, no fluff. Like you're briefing your CEO over coffee.
 
-Keep it brief (3-4 paragraphs max) and actionable. Use a professional but friendly tone."""
+Write a daily summary that answers these questions in this exact structure:
+
+## 🎯 Bottom Line Up Front
+One sentence: Are we hitting Q4 goal or not? By how much?
+
+## 📊 Where We Stand
+- Current progress vs goal (use percentages and dollars)
+- What moved since yesterday/this week (be specific about wins and losses)
+- Q1 spillover impact (if significant)
+
+## 🚨 What Needs Attention TODAY
+List 2-3 specific actions for sales leadership to take right now:
+- Which deals need executive involvement?
+- Which reps need support?
+- What's about to slip through the cracks?
+
+## 💰 The Math
+Break down exactly what we need to close to hit the goal. Be specific about which stage deals need to convert.
+
+Keep it under 400 words. Use bullet points. Be honest about the challenges. This is for decision-makers who need to act, not feel good."""
 
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=1000,
+            max_tokens=1500,
             messages=[
-                {"role": "user", "content": f"Generate a daily pipeline summary based on this data:\n\n{context}"}
+                {"role": "user", "content": f"Generate today's executive sales brief based on this data:\n\n{context}"}
             ],
             system=system_message
         )
