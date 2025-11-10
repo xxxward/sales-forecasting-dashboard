@@ -8,6 +8,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
@@ -15,6 +16,9 @@ from datetime import datetime, timedelta
 import time
 import base64
 import numpy as np
+
+# Configure Plotly for dark mode compatibility
+pio.templates.default = "plotly"  # Use default template that adapts to theme
 
 # Page configuration
 st.set_page_config(
@@ -1184,7 +1188,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
             marker_color=step['color'],
             text=[f"${step['value']:,.0f}"],
             textposition='outside',
-            textfont=dict(size=12, color='black'),
+            textfont=dict(size=12),  # Remove fixed color to auto-adapt
             hovertemplate=f"<b>{step['label']}</b><br>${step['value']:,.0f}<br>Cumulative: ${cumulative + step['value']:,.0f}<extra></extra>",
             showlegend=True
         ))
@@ -1199,7 +1203,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
         marker_line=dict(width=2, color='#4A148C'),
         text=[f"${current_total:,.0f}"],
         textposition='outside',
-        textfont=dict(size=14, color='black', family='Arial Black'),
+        textfont=dict(size=14, family='Arial Black'),  # Remove fixed color
         hovertemplate=f"<b>Total Forecast</b><br>${current_total:,.0f}<extra></extra>",
         showlegend=True
     ))
@@ -1215,7 +1219,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
             marker_color=gap_color,
             text=[f"${gap:,.0f}"],
             textposition='outside',
-            textfont=dict(size=12, color='black'),
+            textfont=dict(size=12),  # Remove fixed color
             hovertemplate=f"<b>{gap_label}</b><br>${gap:,.0f}<extra></extra>",
             showlegend=True
         ))
@@ -1247,7 +1251,7 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
     fig.update_layout(
         title=dict(
             text=title,
-            font=dict(size=18, color='#333333')
+            font=dict(size=18)  # Remove fixed color to auto-adapt
         ),
         xaxis_title="Forecast Components",
         yaxis_title="Amount ($)",
@@ -1260,15 +1264,17 @@ def create_enhanced_waterfall_chart(metrics, title, mode):
             y=0.99,
             xanchor="left",
             x=1.02,
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor="#333333",
+            bgcolor="rgba(255,255,255,0.1)",  # Semi-transparent to work in both modes
+            bordercolor="rgba(128,128,128,0.5)",
             borderwidth=1
         ),
-        plot_bgcolor='white',
+        plot_bgcolor='rgba(0,0,0,0)',  # Transparent background
+        paper_bgcolor='rgba(0,0,0,0)',  # Transparent paper
+        font=dict(color=None),  # Auto font color
         yaxis=dict(
-            gridcolor='#E5E5E5',
+            gridcolor='rgba(128,128,128,0.2)',
             zeroline=True,
-            zerolinecolor='#999999',
+            zerolinecolor='rgba(128,128,128,0.5)',
             zerolinewidth=1
         ),
         xaxis=dict(
