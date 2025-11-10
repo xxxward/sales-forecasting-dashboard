@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v35_hyperlinks_added"
+CACHE_VERSION = "v36_internal_id_fixed"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -703,6 +703,12 @@ def load_all_data():
         col_names = sales_orders_df.columns.tolist()
         
         rename_dict = {}
+        
+        # NEW: Map Internal Id column (Column A) - CRITICAL for NetSuite links
+        if len(col_names) > 0:
+            col_a_lower = str(col_names[0]).lower()
+            if 'internal' in col_a_lower and 'id' in col_a_lower:
+                rename_dict[col_names[0]] = 'Internal ID'
         
         # Find standard columns - only map FIRST occurrence
         for idx, col in enumerate(col_names):
