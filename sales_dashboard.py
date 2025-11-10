@@ -1648,17 +1648,6 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'old_pending_approval': 60527,
             'total_q4': 100496
         },
-        'House': {
-            'invoiced': 0,
-            'pending_fulfillment': 899,
-            'pending_approval': 0,
-            'hubspot': 0,
-            'total': 0,
-            'pending_fulfillment_so_no_date': 0,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 0,
-            'total_q4': 0
-        },
         'Shopify ECommerce': {
             'invoiced': 21348,
             'pending_fulfillment': 0,
@@ -1693,7 +1682,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             if rep_name in dashboard_df['Rep Name'].values:
                 metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
             
-            if metrics or rep_name in ['House', 'Shopify ECommerce']:
+            if metrics or rep_name == 'Shopify ECommerce':
                 boss = boss_rep_numbers[rep_name]
                 
                 # Get your values
@@ -1764,7 +1753,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             if rep_name in dashboard_df['Rep Name'].values:
                 metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
             
-            if metrics or rep_name in ['House', 'Shopify ECommerce']:
+            if metrics or rep_name == 'Shopify ECommerce':
                 boss = boss_rep_numbers[rep_name]
                 
                 # Calculate additional metrics
