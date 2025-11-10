@@ -43,32 +43,44 @@ st.markdown("""
     
     /* Responsive metrics - prevent truncation on small screens */
     [data-testid="stMetricValue"] {
-        font-size: clamp(1rem, 3vw, 2rem) !important;
-        white-space: normal !important;
-        word-break: break-word !important;
+        font-size: 1.5rem !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        white-space: nowrap !important;
     }
     
     [data-testid="stMetricLabel"] {
-        font-size: clamp(0.75rem, 2vw, 0.875rem) !important;
+        font-size: 0.875rem !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
         white-space: normal !important;
-        word-break: break-word !important;
+        line-height: 1.2 !important;
     }
     
     [data-testid="stMetricDelta"] {
-        font-size: clamp(0.7rem, 1.8vw, 0.875rem) !important;
+        font-size: 0.875rem !important;
         white-space: normal !important;
     }
     
-    /* Make metric containers responsive */
+    /* Make metric containers not overflow */
     [data-testid="stMetric"] {
-        min-width: 0 !important;
-        flex-shrink: 1 !important;
+        overflow: visible !important;
+        min-width: 140px !important;
     }
     
-    /* Ensure columns are responsive */
-    [data-testid="column"] {
-        min-width: 0 !important;
-        flex-shrink: 1 !important;
+    /* Ensure columns wrap on small screens */
+    [data-testid="column"] > div {
+        overflow: visible !important;
+    }
+    
+    /* For very small screens, stack metrics vertically */
+    @media (max-width: 768px) {
+        [data-testid="stMetricValue"] {
+            font-size: 1.2rem !important;
+        }
+        [data-testid="stMetric"] {
+            margin-bottom: 1rem !important;
+        }
     }
     
     .big-font {
