@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v38_rep_dashboard_redesigned"
+CACHE_VERSION = "v39_added_best_case_spillover"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2489,7 +2489,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     st.markdown("#### 🦘 Q1 2026 Spillover Details")
     st.caption("⚠️ These deals close in Q4 2025 but will ship in Q1 2026 due to lead times")
     
-    spillover_col1, spillover_col2 = st.columns(2)
+    spillover_col1, spillover_col2, spillover_col3 = st.columns(3)
     
     with spillover_col1:
         display_drill_down_section(
@@ -2500,6 +2500,14 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         )
     
     with spillover_col2:
+        display_drill_down_section(
+            "🎲 Best Case/Opp (Q1 Spillover)",
+            metrics.get('q1_spillover_best_opp', 0),
+            metrics.get('best_opp_q1_spillover_deals', pd.DataFrame()),
+            f"{rep_name}_bo_q1"
+        )
+    
+    with spillover_col3:
         display_drill_down_section(
             "📦 All Q1 2026 Spillover",
             metrics.get('q1_spillover_total', 0),
