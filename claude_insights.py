@@ -120,28 +120,42 @@ def generate_daily_summary(deals_df, dashboard_df):
     if not client:
         return "Unable to generate daily summary. Please check your API key."
     
-    # Get comprehensive metrics from dashboard_df
-    if not dashboard_df.empty and 'Q4 2025 Goal' in dashboard_df.columns:
-        total_goal = dashboard_df['Q4 2025 Goal'].sum()
-        total_booked = dashboard_df['Closed Won (Booked)'].sum() if 'Closed Won (Booked)' in dashboard_df.columns else 0
-        total_pending_fulfillment = dashboard_df['Pending Fulfillment (With Date)'].sum() if 'Pending Fulfillment (With Date)' in dashboard_df.columns else 0
-        total_pending_approval = dashboard_df['Pending Approval (With Date)'].sum() if 'Pending Approval (With Date)' in dashboard_df.columns else 0
-        total_committed = total_booked + total_pending_fulfillment + total_pending_approval
-        gap_to_goal = total_goal - total_committed
-        percent_to_goal = (total_committed / total_goal * 100) if total_goal > 0 else 0
+    # Safely get metrics from dashboard_df by checking column existence
+    total_goal = 0
+    total_booked = 0
+    total_pending_fulfillment = 0
+    total_pending_approval = 0
+    q1_spillover = 0
+    
+    if not dashboard_df.empty:
+        # Find the goal column (might be named differently)
+        goal_cols = [col for col in dashboard_df.columns if 'goal' in col.lower() and 'q4' in col.lower()]
+        if goal_cols:
+            total_goal = dashboard_df[goal_cols[0]].sum()
         
-        # Get Q1 spillover if available
-        q1_spillover = dashboard_df['Q1 2026 Spillover'].sum() if 'Q1 2026 Spillover' in dashboard_df.columns else 0
+        # Find booked/closed won column
+        booked_cols = [col for col in dashboard_df.columns if 'closed' in col.lower() or 'booked' in col.lower()]
+        if booked_cols:
+            total_booked = dashboard_df[booked_cols[0]].sum()
         
-        # Calculate what's needed
-        deals_remaining_needed = gap_to_goal
-    else:
-        total_goal = 0
-        total_committed = 0
-        gap_to_goal = 0
-        percent_to_goal = 0
-        q1_spillover = 0
-        deals_remaining_needed = 0
+        # Find pending fulfillment
+        pf_cols = [col for col in dashboard_df.columns if 'pending' in col.lower() and 'fulfillment' in col.lower()]
+        if pf_cols:
+            total_pending_fulfillment = dashboard_df[pf_cols[0]].sum()
+        
+        # Find pending approval
+        pa_cols = [col for col in dashboard_df.columns if 'pending' in col.lower() and 'approval' in col.lower()]
+        if pa_cols:
+            total_pending_approval = dashboard_df[pa_cols[0]].sum()
+        
+        # Find Q1 spillover
+        q1_cols = [col for col in dashboard_df.columns if 'q1' in col.lower() and 'spillover' in col.lower()]
+        if q1_cols:
+            q1_spillover = dashboard_df[q1_cols[0]].sum()
+    
+    total_committed = total_booked + total_pending_fulfillment + total_pending_approval
+    gap_to_goal = total_goal - total_committed
+    percent_to_goal = (total_committed / total_goal * 100) if total_goal > 0 else 0
     
     # Get deal stage breakdown
     stage_counts = {}
@@ -153,25 +167,48 @@ def generate_daily_summary(deals_df, dashboard_df):
             stage_values[stage] = stage_deals['Amount'].sum() if 'Amount' in deals_df.columns else 0
     
     # Get deals closing this week/month
-    if 'Close Date' in deals_df.columns:
-        deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
-        deals_this_week = deals_df[
-            (deals_df['Close Date'] >= datetime.now()) & 
-            (deals_df['Close Date'] <= datetime.now() + timedelta(days=7))
-        ]
-        deals_this_month = deals_df[
-            (deals_df['Close Date'] >= datetime.now()) & 
-            (deals_df['Close Date'] <= datetime.now() + timedelta(days=30))
-        ]
-    else:
-        deals_this_week = pd.DataFrame()
-        deals_this_month = pd.DataFrame()
+    deals_this_week = pd.DataFrame()
+    deals_this_month = pd.DataFrame()
+    at_risk_deals = pd.DataFrame()
     
-    # Get at-risk deals (closing soon but still in early stages)
-    at_risk_deals = deals_df[
-        (deals_df['Deal Stage'].isin(['Qualification', 'Proposal', 'Negotiation'])) &
-        (deals_df['Close Date'] <= datetime.now() + timedelta(days=14))
-    ] if 'Deal Stage' in deals_df.columns and 'Close Date' in deals_df.columns else pd.DataFrame()
+    if 'Close Date' in deals_df.columns:
+        deals_df_temp = deals_df.copy()
+        deals_df_temp['Close Date'] = pd.to_datetime(deals_df_temp['Close Date'], errors='coerce')
+        deals_this_week = deals_df_temp[
+            (deals_df_temp['Close Date'] >= datetime.now()) & 
+            (deals_df_temp['Close Date'] <= datetime.now() + timedelta(days=7))
+        ]
+        deals_this_month = deals_df_temp[
+            (deals_df_temp['Close Date'] >= datetime.now()) & 
+            (deals_df_temp['Close Date'] <= datetime.now() + timedelta(days=30))
+        ]
+        
+        # Get at-risk deals (closing soon but still in early stages)
+        if 'Deal Stage' in deals_df_temp.columns:
+            at_risk_deals = deals_df_temp[
+                (deals_df_temp['Deal Stage'].isin(['Qualification', 'Proposal', 'Negotiation'])) &
+                (deals_df_temp['Close Date'] <= datetime.now() + timedelta(days=14))
+            ]
+    
+    # Build rep performance section safely
+    rep_performance = "No rep data available"
+    if not dashboard_df.empty:
+        # Find available columns for rep performance
+        rep_cols = ['Rep Name']
+        if goal_cols:
+            rep_cols.append(goal_cols[0])
+        if booked_cols:
+            rep_cols.append(booked_cols[0])
+        
+        # Add gap column if it exists
+        gap_cols = [col for col in dashboard_df.columns if 'gap' in col.lower()]
+        if gap_cols:
+            rep_cols.append(gap_cols[0])
+        
+        # Only use columns that exist
+        available_rep_cols = [col for col in rep_cols if col in dashboard_df.columns]
+        if available_rep_cols:
+            rep_performance = dashboard_df[available_rep_cols].to_string()
     
     # Build comprehensive context
     context = f"""
@@ -189,15 +226,15 @@ VALUE BY STAGE:
 {json.dumps({k: f"${v:,.0f}" for k, v in stage_values.items()}, indent=2)}
 
 TIMING:
-- Deals closing this week: {len(deals_this_week)} deals worth ${deals_this_week['Amount'].sum() if 'Amount' in deals_this_week.columns else 0:,.0f}
-- Deals closing this month: {len(deals_this_month)} deals worth ${deals_this_month['Amount'].sum() if 'Amount' in deals_this_month.columns else 0:,.0f}
-- At-risk deals (closing soon, early stage): {len(at_risk_deals)} deals worth ${at_risk_deals['Amount'].sum() if 'Amount' in at_risk_deals.columns else 0:,.0f}
+- Deals closing this week: {len(deals_this_week)} deals worth ${deals_this_week['Amount'].sum() if 'Amount' in deals_this_week.columns and not deals_this_week.empty else 0:,.0f}
+- Deals closing this month: {len(deals_this_month)} deals worth ${deals_this_month['Amount'].sum() if 'Amount' in deals_this_month.columns and not deals_this_month.empty else 0:,.0f}
+- At-risk deals (closing soon, early stage): {len(at_risk_deals)} deals worth ${at_risk_deals['Amount'].sum() if 'Amount' in at_risk_deals.columns and not at_risk_deals.empty else 0:,.0f}
 
 TOP AT-RISK DEALS:
-{at_risk_deals[['Deal Name', 'Amount', 'Deal Stage', 'Close Date', 'Deal Owner']].head(10).to_string() if not at_risk_deals.empty else "None"}
+{at_risk_deals[['Deal Name', 'Amount', 'Deal Stage', 'Close Date', 'Deal Owner']].head(10).to_string() if not at_risk_deals.empty and all(col in at_risk_deals.columns for col in ['Deal Name', 'Amount', 'Deal Stage', 'Close Date', 'Deal Owner']) else "None"}
 
 REP PERFORMANCE BREAKDOWN:
-{dashboard_df[['Rep Name', 'Q4 2025 Goal', 'Closed Won (Booked)', 'Gap to Goal']].to_string() if not dashboard_df.empty else "No rep data available"}
+{rep_performance}
 """
 
     system_message = """You are the VP of Sales Operations writing a daily brief for the executive team and sales leadership.
