@@ -248,26 +248,32 @@ REP PERFORMANCE BREAKDOWN:
 
 Your tone: Direct, data-driven, no fluff. Like you're briefing your CEO over coffee.
 
-Write a daily summary that answers these questions in this exact structure:
+CRITICAL FORMATTING RULES:
+- Use proper markdown headers with ## and ###
+- Use bullet points with - (not *)
+- Bold key numbers with **$XX,XXX**
+- Keep paragraphs short (2-3 sentences max)
+- Use line breaks between sections
+
+Write a daily summary in this EXACT structure:
 
 ## 🎯 Bottom Line Up Front
-One sentence: Are we hitting Q4 goal or not? By how much?
+One clear sentence: Are we hitting Q4 goal or not? By how much?
 
 ## 📊 Where We Stand
 - Current progress vs goal (use percentages and dollars)
-- What moved since yesterday/this week (be specific about wins and losses)
+- What moved since yesterday/this week
 - Q1 spillover impact (if significant)
 
 ## 🚨 What Needs Attention TODAY
-List 2-3 specific actions for sales leadership to take right now:
 - Which deals need executive involvement?
-- Which reps need support?
+- Which reps need support?  
 - What's about to slip through the cracks?
 
 ## 💰 The Math
-Break down exactly what we need to close to hit the goal. Be specific about which stage deals need to convert.
+Break down exactly what we need to close to hit the goal. Be specific about deal stages.
 
-Keep it under 400 words. Use bullet points. Be honest about the challenges. This is for decision-makers who need to act, not feel good."""
+Keep under 350 words total. Be honest about challenges. Focus on what leadership can ACT on today."""
 
     try:
         message = client.messages.create(
@@ -366,15 +372,24 @@ def display_insights_dashboard(deals_df, dashboard_df, team_metrics=None):
         if st.button("🔄 Generate Fresh Summary", type="primary"):
             with st.spinner("Claude is generating your daily summary..."):
                 summary = generate_daily_summary(deals_df, dashboard_df, team_metrics)
-                st.markdown(summary)
                 
                 # Store in session state so it persists
                 st.session_state['daily_summary'] = summary
                 st.session_state['summary_timestamp'] = datetime.now()
+                
+                # Show success message instead of immediate display
+                st.success("✅ Fresh summary generated!")
+                st.rerun()  # Refresh to show the new summary
         
         # Display stored summary if available
         if 'daily_summary' in st.session_state:
             st.markdown("---")
-            st.markdown(st.session_state['daily_summary'])
+            
+            # Container for better formatting
+            with st.container():
+                st.markdown(st.session_state['daily_summary'])
+            
             if 'summary_timestamp' in st.session_state:
                 st.caption(f"Last generated: {st.session_state['summary_timestamp'].strftime('%I:%M %p')}")
+        else:
+            st.info("👆 Click the button above to generate your first daily summary.")
