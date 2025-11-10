@@ -120,6 +120,10 @@ def generate_daily_summary(deals_df, dashboard_df, team_metrics=None):
     if not client:
         return "Unable to generate daily summary. Please check your API key."
     
+    # Always define these variables for use in rep performance section later
+    goal_cols = [col for col in dashboard_df.columns if 'quota' in col.lower()] if not dashboard_df.empty else []
+    booked_cols = [col for col in dashboard_df.columns if 'orders' in col.lower()] if not dashboard_df.empty else []
+    
     # Use pre-calculated team metrics if provided, otherwise fallback to manual calculation
     if team_metrics:
         total_goal = team_metrics['total_quota']
@@ -146,12 +150,9 @@ def generate_daily_summary(deals_df, dashboard_df, team_metrics=None):
         potential_attainment = 0
         
         if not dashboard_df.empty:
-            # Find columns dynamically
-            goal_cols = [col for col in dashboard_df.columns if 'quota' in col.lower()]
             if goal_cols:
                 total_goal = dashboard_df[goal_cols[0]].sum()
             
-            booked_cols = [col for col in dashboard_df.columns if 'orders' in col.lower()]
             if booked_cols:
                 total_booked = dashboard_df[booked_cols[0]].sum()
                 
