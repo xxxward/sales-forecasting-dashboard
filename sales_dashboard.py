@@ -41,6 +41,36 @@ st.markdown("""
         color: inherit !important;
     }
     
+    /* Responsive metrics - prevent truncation on small screens */
+    [data-testid="stMetricValue"] {
+        font-size: clamp(1rem, 3vw, 2rem) !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    
+    [data-testid="stMetricLabel"] {
+        font-size: clamp(0.75rem, 2vw, 0.875rem) !important;
+        white-space: normal !important;
+        word-break: break-word !important;
+    }
+    
+    [data-testid="stMetricDelta"] {
+        font-size: clamp(0.7rem, 1.8vw, 0.875rem) !important;
+        white-space: normal !important;
+    }
+    
+    /* Make metric containers responsive */
+    [data-testid="stMetric"] {
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
+    }
+    
+    /* Ensure columns are responsive */
+    [data-testid="column"] {
+        min-width: 0 !important;
+        flex-shrink: 1 !important;
+    }
+    
     .big-font {
         font-size: 28px !important;
         font-weight: bold;
@@ -2379,8 +2409,19 @@ def main():
         
         st.markdown("---")
         
-        # Connection diagnostics
-        with st.expander("🔧 Connection Diagnostics"):
+        # Last updated and refresh button (always visible)
+        current_time = datetime.now()
+        st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption("Dashboard refreshes every hour")
+        
+        if st.button("🔄 Refresh Data Now"):
+            st.cache_data.clear()
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Sync Status - collapsed by default, for Xander
+        with st.expander("🔧 Sync Status (for Xander)"):
             st.write("**Spreadsheet ID:**")
             st.code(SPREADSHEET_ID)
             
@@ -2395,15 +2436,6 @@ def main():
                     st.error("Error reading credentials")
             else:
                 st.error("❌ GCP credentials missing")
-        
-        # Last updated
-        current_time = datetime.now()
-        st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        st.caption("Dashboard refreshes every hour")
-        
-        if st.button("🔄 Refresh Data Now"):
-            st.cache_data.clear()
-            st.rerun()
     
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
