@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v41_fixed_millions_display"
+CACHE_VERSION = "v42_optimistic_gap_includes_old_pa"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2043,9 +2043,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     deals_q4 = deals_df[deals_df.get('Counts_In_Q4', True) == True] if not deals_df.empty else pd.DataFrame()
     team_best_case = deals_q4[deals_q4['Status'] == 'Best Case']['Amount'].sum() if not deals_q4.empty and 'Status' in deals_q4.columns else 0
     
-    # NEW: Optimistic Gap = Quota - (High Confidence + Best Case + PF no date + PA no date)
-    # NOTE: Excludes PA >2 weeks old
-    optimistic_forecast = base_forecast + team_best_case + team_pf_no_date + team_pa_no_date
+    # NEW: Optimistic Gap = Quota - (High Confidence + Best Case + PF no date + PA no date + PA >2 weeks)
+    optimistic_forecast = base_forecast + team_best_case + team_pf_no_date + team_pa_no_date + team_old_pa
     optimistic_gap = team_quota - optimistic_forecast
    
     # Add total rows to data
@@ -2126,7 +2125,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             value=f"${optimistic_gap/1000:.0f}K" if abs(optimistic_gap) < 1000000 else f"${optimistic_gap/1000000:.1f}M",
             delta=f"${-optimistic_gap/1000:.0f}K" if optimistic_gap < 0 else None,
             delta_color="inverse",
-            help="Quota - (High Confidence + HS Best Case + PF (no date) + PA (no date)). Excludes PA >2 weeks."
+            help="Quota - (High Confidence + HS Best Case + PF (no date) + PA (no date) + PA >2 weeks)"
         )
 
     with col7:
