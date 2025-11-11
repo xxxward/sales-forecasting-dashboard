@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v40_optimistic_gap_added"
+CACHE_VERSION = "v41_fixed_millions_display"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2080,7 +2080,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col1:
         st.metric(
             label="🎯 Total Quota",
-            value=f"${team_quota/1000:.0f}K" if team_quota < 10000000 else f"${team_quota/1000000:.1f}M",
+            value=f"${team_quota/1000:.0f}K" if team_quota < 1000000 else f"${team_quota/1000000:.1f}M",
             delta=None,
             help="Q4 2025 Sales Target"
         )
@@ -2088,7 +2088,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col2:
         st.metric(
             label="💪 High Confidence Forecast",
-            value=f"${base_forecast/1000:.0f}K" if base_forecast < 10000000 else f"${base_forecast/1000000:.1f}M",
+            value=f"${base_forecast/1000:.0f}K" if base_forecast < 1000000 else f"${base_forecast/1000000:.1f}M",
             delta=f"{base_attainment_pct:.1f}% of quota",
             help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit"
         )
@@ -2096,7 +2096,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col3:
         st.metric(
             label="📊 Full Forecast (All Sources)",
-            value=f"${full_forecast/1000:.0f}K" if full_forecast < 10000000 else f"${full_forecast/1000000:.1f}M",
+            value=f"${full_forecast/1000:.0f}K" if full_forecast < 1000000 else f"${full_forecast/1000000:.1f}M",
             delta=f"{full_attainment_pct:.1f}% of quota",
             help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old)"
         )
@@ -2106,7 +2106,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         adjusted_attainment = (adjusted_forecast / team_quota * 100) if team_quota > 0 else 0
         st.metric(
             label="🎯 Q4 Adjusted Forecast",
-            value=f"${adjusted_forecast/1000:.0f}K" if adjusted_forecast < 10000000 else f"${adjusted_forecast/1000000:.1f}M",
+            value=f"${adjusted_forecast/1000:.0f}K" if adjusted_forecast < 1000000 else f"${adjusted_forecast/1000000:.1f}M",
             delta=f"{adjusted_attainment:.1f}% of quota",
             help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old) - Q1 Spillover"
         )
@@ -2114,7 +2114,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col5:
         st.metric(
             label="📉 Gap to Quota",
-            value=f"${base_gap/1000:.0f}K" if abs(base_gap) < 10000000 else f"${base_gap/1000000:.1f}M",
+            value=f"${base_gap/1000:.0f}K" if abs(base_gap) < 1000000 else f"${base_gap/1000000:.1f}M",
             delta=f"${-base_gap/1000:.0f}K" if base_gap < 0 else None,
             delta_color="inverse",
             help="Quota - (Invoiced + PF (with date) + PA (with date) + HS Expect/Commit)"
@@ -2123,7 +2123,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col6:
         st.metric(
             label="📈 Optimistic Gap",
-            value=f"${optimistic_gap/1000:.0f}K" if abs(optimistic_gap) < 10000000 else f"${optimistic_gap/1000000:.1f}M",
+            value=f"${optimistic_gap/1000:.0f}K" if abs(optimistic_gap) < 1000000 else f"${optimistic_gap/1000000:.1f}M",
             delta=f"${-optimistic_gap/1000:.0f}K" if optimistic_gap < 0 else None,
             delta_color="inverse",
             help="Quota - (High Confidence + HS Best Case + PF (no date) + PA (no date)). Excludes PA >2 weeks."
