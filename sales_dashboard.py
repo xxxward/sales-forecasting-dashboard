@@ -204,7 +204,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v39_added_best_case_spillover"
+CACHE_VERSION = "v40_optimistic_gap_added"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2038,6 +2038,15 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     base_attainment_pct = (base_forecast / team_quota * 100) if team_quota > 0 else 0
     full_attainment_pct = (full_forecast / team_quota * 100) if team_quota > 0 else 0
     potential_attainment = ((base_forecast + team_best_opp) / team_quota * 100) if team_quota > 0 else 0
+    
+    # NEW: Calculate Best Case only (not Opportunity) for optimistic gap
+    deals_q4 = deals_df[deals_df.get('Counts_In_Q4', True) == True] if not deals_df.empty else pd.DataFrame()
+    team_best_case = deals_q4[deals_q4['Status'] == 'Best Case']['Amount'].sum() if not deals_q4.empty and 'Status' in deals_q4.columns else 0
+    
+    # NEW: Optimistic Gap = Quota - (High Confidence + Best Case + PF no date + PA no date)
+    # NOTE: Excludes PA >2 weeks old
+    optimistic_forecast = base_forecast + team_best_case + team_pf_no_date + team_pa_no_date
+    optimistic_gap = team_quota - optimistic_forecast
    
     # Add total rows to data
     section1_data.append({
@@ -2066,12 +2075,12 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
    
     # Display key metrics with two breakdowns
     st.markdown("### 📊 Team Scorecard")
-    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
    
     with col1:
         st.metric(
             label="🎯 Total Quota",
-            value=f"${team_quota:,.0f}",
+            value=f"${team_quota/1000:.0f}K" if team_quota < 10000000 else f"${team_quota/1000000:.1f}M",
             delta=None,
             help="Q4 2025 Sales Target"
         )
@@ -2079,17 +2088,17 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with col2:
         st.metric(
             label="💪 High Confidence Forecast",
-            value=f"${base_forecast:,.0f}",
+            value=f"${base_forecast/1000:.0f}K" if base_forecast < 10000000 else f"${base_forecast/1000000:.1f}M",
             delta=f"{base_attainment_pct:.1f}% of quota",
-            help="Invoiced Orders + Pending Fulfillment (with date) + Pending Approval (with date) + HubSpot Expect/Commit"
+            help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit"
         )
    
     with col3:
         st.metric(
             label="📊 Full Forecast (All Sources)",
-            value=f"${full_forecast:,.0f}",
+            value=f"${full_forecast/1000:.0f}K" if full_forecast < 10000000 else f"${full_forecast/1000000:.1f}M",
             delta=f"{full_attainment_pct:.1f}% of quota",
-            help="High Confidence Forecast + Pending Fulfillment (without date) + Pending Approval (without date) + Old Pending Approval (>2 weeks)"
+            help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old)"
         )
     
     with col4:
@@ -2097,26 +2106,35 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         adjusted_attainment = (adjusted_forecast / team_quota * 100) if team_quota > 0 else 0
         st.metric(
             label="🎯 Q4 Adjusted Forecast",
-            value=f"${adjusted_forecast:,.0f}",
+            value=f"${adjusted_forecast/1000:.0f}K" if adjusted_forecast < 10000000 else f"${adjusted_forecast/1000000:.1f}M",
             delta=f"{adjusted_attainment:.1f}% of quota",
-            help="Full Forecast (All Sources) minus Q1 2026 Spillover deals"
+            help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old) - Q1 Spillover"
         )
    
     with col5:
         st.metric(
-            label="📈 Gap to Quota",
-            value=f"${base_gap:,.0f}",
-            delta=f"${-base_gap:,.0f}" if base_gap < 0 else None,
+            label="📉 Gap to Quota",
+            value=f"${base_gap/1000:.0f}K" if abs(base_gap) < 10000000 else f"${base_gap/1000000:.1f}M",
+            delta=f"${-base_gap/1000:.0f}K" if base_gap < 0 else None,
             delta_color="inverse",
-            help="Remaining amount needed to reach quota (based on High Confidence Forecast)"
+            help="Quota - (Invoiced + PF (with date) + PA (with date) + HS Expect/Commit)"
+        )
+    
+    with col6:
+        st.metric(
+            label="📈 Optimistic Gap",
+            value=f"${optimistic_gap/1000:.0f}K" if abs(optimistic_gap) < 10000000 else f"${optimistic_gap/1000000:.1f}M",
+            delta=f"${-optimistic_gap/1000:.0f}K" if optimistic_gap < 0 else None,
+            delta_color="inverse",
+            help="Quota - (High Confidence + HS Best Case + PF (no date) + PA (no date)). Excludes PA >2 weeks."
         )
 
-    with col6:
+    with col7:
         st.metric(
             label="🌟 Potential Attainment",
             value=f"{potential_attainment:.1f}%",
             delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside",
-            help="If all Best Case + Opportunity deals close"
+            help="(High Confidence + HS Best Case/Opp) ÷ Quota"
         )
    
     # Progress bars for both breakdowns
