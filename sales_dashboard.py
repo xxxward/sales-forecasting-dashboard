@@ -193,6 +193,30 @@ st.markdown("""
         opacity: 0.7;
         color: inherit !important;
     }
+    
+    /* Change tracking styles */
+    .change-positive {
+        color: #28a745;
+        font-weight: bold;
+    }
+    
+    .change-negative {
+        color: #dc3545;
+        font-weight: bold;
+    }
+    
+    .change-neutral {
+        color: #6c757d;
+        font-weight: bold;
+    }
+    
+    .audit-section {
+        background: rgba(240, 242, 246, 0.5);
+        padding: 20px;
+        border-radius: 10px;
+        margin: 15px 0;
+        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -204,7 +228,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v42_optimistic_gap_includes_old_pa"
+CACHE_VERSION = "v43_invoices_change_tracking"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -857,6 +881,319 @@ def load_all_data():
         sales_orders_df = pd.DataFrame()
     
     return deals_df, dashboard_df, invoices_df, sales_orders_df
+
+def store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df):
+    """
+    Store a snapshot of current data for change tracking
+    """
+    snapshot = {
+        'timestamp': datetime.now(),
+        'deals': deals_df.copy() if not deals_df.empty else pd.DataFrame(),
+        'dashboard': dashboard_df.copy() if not dashboard_df.empty else pd.DataFrame(),
+        'invoices': invoices_df.copy() if not invoices_df.empty else pd.DataFrame(),
+        'sales_orders': sales_orders_df.copy() if not sales_orders_df.empty else pd.DataFrame()
+    }
+    
+    # Store in session state
+    if 'previous_snapshot' not in st.session_state:
+        st.session_state.previous_snapshot = snapshot
+    else:
+        # Move current to previous
+        st.session_state.previous_snapshot = st.session_state.current_snapshot
+    
+    st.session_state.current_snapshot = snapshot
+
+def detect_changes(current, previous):
+    """
+    Detect changes between current and previous snapshots
+    Returns a dictionary of changes
+    """
+    changes = {
+        'new_invoices': [],
+        'new_sales_orders': [],
+        'updated_deals': [],
+        'rep_changes': {}
+    }
+    
+    if previous is None:
+        return changes
+    
+    try:
+        # Detect new invoices
+        if not current['invoices'].empty and not previous['invoices'].empty:
+            if 'Document Number' in current['invoices'].columns:
+                current_invoices = set(current['invoices']['Document Number'].dropna())
+                previous_invoices = set(previous['invoices']['Document Number'].dropna())
+                new_invoices = current_invoices - previous_invoices
+                changes['new_invoices'] = list(new_invoices)
+        
+        # Detect new sales orders
+        if not current['sales_orders'].empty and not previous['sales_orders'].empty:
+            if 'Document Number' in current['sales_orders'].columns:
+                current_orders = set(current['sales_orders']['Document Number'].dropna())
+                previous_orders = set(previous['sales_orders']['Document Number'].dropna())
+                new_orders = current_orders - previous_orders
+                changes['new_sales_orders'] = list(new_orders)
+        
+        # Detect rep-level changes in forecasts
+        if not current['dashboard'].empty and not previous['dashboard'].empty:
+            if 'Rep Name' in current['dashboard'].columns:
+                for rep in current['dashboard']['Rep Name'].unique():
+                    current_rep = current['dashboard'][current['dashboard']['Rep Name'] == rep]
+                    previous_rep = previous['dashboard'][previous['dashboard']['Rep Name'] == rep]
+                    
+                    if not previous_rep.empty:
+                        rep_change = {}
+                        
+                        # Check for changes in key metrics
+                        if 'Quota' in current_rep.columns:
+                            current_val = pd.to_numeric(current_rep['Quota'].iloc[0], errors='coerce')
+                            previous_val = pd.to_numeric(previous_rep['Quota'].iloc[0], errors='coerce')
+                            if not pd.isna(current_val) and not pd.isna(previous_val):
+                                if current_val != previous_val:
+                                    rep_change['goal_change'] = current_val - previous_val
+                        
+                        if 'NetSuite Orders' in current_rep.columns:
+                            current_val = pd.to_numeric(current_rep['NetSuite Orders'].iloc[0], errors='coerce')
+                            previous_val = pd.to_numeric(previous_rep['NetSuite Orders'].iloc[0], errors='coerce')
+                            if not pd.isna(current_val) and not pd.isna(previous_val):
+                                if current_val != previous_val:
+                                    rep_change['actual_change'] = current_val - previous_val
+                        
+                        if rep_change:
+                            changes['rep_changes'][rep] = rep_change
+    
+    except Exception as e:
+        st.error(f"Error detecting changes: {str(e)}")
+    
+    return changes
+
+def show_change_dialog(changes):
+    """
+    Display a dialog showing what changed since last refresh
+    """
+    if not any([changes['new_invoices'], changes['new_sales_orders'], changes['rep_changes']]):
+        st.info("ℹ️ No changes detected since last refresh")
+        return
+    
+    st.markdown("""
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                 padding: 20px; border-radius: 10px; color: white; margin: 15px 0;'>
+        <h3 style='color: white; margin: 0 0 10px 0;'>🔄 Changes Detected!</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        if changes['new_invoices']:
+            st.metric("New Invoices", len(changes['new_invoices']))
+            with st.expander("View New Invoices"):
+                for inv in changes['new_invoices'][:10]:  # Show first 10
+                    st.write(f"• {inv}")
+                if len(changes['new_invoices']) > 10:
+                    st.caption(f"...and {len(changes['new_invoices']) - 10} more")
+    
+    with col2:
+        if changes['new_sales_orders']:
+            st.metric("New Sales Orders", len(changes['new_sales_orders']))
+            with st.expander("View New Sales Orders"):
+                for so in changes['new_sales_orders'][:10]:
+                    st.write(f"• {so}")
+                if len(changes['new_sales_orders']) > 10:
+                    st.caption(f"...and {len(changes['new_sales_orders']) - 10} more")
+    
+    with col3:
+        if changes['rep_changes']:
+            st.metric("Reps with Changes", len(changes['rep_changes']))
+            with st.expander("View Rep Changes"):
+                for rep, change in changes['rep_changes'].items():
+                    st.write(f"**{rep}:**")
+                    if 'actual_change' in change:
+                        delta = change['actual_change']
+                        color = "green" if delta > 0 else "red"
+                        st.markdown(f"- Actual: <span style='color:{color}'>${delta:,.0f}</span>", unsafe_allow_html=True)
+                    if 'goal_change' in change:
+                        st.markdown(f"- Goal: ${change['goal_change']:,.0f}")
+
+def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_df):
+    """
+    Create a day-over-day audit section showing changes
+    """
+    st.markdown("### 📊 Day-Over-Day Audit Snapshot")
+    st.caption("Track changes in key metrics to audit data quality")
+    
+    # Get previous snapshot if it exists
+    if 'previous_snapshot' in st.session_state and st.session_state.previous_snapshot:
+        previous = st.session_state.previous_snapshot
+        
+        # Calculate time difference
+        time_diff = datetime.now() - previous['timestamp']
+        hours_ago = time_diff.total_seconds() / 3600
+        
+        st.markdown(f"""
+        <div class='audit-section'>
+            <p><strong>Previous Snapshot:</strong> {previous['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} 
+            ({hours_ago:.1f} hours ago)</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Team-level changes
+        st.markdown("#### 👥 Team Overview")
+        team_col1, team_col2, team_col3, team_col4 = st.columns(4)
+        
+        with team_col1:
+            current_invoices = len(invoices_df) if not invoices_df.empty else 0
+            previous_invoices = len(previous['invoices']) if not previous['invoices'].empty else 0
+            delta_invoices = current_invoices - previous_invoices
+            st.metric("Total Invoices", current_invoices, delta=delta_invoices)
+        
+        with team_col2:
+            current_orders = len(sales_orders_df) if not sales_orders_df.empty else 0
+            previous_orders = len(previous['sales_orders']) if not previous['sales_orders'].empty else 0
+            delta_orders = current_orders - previous_orders
+            st.metric("Total Sales Orders", current_orders, delta=delta_orders)
+        
+        with team_col3:
+            current_deals = len(deals_df) if not deals_df.empty else 0
+            previous_deals = len(previous['deals']) if not previous['deals'].empty else 0
+            delta_deals = current_deals - previous_deals
+            st.metric("Total Deals", current_deals, delta=delta_deals)
+        
+        with team_col4:
+            # Calculate total invoice amount change
+            if not invoices_df.empty and 'Amount' in invoices_df.columns:
+                current_inv_total = pd.to_numeric(invoices_df['Amount'], errors='coerce').sum()
+            else:
+                current_inv_total = 0
+            
+            if not previous['invoices'].empty and 'Amount' in previous['invoices'].columns:
+                previous_inv_total = pd.to_numeric(previous['invoices']['Amount'], errors='coerce').sum()
+            else:
+                previous_inv_total = 0
+            
+            delta_inv_amount = current_inv_total - previous_inv_total
+            st.metric("Invoice Amount", f"${current_inv_total:,.0f}", delta=f"${delta_inv_amount:,.0f}")
+        
+        # Rep-level changes
+        st.markdown("#### 👤 Rep-Level Changes")
+        
+        if not dashboard_df.empty and not previous['dashboard'].empty:
+            rep_comparison = []
+            
+            for rep in dashboard_df['Rep Name'].unique():
+                current_rep = dashboard_df[dashboard_df['Rep Name'] == rep]
+                previous_rep = previous['dashboard'][previous['dashboard']['Rep Name'] == rep]
+                
+                if not previous_rep.empty:
+                    rep_data = {'Rep': rep}
+                    
+                    # NetSuite Orders change
+                    if 'NetSuite Orders' in current_rep.columns:
+                        current_val = pd.to_numeric(current_rep['NetSuite Orders'].iloc[0], errors='coerce')
+                        previous_val = pd.to_numeric(previous_rep['NetSuite Orders'].iloc[0], errors='coerce')
+                        if not pd.isna(current_val) and not pd.isna(previous_val):
+                            rep_data['Current Actual'] = current_val
+                            rep_data['Previous Actual'] = previous_val
+                            rep_data['Δ Actual'] = current_val - previous_val
+                    
+                    if len(rep_data) > 1:  # If we have any changes
+                        rep_comparison.append(rep_data)
+            
+            if rep_comparison:
+                comparison_df = pd.DataFrame(rep_comparison)
+                
+                # Format for display
+                if 'Δ Actual' in comparison_df.columns:
+                    comparison_df = comparison_df[comparison_df['Δ Actual'] != 0]
+                
+                if not comparison_df.empty:
+                    st.dataframe(
+                        comparison_df.style.format({
+                            'Current Actual': '${:,.0f}',
+                            'Previous Actual': '${:,.0f}',
+                            'Δ Actual': '${:,.0f}'
+                        }),
+                        use_container_width=True
+                    )
+                else:
+                    st.info("No significant changes in rep metrics")
+            else:
+                st.info("No rep-level data available for comparison")
+        
+    else:
+        st.info("📸 No previous snapshot available. Changes will be tracked after the next refresh.")
+
+def display_invoices_drill_down(invoices_df, rep_name=None):
+    """
+    Display invoices with drill-down capability, similar to sales orders
+    """
+    st.markdown("### 💰 Invoices Detail")
+    st.caption("Completed and billed orders from NetSuite")
+    
+    if invoices_df.empty:
+        st.info("No invoice data available")
+        return
+    
+    # Filter by rep if specified
+    if rep_name and 'Sales Rep' in invoices_df.columns:
+        filtered_invoices = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
+    else:
+        filtered_invoices = invoices_df.copy()
+    
+    if filtered_invoices.empty:
+        st.info(f"No invoices found{' for ' + rep_name if rep_name else ''}")
+        return
+    
+    # Calculate totals
+    if 'Amount' in filtered_invoices.columns:
+        filtered_invoices['Amount_Numeric'] = pd.to_numeric(filtered_invoices['Amount'], errors='coerce')
+        total_invoiced = filtered_invoices['Amount_Numeric'].sum()
+    else:
+        total_invoiced = 0
+    
+    # Display summary metrics
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Total Invoices", len(filtered_invoices))
+    
+    with col2:
+        st.metric("Total Amount", f"${total_invoiced:,.0f}")
+    
+    with col3:
+        if len(filtered_invoices) > 0:
+            avg_invoice = total_invoiced / len(filtered_invoices)
+            st.metric("Avg Invoice", f"${avg_invoice:,.0f}")
+    
+    # Display invoices table
+    with st.expander("📋 View All Invoices", expanded=False):
+        display_columns = []
+        possible_columns = [
+            'Document Number', 'Transaction Date', 'Account Name', 'Customer',
+            'Amount', 'Status', 'Sales Rep', 'Sales Order #', 'Terms'
+        ]
+        
+        for col in possible_columns:
+            if col in filtered_invoices.columns:
+                display_columns.append(col)
+        
+        if display_columns:
+            display_df = filtered_invoices[display_columns].copy()
+            
+            # Format currency
+            if 'Amount' in display_df.columns:
+                display_df['Amount'] = display_df['Amount_Numeric'].apply(
+                    lambda x: f"${x:,.0f}" if not pd.isna(x) else ""
+                )
+            
+            # Remove the numeric helper column if it exists
+            if 'Amount_Numeric' in display_df.columns:
+                display_df = display_df.drop('Amount_Numeric', axis=1)
+            
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+        else:
+            st.dataframe(filtered_invoices, use_container_width=True, hide_index=True)
 
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
@@ -2136,6 +2473,20 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             help="(High Confidence + HS Best Case/Opp) ÷ Quota"
         )
    
+    # Invoices section and audit section
+    st.markdown("---")
+    
+    # Change detection and audit section
+    if st.checkbox("📊 Show Day-Over-Day Audit", value=False):
+        create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_df)
+    
+    st.markdown("---")
+    
+    # Invoices section
+    display_invoices_drill_down(invoices_df)
+    
+    st.markdown("---")
+    
     # Progress bars for both breakdowns
     st.markdown("### 📈 Progress to Quota")
     col1, col2 = st.columns(2)
@@ -2322,6 +2673,11 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             delta=f"+{upside:.1f}% upside",
             help="(Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit + HS Best Case/Opp) ÷ Quota"
         )
+    
+    st.markdown("---")
+    
+    # Invoices section for this rep
+    display_invoices_drill_down(invoices_df, rep_name)
     
     st.markdown("---")
     
@@ -2599,6 +2955,10 @@ def main():
         st.caption("Dashboard refreshes every hour")
         
         if st.button("🔄 Refresh Data Now"):
+            # Store snapshot before clearing cache
+            if 'current_snapshot' in st.session_state:
+                st.session_state.previous_snapshot = st.session_state.current_snapshot
+            
             st.cache_data.clear()
             st.rerun()
         
@@ -2624,6 +2984,15 @@ def main():
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
         deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
+    
+    # Store snapshot for change tracking
+    store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df)
+    
+    # Show change detection dialog if there's a previous snapshot
+    if 'previous_snapshot' in st.session_state and st.session_state.previous_snapshot:
+        with st.expander("🔄 View Changes Since Last Refresh", expanded=False):
+            changes = detect_changes(st.session_state.current_snapshot, st.session_state.previous_snapshot)
+            show_change_dialog(changes)
     
     # Check if data loaded successfully
     if deals_df.empty and dashboard_df.empty:
