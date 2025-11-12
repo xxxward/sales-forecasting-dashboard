@@ -17,6 +17,7 @@ import time
 import base64
 import numpy as np
 import claude_insights
+import commission_calculator
 
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
@@ -3841,7 +3842,7 @@ def main():
         st.markdown("### 🎯 Dashboard Navigation")
         view_mode = st.radio(
             "Select View:",
-            ["Team Overview", "Individual Rep", "Reconciliation", "AI Insights"],
+            ["Team Overview", "Individual Rep", "Reconciliation", "AI Insights", "💰 Commission"],
             label_visibility="collapsed"
         )
         
@@ -3945,6 +3946,9 @@ def main():
         # Calculate team metrics for Claude to use
         team_metrics = calculate_team_metrics(deals_df, dashboard_df)
         claude_insights.display_insights_dashboard(deals_df, dashboard_df, team_metrics)
+    elif view_mode == "💰 Commission":
+        # Commission calculator view (password protected)
+        commission_calculator.display_commission_section(invoices_df, sales_orders_df)
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
