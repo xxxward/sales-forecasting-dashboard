@@ -1361,7 +1361,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         'Name': '',
                         'Customer': row.get('Account Name', row.get('Customer', '')),
                         'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                        'Date': row.get('Transaction Date', ''),
+                        'Date': row.get('Date', row.get('Transaction Date', '')),  # Column C
                         'Sales Rep': row.get('Sales Rep', '')
                     })
         
@@ -1384,7 +1384,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
+                                'Date': row.get('Order Start Date', ''),  # Column I
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
                 
@@ -1399,7 +1399,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
+                                'Date': row.get('Order Start Date', ''),  # Column I
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
                 
@@ -1417,7 +1417,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             'Name': '',
                             'Customer': row.get('Customer', ''),
                             'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                            'Date': '',
+                            'Date': row.get('Order Start Date', ''),  # Column I
                             'Sales Rep': row.get('Sales Rep', '')
                         })
                 
@@ -1435,7 +1435,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             'Name': '',
                             'Customer': row.get('Customer', ''),
                             'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                            'Date': '',
+                            'Date': row.get('Order Start Date', ''),  # Column I
                             'Sales Rep': row.get('Sales Rep', '')
                         })
                 
@@ -1453,7 +1453,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Order Start Date', ''),
+                                'Date': row.get('Order Start Date', ''),  # Column I
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
         
