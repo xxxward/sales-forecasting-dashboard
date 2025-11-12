@@ -1781,6 +1781,86 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             st.caption(f"Export includes summary + {len(export_df)} line items from your selected categories")
 
+def display_hubspot_deals_audit(deals_df, rep_name=None):
+    """
+    Display audit section for HubSpot deals without amounts
+    """
+    st.markdown("### ⚠️ HubSpot Deals without Amounts (AUDIT!)")
+    st.caption("These deals are missing amount data and need attention")
+    
+    if deals_df is None or deals_df.empty:
+        st.info("No HubSpot deals data available")
+        return
+    
+    # Filter by rep if specified
+    if rep_name and 'Deal Owner' in deals_df.columns:
+        filtered_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+    else:
+        filtered_deals = deals_df.copy()
+    
+    if filtered_deals.empty:
+        st.info(f"No deals found{' for ' + rep_name if rep_name else ''}")
+        return
+    
+    # Convert Amount to numeric and find deals without amounts
+    filtered_deals['Amount_Numeric'] = pd.to_numeric(filtered_deals['Amount'], errors='coerce')
+    deals_no_amount = filtered_deals[
+        (filtered_deals['Amount_Numeric'].isna()) | 
+        (filtered_deals['Amount_Numeric'] == 0)
+    ].copy()
+    
+    if deals_no_amount.empty:
+        st.success("✅ All deals have amounts! No issues to audit.")
+        return
+    
+    # Show summary
+    st.warning(f"⚠️ Found {len(deals_no_amount)} deals without amounts")
+    
+    # Break down by status
+    if 'Status' in deals_no_amount.columns:
+        status_categories = ['Expect', 'Commit', 'Best Case', 'Opportunity']
+        
+        for status in status_categories:
+            status_deals = deals_no_amount[deals_no_amount['Status'] == status].copy()
+            
+            if not status_deals.empty:
+                with st.expander(f"🔍 {status} - {len(status_deals)} deals"):
+                    # Create display dataframe
+                    display_data = []
+                    
+                    for _, row in status_deals.iterrows():
+                        # Build HubSpot link if we have Record ID
+                        deal_link = ""
+                        record_id = row.get('Record ID', '')
+                        if record_id:
+                            deal_link = f"https://app.hubspot.com/contacts/6554605/deal/{record_id}"
+                        
+                        display_data.append({
+                            'Link': deal_link,
+                            'Deal Name': row.get('Deal Name', ''),
+                            'Amount': '$0.00',
+                            'Status': row.get('Status', ''),
+                            'Pipeline': row.get('Pipeline', ''),
+                            'Close Date': row.get('Close Date', ''),
+                            'Product Type': row.get('Product Type', '')
+                        })
+                    
+                    if display_data:
+                        display_df = pd.DataFrame(display_data)
+                        
+                        # Format as clickable links
+                        if 'Link' in display_df.columns:
+                            display_df['Link'] = display_df['Link'].apply(
+                                lambda x: f'<a href="{x}" target="_blank">View Deal</a>' if x else ''
+                            )
+                        
+                        # Display the table with HTML links
+                        st.markdown(display_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+                    else:
+                        st.info("No deals to display")
+    else:
+        st.warning("Status column not found in deals data")
+
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
     
@@ -3095,6 +3175,11 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     
     st.markdown("---")
     
+    # HubSpot Deals Audit Section
+    display_hubspot_deals_audit(deals_df)
+    
+    st.markdown("---")
+    
     # Progress bars for both breakdowns
     st.markdown("### 📈 Progress to Quota")
     col1, col2 = st.columns(2)
@@ -3298,6 +3383,11 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         invoices_df=invoices_df,
         sales_orders_df=sales_orders_df
     )
+    
+    st.markdown("---")
+    
+    # HubSpot Deals Audit Section
+    display_hubspot_deals_audit(deals_df, rep_name)
     
     st.markdown("---")
     
