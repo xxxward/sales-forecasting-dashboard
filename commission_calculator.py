@@ -42,6 +42,23 @@ BRAD_OVERRIDE_RATE = 0.01
 BRAD_OVERRIDE_REPS = ["Lance Mitton"]
 
 # ==========================================
+# CUSTOMER/PIPELINE MAPPING
+# ==========================================
+# Since NetSuite invoice export doesn't include HubSpot pipeline,
+# we'll need to infer it or add it manually
+# For now, we'll use a simple rule: if we have Created From (SO), it might be tracked
+# Otherwise, we'll need to add pipeline data or use a default
+
+def get_pipeline_for_customer(customer_name, created_from):
+    """
+    Determine pipeline based on customer and order info
+    This is a placeholder - you may need to enhance this logic
+    """
+    # Default: assume Retention for existing customers
+    # You can build a mapping here or pull from another source
+    return "Retention (Existing Product)"
+
+# ==========================================
 # EXCLUSION RULES
 # ==========================================
 
@@ -63,12 +80,16 @@ def verify_admin(email, password):
     return password_hash == ADMIN_PASSWORD_HASH
 
 def parse_invoice_month(date_value):
-    """Parse date and return the invoice month"""
+    """
+    Parse date and return the invoice month
+    Uses the Date column from CSV
+    """
     if pd.isna(date_value):
         return None
     
     try:
         if isinstance(date_value, str):
+            # Handle NetSuite date format: "11/12/25" = Nov 12, 2025
             date_obj = pd.to_datetime(date_value, errors='coerce')
         else:
             date_obj = pd.to_datetime(date_value)
@@ -103,49 +124,77 @@ def calculate_subtotal(row):
     """
     Calculate clean subtotal for commission calculation
     Excludes shipping, tax, and convenience fees
-    Formula: netamountnotax - shippingamount
+    
+    Uses actual CSV columns:
+    - Amount (line item amount)
+    - Amount (Shipping)
+    - Item (to identify exclusions)
     """
-    # Check for exclusions by item name
-    item_name = str(row.get('Item Name', '')).strip() if not pd.isna(row.get('Item Name', '')) else ''
+    # Get item name for exclusion checks
+    item_name = str(row.get('Item', '')).strip() if not pd.isna(row.get('Item', '')) else ''
     
     # Skip excluded items
     if any(excluded in item_name for excluded in EXCLUDED_ITEMS):
         return 0
     
-    # Skip tax and shipping lines (if these flags exist)
-    if row.get('taxline', False) or row.get('shippingline', False):
+    # Skip shipping lines (identified by item name)
+    if 'UPS' in item_name.upper() or 'FEDEX' in item_name.upper() or 'SHIPPING' in item_name.upper():
         return 0
     
-    # Get net amount and shipping amount
-    net_amount = pd.to_numeric(row.get('netamountnotax', 0), errors='coerce')
-    shipping_amount = pd.to_numeric(row.get('shippingamount', 0), errors='coerce')
+    # Skip tax lines
+    if 'AVATAX' in item_name.upper() or 'TAX' in item_name.upper():
+        return 0
     
-    if pd.isna(net_amount):
-        net_amount = 0
-    if pd.isna(shipping_amount):
-        shipping_amount = 0
+    # Get amount (this is the line item amount)
+    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
     
-    subtotal = net_amount - shipping_amount
+    if pd.isna(amount):
+        amount = 0
     
-    # Subtotal should not be negative
-    return max(0, subtotal)
+    # For NetSuite invoice exports, Amount already excludes shipping/tax at line level
+    # Just return the amount for non-excluded items
+    return max(0, amount)
 
 def get_payment_status(row):
-    """Determine payment status of invoice"""
-    amount_paid = pd.to_numeric(row.get('Amount Paid', 0), errors='coerce')
-    amount_due = pd.to_numeric(row.get('Amount Due', 0), errors='coerce')
+    """
+    Determine payment status of invoice
     
-    if pd.isna(amount_paid):
-        amount_paid = 0
-    if pd.isna(amount_due):
-        amount_due = 0
+    Uses actual CSV columns:
+    - Status: "Open", "Paid In Full", etc.
+    - Amount Remaining: How much is still owed
+    - Amount (Transaction Total): Total invoice amount
+    """
+    status = str(row.get('Status', '')).strip() if not pd.isna(row.get('Status', '')) else ''
+    amount_remaining = pd.to_numeric(row.get('Amount Remaining', 0), errors='coerce')
     
-    if amount_paid == 0:
-        return "No Payment"
-    elif amount_due == 0:
+    if pd.isna(amount_remaining):
+        amount_remaining = 0
+    
+    # Check status field
+    status_lower = status.lower()
+    
+    # If status explicitly says paid in full
+    if 'paid in full' in status_lower or 'fully paid' in status_lower:
         return "Fully Paid"
-    else:
+    
+    # If there's no amount remaining, it's fully paid
+    if amount_remaining == 0:
+        return "Fully Paid"
+    
+    # If status is "Open" and amount remaining > 0, check if partial payment made
+    # For line-level data, we'll consider "Open" with 0 remaining as paid
+    if status_lower == 'open':
+        if amount_remaining == 0:
+            return "Fully Paid"
+        # Note: We can't easily determine partial payment at line level
+        # Treat all "Open" invoices with 0 remaining as paid for commission purposes
         return "Partially Paid"
+    
+    # Default: if there's an amount remaining, treat as partially paid
+    if amount_remaining > 0:
+        return "No Payment"
+    
+    return "Fully Paid"
 
 def resolve_sales_rep(row):
     """Get the sales rep for commission calculation"""
@@ -181,12 +230,18 @@ def process_commission_data(invoices_df):
     Main function to process commission data from uploaded file
     Optimized for large datasets (100k+ rows)
     Returns a DataFrame with calculated commissions
+    
+    Works with actual NetSuite CSV columns:
+    - Document Number, Status, Date, Sales Rep, Customer, Item, Amount, Amount Remaining
     """
     if invoices_df.empty:
         return pd.DataFrame()
     
     # Make a copy to avoid modifying original
     df = invoices_df.copy()
+    
+    # Clean up BOM character if present
+    df.columns = df.columns.str.replace('﻿', '')
     
     total_rows = len(df)
     st.info(f"Processing {total_rows:,} invoice line items...")
@@ -195,7 +250,7 @@ def process_commission_data(invoices_df):
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    # Step 1: Resolve sales rep
+    # Step 1: Resolve sales rep (already in Sales Rep column)
     status_text.text("Step 1/8: Resolving sales reps...")
     df['Final Sales Rep'] = df.apply(resolve_sales_rep, axis=1)
     progress_bar.progress(12)
@@ -210,23 +265,37 @@ def process_commission_data(invoices_df):
     df['Payment Status'] = df.apply(get_payment_status, axis=1)
     progress_bar.progress(37)
     
-    # Step 4: Filter to only paid/partially paid invoices
+    # Step 4: Filter to only paid/partially paid invoices (Amount Remaining = 0)
     status_text.text("Step 4/8: Filtering to paid invoices...")
     initial_count = len(df)
-    df = df[df['Payment Status'].isin(['Fully Paid', 'Partially Paid'])].copy()
+    
+    # For commission purposes, only count lines where Amount Remaining = 0
+    df['Amount Remaining Numeric'] = pd.to_numeric(df.get('Amount Remaining', 0), errors='coerce').fillna(0)
+    df = df[df['Amount Remaining Numeric'] == 0].copy()
+    
     filtered_count = len(df)
-    st.caption(f"Filtered from {initial_count:,} to {filtered_count:,} paid/partially paid line items")
+    st.caption(f"Filtered from {initial_count:,} to {filtered_count:,} paid line items (Amount Remaining = $0)")
     progress_bar.progress(50)
+    
+    if filtered_count == 0:
+        st.warning("⚠️ No paid invoices found. All invoices show Amount Remaining > 0")
+        st.info("This data might be from unpaid invoices. Commission is typically only paid on invoices with Amount Remaining = $0")
+        progress_bar.empty()
+        status_text.empty()
+        return pd.DataFrame()
     
     # Step 5: Parse invoice month and calculate payout date
     status_text.text("Step 5/8: Calculating invoice months and payout dates...")
-    df['Invoice Month'] = df.apply(lambda row: parse_invoice_month(row.get('Transaction Date', '')), axis=1)
+    df['Invoice Month'] = df.apply(lambda row: parse_invoice_month(row.get('Date', '')), axis=1)
     df['Payout Date'] = df['Invoice Month'].apply(lambda x: calculate_payout_date(x) if x else None)
     progress_bar.progress(62)
     
-    # Step 6: Get commission rate
+    # Step 6: Get commission rate (need pipeline - use default or lookup)
     status_text.text("Step 6/8: Looking up commission rates...")
-    df['Pipeline'] = df.get('custbody_calyx_hs_pipeline', '')
+    df['Pipeline'] = df.apply(
+        lambda row: get_pipeline_for_customer(row.get('Customer', ''), row.get('Created From', '')),
+        axis=1
+    )
     df['Commission Rate'] = df.apply(
         lambda row: get_commission_rate(row['Final Sales Rep'], row['Pipeline']), 
         axis=1
@@ -365,7 +434,7 @@ def display_file_uploader():
             # Show column mapping info
             with st.expander("📋 View Column Names & Data Preview"):
                 st.write("**Detected columns:**", df.columns.tolist())
-                st.caption("Make sure your file includes: Sales Rep, Item Name, netamountnotax, shippingamount, Transaction Date, custbody_calyx_hs_pipeline, Amount Paid, Amount Due")
+                st.caption("Looking for: Document Number, Status, Date, Sales Rep, Customer, Item, Amount, Amount Remaining")
                 
                 st.markdown("**First 5 rows:**")
                 st.dataframe(df.head(), use_container_width=True)
@@ -495,8 +564,8 @@ def display_commission_dashboard(commission_df):
     
     # Select display columns
     display_columns = [
-        'Document Number', 'Transaction Date', 'Final Sales Rep', 'Pipeline',
-        'Item Name', 'Subtotal', 'Commission Rate', 'Commission Amount',
+        'Document Number', 'Date', 'Final Sales Rep', 'Customer', 'Item',
+        'Pipeline', 'Subtotal', 'Commission Rate', 'Commission Amount',
         'Brad Override', 'Payment Status', 'Invoice Month', 'Payout Date'
     ]
     
