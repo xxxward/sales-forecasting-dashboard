@@ -168,7 +168,7 @@ def process_commission_data_fast(df):
     """
     Fast processing - filter and calculate in one pass
     Only processes Sep/Oct 2025 for 4 reps
-    Uses Date Closed (payment date) to determine commission month
+    Uses Invoice Date and Amount Paid > 0 (NetSuite methodology)
     """
     if df.empty:
         return pd.DataFrame()
@@ -182,22 +182,23 @@ def process_commission_data_fast(df):
     df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
     st.caption(f"✓ Filtered to 4 commission reps: {len(df):,} lines")
     
-    # Step 2: Only paid invoices (Amount Remaining = 0)
-    df['Amount Remaining Numeric'] = pd.to_numeric(df.get('Amount Remaining', 0), errors='coerce').fillna(0)
-    df = df[df['Amount Remaining Numeric'] == 0].copy()
-    st.caption(f"✓ Filtered to paid invoices: {len(df):,} lines")
+    # Step 2: Only invoices with payment (Amount Paid > 0)
+    df['Amount Paid Numeric'] = pd.to_numeric(df.get('Amount Paid', 0), errors='coerce').fillna(0)
+    initial_count = len(df)
+    df = df[df['Amount Paid Numeric'] > 0].copy()
+    st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0): {len(df):,} lines (removed {initial_count - len(df):,})")
     
-    # Step 3: Parse CLOSE dates (when payment received) and filter to Sep/Oct 2025
-    st.caption("⏰ Using 'Date Closed' to determine commission month (when payment was received)")
-    df['Invoice Month'] = df['Date Closed'].apply(parse_invoice_month)
+    # Step 3: Parse INVOICE dates and filter to Sep/Oct 2025
+    st.caption("📅 Using 'Date' (Invoice Date) to determine commission month")
+    df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
     
-    # Show how many have no close date
-    no_close_date = df['Invoice Month'].isna().sum()
-    if no_close_date > 0:
-        st.warning(f"⚠️ {no_close_date:,} lines have no Date Closed value and will be excluded")
+    # Show how many have no date
+    no_date = df['Invoice Month'].isna().sum()
+    if no_date > 0:
+        st.warning(f"⚠️ {no_date:,} lines have no Date value and will be excluded")
     
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
-    st.caption(f"✓ Filtered to Sep/Oct 2025 (by Date Closed): {len(df):,} lines")
+    st.caption(f"✓ Filtered to Sep/Oct 2025 (by Invoice Date): {len(df):,} lines")
     
     # Step 4: Exclude shipping, tax, fees
     df['Item Upper'] = df['Item'].str.upper()
@@ -231,7 +232,7 @@ def process_commission_data_fast(df):
     df['Payout Date'] = df['Invoice Month'].apply(calculate_payout_date)
     
     # Clean up temp columns
-    df = df.drop(columns=['Amount Remaining Numeric', 'Item Upper', 'Is Excluded', 'Amount Numeric'], errors='ignore')
+    df = df.drop(columns=['Amount Paid Numeric', 'Item Upper', 'Is Excluded', 'Amount Numeric'], errors='ignore')
     
     st.success(f"✅ Commission calculated on {len(df):,} line items!")
     
@@ -570,7 +571,7 @@ def display_reconciliation_tool(invoice_df):
     df.columns = df.columns.str.replace('﻿', '')
     
     # Parse dates and extract SO numbers
-    df['Date Parsed'] = pd.to_datetime(df['Date Closed'], errors='coerce')  # Use Date Closed!
+    df['Date Parsed'] = pd.to_datetime(df['Date'], errors='coerce')  # Use Date (invoice date)!
     df['Invoice Month'] = df['Date Parsed'].apply(
         lambda x: x.strftime('%Y-%m') if not pd.isna(x) else None
     )
@@ -581,10 +582,10 @@ def display_reconciliation_tool(invoice_df):
     
     st.info(f"Found {len(rep_data):,} total invoice lines")
     
-    # Filter to paid only
-    rep_data['Amount Remaining Numeric'] = pd.to_numeric(rep_data.get('Amount Remaining', 0), errors='coerce').fillna(0)
-    paid_data = rep_data[rep_data['Amount Remaining Numeric'] == 0].copy()
-    st.caption(f"Paid invoices: {len(paid_data):,} lines")
+    # Filter to paid only (Amount Paid > 0)
+    rep_data['Amount Paid Numeric'] = pd.to_numeric(rep_data.get('Amount Paid', 0), errors='coerce').fillna(0)
+    paid_data = rep_data[rep_data['Amount Paid Numeric'] > 0].copy()
+    st.caption(f"Paid invoices (Amount Paid > 0): {len(paid_data):,} lines")
     
     # Exclude shipping/tax
     paid_data['Item Upper'] = paid_data['Item'].str.upper()
@@ -693,7 +694,7 @@ def display_reconciliation_tool(invoice_df):
                 # Show why
                 so_rep = so_data['Sales Rep'].iloc[0]
                 so_month = so_data['Invoice Month'].iloc[0]
-                so_amt_remain = pd.to_numeric(so_data['Amount Remaining'].iloc[0], errors='coerce')
+                so_amt_paid = pd.to_numeric(so_data['Amount Paid'].iloc[0], errors='coerce')
                 
                 col1, col2, col3 = st.columns(3)
                 
@@ -710,12 +711,12 @@ def display_reconciliation_tool(invoice_df):
                         st.success(f"Month: {so_month} ✓")
                 
                 with col3:
-                    if pd.isna(so_amt_remain):
-                        so_amt_remain = 0
-                    if so_amt_remain > 0:
-                        st.error(f"Unpaid: ${so_amt_remain:,.2f}")
+                    if pd.isna(so_amt_paid):
+                        so_amt_paid = 0
+                    if so_amt_paid == 0:
+                        st.error(f"Unpaid: $0")
                     else:
-                        st.success("Paid ✓")
+                        st.success(f"Paid: ${so_amt_paid:,.2f} ✓")
                 
                 with st.expander(f"View {so} details"):
                     display_cols = ['Document Number', 'Date', 'Item', 'Amount', 'Amount Remaining', 'Status']
