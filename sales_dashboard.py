@@ -1224,7 +1224,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     individual_select_categories = [
         'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
         'Pending Fulfillment (without date)', 'Pending Approval (without date)', 
-        'Pending Approval (>2 weeks old)'
+        'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit'
     ]
     
     # Calculate individual HubSpot categories
@@ -1362,6 +1362,22 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         items_to_select = q4_deals[q4_deals['Status'] == 'Best Case'].copy()
                     elif 'Opportunity' in category:
                         items_to_select = q4_deals[q4_deals['Status'] == 'Opportunity'].copy()
+            
+            # Q1 Spillover deals
+            elif 'Q1 Spillover' in category and deals_df is not None:
+                if rep_name:
+                    hs_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+                else:
+                    hs_deals = deals_df.copy()
+                
+                if not hs_deals.empty and 'Status' in hs_deals.columns:
+                    hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
+                    
+                    # Get Q1 spillover deals (close in Q4 but ship in Q1)
+                    items_to_select = hs_deals[
+                        (hs_deals.get('Counts_In_Q4', True) == False) &
+                        (hs_deals['Status'].isin(['Expect', 'Commit']))
+                    ].copy()
             
             # Display selection interface
             if not items_to_select.empty:
@@ -1710,22 +1726,38 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     'Sales Rep': row.get('Deal Owner', '')
                                 })
                 
-                # Q1 Spillover (always bulk)
+                # Q1 Spillover - check individual mode
                 if selected_sources.get('Q1 Spillover - Expect/Commit', False):
-                    q1_deals = hs_deals[
-                        (hs_deals.get('Counts_In_Q4', True) == False) &
-                        (hs_deals['Status'].isin(['Expect', 'Commit']))
-                    ].copy()
-                    for _, row in q1_deals.iterrows():
-                        export_data.append({
-                            'Type': 'HubSpot Deal - Q1 Spillover',
-                            'ID': row.get('Record ID', ''),
-                            'Name': row.get('Deal Name', ''),
-                            'Customer': row.get('Account Name', ''),
-                            'Amount': row.get('Amount_Numeric', 0),
-                            'Date': row.get('Close Date', ''),
-                            'Sales Rep': row.get('Deal Owner', '')
-                        })
+                    category = 'Q1 Spillover - Expect/Commit'
+                    if individual_selection_mode.get(category, False) and category in individual_selections:
+                        # Use individual selections
+                        for item in individual_selections[category]:
+                            row = item['row']
+                            export_data.append({
+                                'Type': 'HubSpot Deal - Q1 Spillover',
+                                'ID': row.get('Record ID', ''),
+                                'Name': row.get('Deal Name', ''),
+                                'Customer': row.get('Account Name', ''),
+                                'Amount': item['amount'],
+                                'Date': row.get('Close Date', ''),
+                                'Sales Rep': row.get('Deal Owner', '')
+                            })
+                    else:
+                        # Bulk export
+                        q1_deals = hs_deals[
+                            (hs_deals.get('Counts_In_Q4', True) == False) &
+                            (hs_deals['Status'].isin(['Expect', 'Commit']))
+                        ].copy()
+                        for _, row in q1_deals.iterrows():
+                            export_data.append({
+                                'Type': 'HubSpot Deal - Q1 Spillover',
+                                'ID': row.get('Record ID', ''),
+                                'Name': row.get('Deal Name', ''),
+                                'Customer': row.get('Account Name', ''),
+                                'Amount': row.get('Amount_Numeric', 0),
+                                'Date': row.get('Close Date', ''),
+                                'Sales Rep': row.get('Deal Owner', '')
+                            })
         
         # Create export dataframes
         if export_data:
