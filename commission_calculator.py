@@ -12,8 +12,10 @@ import numpy as np
 from datetime import datetime, timedelta
 import hashlib
 
-# Note: openpyxl is used by pandas for reading Excel files
-# Make sure it's in your requirements.txt: openpyxl>=3.0.0
+# Note: Excel file support requires:
+# - openpyxl>=3.0.0 (for .xlsx files)
+# - xlrd>=2.0.0 (for old .xls files)
+# Make sure both are in your requirements.txt
 
 # ==========================================
 # PASSWORD CONFIGURATION (Xander Only)
@@ -338,8 +340,17 @@ def display_file_uploader():
             with st.spinner(f"Reading {file_extension.upper()} file... This may take a moment for large files"):
                 if file_extension == 'csv':
                     df = pd.read_csv(uploaded_file, low_memory=False)
-                elif file_extension in ['xls', 'xlsx']:
-                    # Use openpyxl engine for better performance with large files
+                elif file_extension == 'xls':
+                    # Old Excel format - use xlrd engine
+                    try:
+                        df = pd.read_excel(uploaded_file, engine='xlrd')
+                    except:
+                        # If xlrd fails, try openpyxl (sometimes .xls is actually .xlsx)
+                        st.warning("Trying alternate Excel reader...")
+                        uploaded_file.seek(0)  # Reset file pointer
+                        df = pd.read_excel(uploaded_file, engine='openpyxl')
+                elif file_extension == 'xlsx':
+                    # New Excel format - use openpyxl engine
                     df = pd.read_excel(uploaded_file, engine='openpyxl')
                 else:
                     st.error("Unsupported file format")
@@ -363,7 +374,12 @@ def display_file_uploader():
         
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
-            st.caption("If the file is very large, try exporting as CSV instead of XLS for better performance")
+            st.markdown("""
+            **Troubleshooting tips:**
+            - If you get "File is not a zip file" error, your XLS might be in old Excel format
+            - Try opening the file in Excel and saving as **CSV** or **XLSX** format
+            - CSV format works best for very large files (faster loading)
+            """)
             return None
     
     return None
