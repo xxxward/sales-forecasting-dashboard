@@ -168,6 +168,7 @@ def process_commission_data_fast(df):
     """
     Fast processing - filter and calculate in one pass
     Only processes Sep/Oct 2025 for 4 reps
+    Uses Date Closed (payment date) to determine commission month
     """
     if df.empty:
         return pd.DataFrame()
@@ -186,10 +187,17 @@ def process_commission_data_fast(df):
     df = df[df['Amount Remaining Numeric'] == 0].copy()
     st.caption(f"✓ Filtered to paid invoices: {len(df):,} lines")
     
-    # Step 3: Parse dates and filter to Sep/Oct 2025
-    df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
+    # Step 3: Parse CLOSE dates (when payment received) and filter to Sep/Oct 2025
+    st.caption("⏰ Using 'Date Closed' to determine commission month (when payment was received)")
+    df['Invoice Month'] = df['Date Closed'].apply(parse_invoice_month)
+    
+    # Show how many have no close date
+    no_close_date = df['Invoice Month'].isna().sum()
+    if no_close_date > 0:
+        st.warning(f"⚠️ {no_close_date:,} lines have no Date Closed value and will be excluded")
+    
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
-    st.caption(f"✓ Filtered to Sep/Oct 2025: {len(df):,} lines")
+    st.caption(f"✓ Filtered to Sep/Oct 2025 (by Date Closed): {len(df):,} lines")
     
     # Step 4: Exclude shipping, tax, fees
     df['Item Upper'] = df['Item'].str.upper()
@@ -562,7 +570,7 @@ def display_reconciliation_tool(invoice_df):
     df.columns = df.columns.str.replace('﻿', '')
     
     # Parse dates and extract SO numbers
-    df['Date Parsed'] = pd.to_datetime(df['Date'], errors='coerce')
+    df['Date Parsed'] = pd.to_datetime(df['Date Closed'], errors='coerce')  # Use Date Closed!
     df['Invoice Month'] = df['Date Parsed'].apply(
         lambda x: x.strftime('%Y-%m') if not pd.isna(x) else None
     )
