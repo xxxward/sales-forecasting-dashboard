@@ -1191,6 +1191,276 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
         else:
             st.dataframe(filtered_invoices, use_container_width=True, hide_index=True)
 
+def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None):
+    """
+    Interactive section where users can select which data sources to include in their forecast
+    """
+    st.markdown("### 🎯 Build Your Own Forecast")
+    st.caption("Select the components you want to include in your custom forecast calculation")
+    
+    # Create columns for checkboxes
+    col1, col2, col3 = st.columns(3)
+    
+    # Available data sources with their values
+    sources = {
+        'Invoiced & Shipped': metrics.get('orders', 0),
+        'Pending Fulfillment (with date)': metrics.get('pending_fulfillment', 0),
+        'Pending Approval (with date)': metrics.get('pending_approval', 0),
+        'HubSpot Expect': metrics.get('expect_commit', 0) if 'expect_commit' in metrics else 0,
+        'HubSpot Commit': 0,  # Will calculate separately
+        'HubSpot Best Case': 0,  # Will calculate separately
+        'HubSpot Opportunity': 0,  # Will calculate separately
+        'Pending Fulfillment (without date)': metrics.get('pending_fulfillment_no_date', 0),
+        'Pending Approval (without date)': metrics.get('pending_approval_no_date', 0),
+        'Pending Approval (>2 weeks old)': metrics.get('pending_approval_old', 0),
+        'Q1 Spillover - Expect/Commit': metrics.get('q1_spillover_expect_commit', 0)
+    }
+    
+    # Calculate individual HubSpot categories
+    if deals_df is not None and not deals_df.empty:
+        if rep_name:
+            rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+        else:
+            rep_deals = deals_df.copy()
+        
+        if not rep_deals.empty and 'Status' in rep_deals.columns:
+            rep_deals['Amount_Numeric'] = pd.to_numeric(rep_deals['Amount'], errors='coerce')
+            
+            # Filter for Q4 only
+            q4_deals = rep_deals[rep_deals.get('Counts_In_Q4', True) == True]
+            
+            sources['HubSpot Expect'] = q4_deals[q4_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
+            sources['HubSpot Commit'] = q4_deals[q4_deals['Status'] == 'Commit']['Amount_Numeric'].sum()
+            sources['HubSpot Best Case'] = q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
+            sources['HubSpot Opportunity'] = q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
+    
+    # Create checkboxes in columns
+    selected_sources = {}
+    source_list = list(sources.keys())
+    
+    with col1:
+        for source in source_list[0:4]:
+            selected_sources[source] = st.checkbox(
+                f"{source}: ${sources[source]:,.0f}",
+                value=False,
+                key=f"{'team' if rep_name is None else rep_name}_{source}"
+            )
+    
+    with col2:
+        for source in source_list[4:8]:
+            selected_sources[source] = st.checkbox(
+                f"{source}: ${sources[source]:,.0f}",
+                value=False,
+                key=f"{'team' if rep_name is None else rep_name}_{source}"
+            )
+    
+    with col3:
+        for source in source_list[8:]:
+            selected_sources[source] = st.checkbox(
+                f"{source}: ${sources[source]:,.0f}",
+                value=False,
+                key=f"{'team' if rep_name is None else rep_name}_{source}"
+            )
+    
+    # Calculate custom forecast
+    custom_forecast = sum(sources[source] for source, selected in selected_sources.items() if selected)
+    gap_to_quota = quota - custom_forecast
+    attainment_pct = (custom_forecast / quota * 100) if quota > 0 else 0
+    
+    # Display results
+    st.markdown("---")
+    st.markdown("#### 📊 Your Custom Forecast")
+    
+    result_col1, result_col2, result_col3, result_col4 = st.columns(4)
+    
+    with result_col1:
+        st.metric("Quota", f"${quota:,.0f}")
+    
+    with result_col2:
+        st.metric("Custom Forecast", f"${custom_forecast:,.0f}")
+    
+    with result_col3:
+        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", 
+                 delta=f"${-gap_to_quota:,.0f}" if gap_to_quota < 0 else None,
+                 delta_color="inverse")
+    
+    with result_col4:
+        st.metric("Attainment", f"{attainment_pct:.1f}%")
+    
+    # Export functionality
+    if any(selected_sources.values()):
+        st.markdown("---")
+        
+        # Collect data for export
+        export_data = []
+        
+        # Get invoices data
+        if selected_sources.get('Invoiced & Shipped', False) and invoices_df is not None:
+            if rep_name and 'Sales Rep' in invoices_df.columns:
+                inv_data = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
+            else:
+                inv_data = invoices_df.copy()
+            
+            if not inv_data.empty:
+                for _, row in inv_data.iterrows():
+                    export_data.append({
+                        'Type': 'Invoice',
+                        'Document Number': row.get('Document Number', ''),
+                        'Customer': row.get('Account Name', row.get('Customer', '')),
+                        'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                        'Date': row.get('Transaction Date', ''),
+                        'Sales Rep': row.get('Sales Rep', '')
+                    })
+        
+        # Get sales orders data
+        if sales_orders_df is not None:
+            if rep_name and 'Sales Rep' in sales_orders_df.columns:
+                so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+            else:
+                so_data = sales_orders_df.copy()
+            
+            if not so_data.empty:
+                # Pending Fulfillment with date
+                if selected_sources.get('Pending Fulfillment (with date)', False):
+                    pf_data = so_data[so_data['Status'] == 'Pending Fulfillment'].copy()
+                    for _, row in pf_data.iterrows():
+                        if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
+                            export_data.append({
+                                'Type': 'Sales Order - Pending Fulfillment',
+                                'Document Number': row.get('Document Number', ''),
+                                'Customer': row.get('Customer', ''),
+                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
+                                'Sales Rep': row.get('Sales Rep', '')
+                            })
+                
+                # Pending Approval with date
+                if selected_sources.get('Pending Approval (with date)', False):
+                    pa_data = so_data[so_data['Status'] == 'Pending Approval'].copy()
+                    for _, row in pa_data.iterrows():
+                        if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
+                            export_data.append({
+                                'Type': 'Sales Order - Pending Approval',
+                                'Document Number': row.get('Document Number', ''),
+                                'Customer': row.get('Customer', ''),
+                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
+                                'Sales Rep': row.get('Sales Rep', '')
+                            })
+                
+                # Pending Fulfillment without date
+                if selected_sources.get('Pending Fulfillment (without date)', False):
+                    pf_no_date = so_data[
+                        (so_data['Status'] == 'Pending Fulfillment') &
+                        (so_data['Customer Promise Date'].isna()) &
+                        (so_data['Projected Date'].isna())
+                    ].copy()
+                    for _, row in pf_no_date.iterrows():
+                        export_data.append({
+                            'Type': 'Sales Order - Pending Fulfillment (No Date)',
+                            'Document Number': row.get('Document Number', ''),
+                            'Customer': row.get('Customer', ''),
+                            'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                            'Date': '',
+                            'Sales Rep': row.get('Sales Rep', '')
+                        })
+                
+                # Pending Approval without date
+                if selected_sources.get('Pending Approval (without date)', False):
+                    pa_no_date = so_data[
+                        (so_data['Status'] == 'Pending Approval') &
+                        (so_data['Customer Promise Date'].isna()) &
+                        (so_data['Projected Date'].isna())
+                    ].copy()
+                    for _, row in pa_no_date.iterrows():
+                        export_data.append({
+                            'Type': 'Sales Order - Pending Approval (No Date)',
+                            'Document Number': row.get('Document Number', ''),
+                            'Customer': row.get('Customer', ''),
+                            'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                            'Date': '',
+                            'Sales Rep': row.get('Sales Rep', '')
+                        })
+                
+                # Old Pending Approval
+                if selected_sources.get('Pending Approval (>2 weeks old)', False):
+                    if 'Age_Business_Days' in so_data.columns:
+                        old_pa = so_data[
+                            (so_data['Status'] == 'Pending Approval') &
+                            (so_data['Age_Business_Days'] >= 10)
+                        ].copy()
+                        for _, row in old_pa.iterrows():
+                            export_data.append({
+                                'Type': 'Sales Order - Old Pending Approval',
+                                'Document Number': row.get('Document Number', ''),
+                                'Customer': row.get('Customer', ''),
+                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                'Date': row.get('Order Start Date', ''),
+                                'Sales Rep': row.get('Sales Rep', '')
+                            })
+        
+        # Get HubSpot deals data
+        if deals_df is not None and not deals_df.empty:
+            if rep_name:
+                hs_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+            else:
+                hs_deals = deals_df.copy()
+            
+            if not hs_deals.empty and 'Status' in hs_deals.columns:
+                hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
+                
+                # Filter for selected categories
+                for status_name, checkbox_name in [
+                    ('Expect', 'HubSpot Expect'),
+                    ('Commit', 'HubSpot Commit'),
+                    ('Best Case', 'HubSpot Best Case'),
+                    ('Opportunity', 'HubSpot Opportunity')
+                ]:
+                    if selected_sources.get(checkbox_name, False):
+                        status_deals = hs_deals[hs_deals['Status'] == status_name].copy()
+                        for _, row in status_deals.iterrows():
+                            export_data.append({
+                                'Type': f'HubSpot Deal - {status_name}',
+                                'Document Number': row.get('Deal Name', ''),
+                                'Customer': row.get('Account Name', ''),
+                                'Amount': row.get('Amount_Numeric', 0),
+                                'Date': row.get('Close Date', ''),
+                                'Sales Rep': row.get('Deal Owner', '')
+                            })
+                
+                # Q1 Spillover
+                if selected_sources.get('Q1 Spillover - Expect/Commit', False):
+                    q1_deals = hs_deals[
+                        (hs_deals.get('Counts_In_Q4', True) == False) &
+                        (hs_deals['Status'].isin(['Expect', 'Commit']))
+                    ].copy()
+                    for _, row in q1_deals.iterrows():
+                        export_data.append({
+                            'Type': 'HubSpot Deal - Q1 Spillover',
+                            'Document Number': row.get('Deal Name', ''),
+                            'Customer': row.get('Account Name', ''),
+                            'Amount': row.get('Amount_Numeric', 0),
+                            'Date': row.get('Close Date', ''),
+                            'Sales Rep': row.get('Deal Owner', '')
+                        })
+        
+        # Create export dataframe
+        if export_data:
+            export_df = pd.DataFrame(export_data)
+            
+            # Format for display
+            export_df['Amount'] = export_df['Amount'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "$0")
+            
+            st.download_button(
+                label="📥 Download Your Winning Pipeline",
+                data=export_df.to_csv(index=False),
+                file_name=f"winning_pipeline_{'team' if rep_name is None else rep_name}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                help="Download your selected forecast components as CSV"
+            )
+            
+            st.caption(f"Export includes {len(export_df)} line items from your selected categories")
+
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
     
@@ -2483,6 +2753,28 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     
     st.markdown("---")
     
+    # Build Your Own Forecast section
+    team_metrics_for_forecast = {
+        'orders': team_invoiced,
+        'pending_fulfillment': team_pf,
+        'pending_approval': team_pa,
+        'expect_commit': team_hs,
+        'pending_fulfillment_no_date': team_pf_no_date,
+        'pending_approval_no_date': team_pa_no_date,
+        'pending_approval_old': team_old_pa,
+        'q1_spillover_expect_commit': team_q1_spillover
+    }
+    build_your_own_forecast_section(
+        team_metrics_for_forecast,
+        team_quota,
+        rep_name=None,
+        deals_df=deals_df,
+        invoices_df=invoices_df,
+        sales_orders_df=sales_orders_df
+    )
+    
+    st.markdown("---")
+    
     # Progress bars for both breakdowns
     st.markdown("### 📈 Progress to Quota")
     col1, col2 = st.columns(2)
@@ -2674,6 +2966,18 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     # Invoices section for this rep
     display_invoices_drill_down(invoices_df, rep_name)
+    
+    st.markdown("---")
+    
+    # Build Your Own Forecast section
+    build_your_own_forecast_section(
+        metrics,
+        metrics['quota'],
+        rep_name=rep_name,
+        deals_df=deals_df,
+        invoices_df=invoices_df,
+        sales_orders_df=sales_orders_df
+    )
     
     st.markdown("---")
     
