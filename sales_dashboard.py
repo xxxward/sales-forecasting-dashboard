@@ -1038,30 +1038,68 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
         </div>
         """, unsafe_allow_html=True)
         
-        # Team-level changes
-        st.markdown("#### 👥 Team Overview")
-        team_col1, team_col2, team_col3, team_col4 = st.columns(4)
+        # Calculate all current metrics
+        current_metrics = calculate_team_metrics(deals_df, dashboard_df)
+        previous_metrics = calculate_team_metrics(previous['deals'], previous['dashboard'])
         
-        with team_col1:
+        # Helper function to calculate sales order metrics
+        def calculate_so_metrics(so_df):
+            metrics = {
+                'pending_fulfillment': 0,
+                'pending_fulfillment_no_date': 0,
+                'pending_approval': 0,
+                'pending_approval_no_date': 0,
+                'pending_approval_old': 0
+            }
+            
+            if so_df.empty:
+                return metrics
+            
+            so_df = so_df.copy()
+            so_df['Amount_Numeric'] = pd.to_numeric(so_df.get('Amount', 0), errors='coerce')
+            
+            # Parse dates
+            if 'Estimated Ship Date' in so_df.columns:
+                so_df['Ship_Date_Parsed'] = pd.to_datetime(so_df['Estimated Ship Date'], errors='coerce')
+            else:
+                so_df['Ship_Date_Parsed'] = pd.NaT
+            
+            # Pending Fulfillment
+            pf_df = so_df[so_df.get('Status', '') == 'Pending Fulfillment']
+            metrics['pending_fulfillment'] = pf_df[pf_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
+            metrics['pending_fulfillment_no_date'] = pf_df[pf_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
+            
+            # Pending Approval
+            pa_df = so_df[so_df.get('Status', '') == 'Pending Approval']
+            metrics['pending_approval'] = pa_df[pa_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
+            metrics['pending_approval_no_date'] = pa_df[pa_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
+            
+            # Pending Approval > 2 weeks old
+            if 'Transaction Date' in so_df.columns:
+                so_df['Transaction_Date_Parsed'] = pd.to_datetime(so_df['Transaction Date'], errors='coerce')
+                two_weeks_ago = datetime.now() - timedelta(days=14)
+                old_pa = pa_df[pa_df['Transaction_Date_Parsed'] < two_weeks_ago]
+                metrics['pending_approval_old'] = old_pa['Amount_Numeric'].sum()
+            
+            return metrics
+        
+        current_so_metrics = calculate_so_metrics(sales_orders_df)
+        previous_so_metrics = calculate_so_metrics(previous['sales_orders'])
+        
+        # Team-level changes - organized by data category
+        st.markdown("#### 👥 Team Overview")
+        
+        # Row 1: Invoiced & Shipped
+        st.markdown("**💰 Invoiced & Shipped**")
+        inv_col1, inv_col2, inv_col3, inv_col4 = st.columns(4)
+        
+        with inv_col1:
             current_invoices = len(invoices_df) if not invoices_df.empty else 0
             previous_invoices = len(previous['invoices']) if not previous['invoices'].empty else 0
             delta_invoices = current_invoices - previous_invoices
             st.metric("Total Invoices", current_invoices, delta=delta_invoices)
         
-        with team_col2:
-            current_orders = len(sales_orders_df) if not sales_orders_df.empty else 0
-            previous_orders = len(previous['sales_orders']) if not previous['sales_orders'].empty else 0
-            delta_orders = current_orders - previous_orders
-            st.metric("Total Sales Orders", current_orders, delta=delta_orders)
-        
-        with team_col3:
-            current_deals = len(deals_df) if not deals_df.empty else 0
-            previous_deals = len(previous['deals']) if not previous['deals'].empty else 0
-            delta_deals = current_deals - previous_deals
-            st.metric("Total Deals", current_deals, delta=delta_deals)
-        
-        with team_col4:
-            # Calculate total invoice amount change
+        with inv_col2:
             if not invoices_df.empty and 'Amount' in invoices_df.columns:
                 current_inv_total = pd.to_numeric(invoices_df['Amount'], errors='coerce').sum()
             else:
@@ -1074,6 +1112,156 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             
             delta_inv_amount = current_inv_total - previous_inv_total
             st.metric("Invoice Amount", f"${current_inv_total:,.0f}", delta=f"${delta_inv_amount:,.0f}")
+        
+        with inv_col3:
+            # NetSuite Orders from dashboard
+            current_ns_orders = current_metrics.get('orders', 0)
+            previous_ns_orders = previous_metrics.get('orders', 0)
+            delta_ns = current_ns_orders - previous_ns_orders
+            st.metric("NS Orders (Dashboard)", f"${current_ns_orders:,.0f}", delta=f"${delta_ns:,.0f}")
+        
+        with inv_col4:
+            # Average invoice size
+            if current_invoices > 0:
+                current_avg = current_inv_total / current_invoices
+            else:
+                current_avg = 0
+            
+            if previous_invoices > 0:
+                previous_avg = previous_inv_total / previous_invoices
+            else:
+                previous_avg = 0
+            
+            delta_avg = current_avg - previous_avg
+            st.metric("Avg Invoice", f"${current_avg:,.0f}", delta=f"${delta_avg:,.0f}")
+        
+        # Row 2: Sales Orders
+        st.markdown("**📦 Sales Orders**")
+        so_col1, so_col2, so_col3, so_col4 = st.columns(4)
+        
+        with so_col1:
+            current_orders = len(sales_orders_df) if not sales_orders_df.empty else 0
+            previous_orders = len(previous['sales_orders']) if not previous['sales_orders'].empty else 0
+            delta_orders = current_orders - previous_orders
+            st.metric("Total Sales Orders", current_orders, delta=delta_orders)
+        
+        with so_col2:
+            delta_pf = current_so_metrics['pending_fulfillment'] - previous_so_metrics['pending_fulfillment']
+            st.metric("Pending Fulfillment (with date)", 
+                     f"${current_so_metrics['pending_fulfillment']:,.0f}", 
+                     delta=f"${delta_pf:,.0f}")
+        
+        with so_col3:
+            delta_pa = current_so_metrics['pending_approval'] - previous_so_metrics['pending_approval']
+            st.metric("Pending Approval (with date)", 
+                     f"${current_so_metrics['pending_approval']:,.0f}", 
+                     delta=f"${delta_pa:,.0f}")
+        
+        with so_col4:
+            delta_pf_nd = current_so_metrics['pending_fulfillment_no_date'] - previous_so_metrics['pending_fulfillment_no_date']
+            st.metric("Pending Fulfillment (no date)", 
+                     f"${current_so_metrics['pending_fulfillment_no_date']:,.0f}", 
+                     delta=f"${delta_pf_nd:,.0f}")
+        
+        # Row 3: Sales Orders Continued
+        so2_col1, so2_col2, so2_col3, so2_col4 = st.columns(4)
+        
+        with so2_col1:
+            delta_pa_nd = current_so_metrics['pending_approval_no_date'] - previous_so_metrics['pending_approval_no_date']
+            st.metric("Pending Approval (no date)", 
+                     f"${current_so_metrics['pending_approval_no_date']:,.0f}", 
+                     delta=f"${delta_pa_nd:,.0f}")
+        
+        with so2_col2:
+            delta_pa_old = current_so_metrics['pending_approval_old'] - previous_so_metrics['pending_approval_old']
+            st.metric("Pending Approval (>2 weeks)", 
+                     f"${current_so_metrics['pending_approval_old']:,.0f}", 
+                     delta=f"${delta_pa_old:,.0f}")
+        
+        with so2_col3:
+            # Total SO Amount
+            if not sales_orders_df.empty and 'Amount' in sales_orders_df.columns:
+                current_so_total = pd.to_numeric(sales_orders_df['Amount'], errors='coerce').sum()
+            else:
+                current_so_total = 0
+            
+            if not previous['sales_orders'].empty and 'Amount' in previous['sales_orders'].columns:
+                previous_so_total = pd.to_numeric(previous['sales_orders']['Amount'], errors='coerce').sum()
+            else:
+                previous_so_total = 0
+            
+            delta_so_total = current_so_total - previous_so_total
+            st.metric("Total SO Amount", f"${current_so_total:,.0f}", delta=f"${delta_so_total:,.0f}")
+        
+        # Row 4: HubSpot Deals
+        st.markdown("**🎯 HubSpot Deals**")
+        hs_col1, hs_col2, hs_col3, hs_col4 = st.columns(4)
+        
+        with hs_col1:
+            current_deals = len(deals_df) if not deals_df.empty else 0
+            previous_deals = len(previous['deals']) if not previous['deals'].empty else 0
+            delta_deals = current_deals - previous_deals
+            st.metric("Total Deals", current_deals, delta=delta_deals)
+        
+        with hs_col2:
+            current_commit = current_metrics.get('expect_commit', 0)
+            previous_commit = previous_metrics.get('expect_commit', 0)
+            delta_commit = current_commit - previous_commit
+            st.metric("HubSpot Commit", f"${current_commit:,.0f}", delta=f"${delta_commit:,.0f}")
+        
+        with hs_col3:
+            # Calculate HubSpot Expect separately
+            def get_expect_amount(df):
+                if df.empty or 'Status' not in df.columns:
+                    return 0
+                df = df.copy()
+                df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
+                q4_deals = df[df.get('Counts_In_Q4', True) == True]
+                return q4_deals[q4_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
+            
+            current_expect = get_expect_amount(deals_df)
+            previous_expect = get_expect_amount(previous['deals'])
+            delta_expect = current_expect - previous_expect
+            st.metric("HubSpot Expect", f"${current_expect:,.0f}", delta=f"${delta_expect:,.0f}")
+        
+        with hs_col4:
+            # Calculate HubSpot Best Case
+            def get_best_case_amount(df):
+                if df.empty or 'Status' not in df.columns:
+                    return 0
+                df = df.copy()
+                df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
+                q4_deals = df[df.get('Counts_In_Q4', True) == True]
+                return q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
+            
+            current_bc = get_best_case_amount(deals_df)
+            previous_bc = get_best_case_amount(previous['deals'])
+            delta_bc = current_bc - previous_bc
+            st.metric("HubSpot Best Case", f"${current_bc:,.0f}", delta=f"${delta_bc:,.0f}")
+        
+        # Row 5: HubSpot Continued + Q1 Spillover
+        hs2_col1, hs2_col2, hs2_col3, hs2_col4 = st.columns(4)
+        
+        with hs2_col1:
+            # Calculate HubSpot Opportunity
+            def get_opportunity_amount(df):
+                if df.empty or 'Status' not in df.columns:
+                    return 0
+                df = df.copy()
+                df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
+                q4_deals = df[df.get('Counts_In_Q4', True) == True]
+                return q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
+            
+            current_opp = get_opportunity_amount(deals_df)
+            previous_opp = get_opportunity_amount(previous['deals'])
+            delta_opp = current_opp - previous_opp
+            st.metric("HubSpot Opportunity", f"${current_opp:,.0f}", delta=f"${delta_opp:,.0f}")
+        
+        with hs2_col2:
+            current_q1 = current_metrics.get('q1_spillover_expect_commit', 0)
+            previous_q1 = previous_metrics.get('q1_spillover_expect_commit', 0)
+            delta_q1 = current_q1 - previous_q1
+            st.metric("Q1 Spillover - Expect/Commit", f"${current_q1:,.0f}", delta=f"${delta_q1:,.0f}")
         
         # Rep-level changes
         st.markdown("#### 👤 Rep-Level Changes")
