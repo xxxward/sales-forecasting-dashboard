@@ -1291,8 +1291,60 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     if any(selected_sources.values()):
         st.markdown("---")
         
-        # Collect data for export
+        # Collect data for export with summary
+        export_summary = []
         export_data = []
+        
+        # Build summary section
+        export_summary.append({
+            'Category': '=== FORECAST SUMMARY ===',
+            'Amount': ''
+        })
+        export_summary.append({
+            'Category': 'Quota',
+            'Amount': f"${quota:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Custom Forecast',
+            'Amount': f"${custom_forecast:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Gap to Quota',
+            'Amount': f"${gap_to_quota:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Attainment %',
+            'Amount': f"{attainment_pct:.1f}%"
+        })
+        export_summary.append({
+            'Category': '',
+            'Amount': ''
+        })
+        export_summary.append({
+            'Category': '=== SELECTED COMPONENTS ===',
+            'Amount': ''
+        })
+        
+        # Add each selected component total
+        for source, selected in selected_sources.items():
+            if selected:
+                export_summary.append({
+                    'Category': source,
+                    'Amount': f"${sources[source]:,.0f}"
+                })
+        
+        export_summary.append({
+            'Category': '',
+            'Amount': ''
+        })
+        export_summary.append({
+            'Category': '=== DETAILED LINE ITEMS ===',
+            'Amount': ''
+        })
+        export_summary.append({
+            'Category': '',
+            'Amount': ''
+        })
         
         # Get invoices data
         if selected_sources.get('Invoiced & Shipped', False) and invoices_df is not None:
@@ -1305,7 +1357,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 for _, row in inv_data.iterrows():
                     export_data.append({
                         'Type': 'Invoice',
-                        'Document Number': row.get('Document Number', ''),
+                        'ID': row.get('Document Number', row.get('Invoice Number', '')),
+                        'Name': '',
                         'Customer': row.get('Account Name', row.get('Customer', '')),
                         'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                         'Date': row.get('Transaction Date', ''),
@@ -1327,7 +1380,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
                             export_data.append({
                                 'Type': 'Sales Order - Pending Fulfillment',
-                                'Document Number': row.get('Document Number', ''),
+                                'ID': row.get('Document Number', ''),
+                                'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                                 'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
@@ -1341,7 +1395,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
                             export_data.append({
                                 'Type': 'Sales Order - Pending Approval',
-                                'Document Number': row.get('Document Number', ''),
+                                'ID': row.get('Document Number', ''),
+                                'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                                 'Date': row.get('Customer Promise Date', row.get('Projected Date', '')),
@@ -1358,7 +1413,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     for _, row in pf_no_date.iterrows():
                         export_data.append({
                             'Type': 'Sales Order - Pending Fulfillment (No Date)',
-                            'Document Number': row.get('Document Number', ''),
+                            'ID': row.get('Document Number', ''),
+                            'Name': '',
                             'Customer': row.get('Customer', ''),
                             'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                             'Date': '',
@@ -1375,7 +1431,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     for _, row in pa_no_date.iterrows():
                         export_data.append({
                             'Type': 'Sales Order - Pending Approval (No Date)',
-                            'Document Number': row.get('Document Number', ''),
+                            'ID': row.get('Document Number', ''),
+                            'Name': '',
                             'Customer': row.get('Customer', ''),
                             'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                             'Date': '',
@@ -1392,7 +1449,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         for _, row in old_pa.iterrows():
                             export_data.append({
                                 'Type': 'Sales Order - Old Pending Approval',
-                                'Document Number': row.get('Document Number', ''),
+                                'ID': row.get('Document Number', ''),
+                                'Name': '',
                                 'Customer': row.get('Customer', ''),
                                 'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
                                 'Date': row.get('Order Start Date', ''),
@@ -1421,7 +1479,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         for _, row in status_deals.iterrows():
                             export_data.append({
                                 'Type': f'HubSpot Deal - {status_name}',
-                                'Document Number': row.get('Deal Name', ''),
+                                'ID': row.get('Record ID', ''),
+                                'Name': row.get('Deal Name', ''),
                                 'Customer': row.get('Account Name', ''),
                                 'Amount': row.get('Amount_Numeric', 0),
                                 'Date': row.get('Close Date', ''),
@@ -1437,29 +1496,44 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     for _, row in q1_deals.iterrows():
                         export_data.append({
                             'Type': 'HubSpot Deal - Q1 Spillover',
-                            'Document Number': row.get('Deal Name', ''),
+                            'ID': row.get('Record ID', ''),
+                            'Name': row.get('Deal Name', ''),
                             'Customer': row.get('Account Name', ''),
                             'Amount': row.get('Amount_Numeric', 0),
                             'Date': row.get('Close Date', ''),
                             'Sales Rep': row.get('Deal Owner', '')
                         })
         
-        # Create export dataframe
+        # Create export dataframes
         if export_data:
+            summary_df = pd.DataFrame(export_summary)
             export_df = pd.DataFrame(export_data)
             
-            # Format for display
+            # Format amounts for export
             export_df['Amount'] = export_df['Amount'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "$0")
+            
+            # Combine summary and detail
+            # Add empty rows to separate
+            empty_rows = pd.DataFrame([{'Category': '', 'Amount': ''}] * 2)
+            
+            # Convert export_df to match summary format for concatenation
+            export_df_for_concat = pd.DataFrame({
+                'Category': export_df['Type'] + ' | ' + export_df['ID'].astype(str) + ' | ' + export_df['Name'].astype(str),
+                'Amount': export_df['Amount']
+            })
+            
+            # Actually, let's do this better - two separate sections
+            final_export = summary_df.to_csv(index=False) + '\n' + export_df.to_csv(index=False)
             
             st.download_button(
                 label="📥 Download Your Winning Pipeline",
-                data=export_df.to_csv(index=False),
+                data=final_export,
                 file_name=f"winning_pipeline_{'team' if rep_name is None else rep_name}_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                help="Download your selected forecast components as CSV"
+                help="Download your selected forecast components with summary and details"
             )
             
-            st.caption(f"Export includes {len(export_df)} line items from your selected categories")
+            st.caption(f"Export includes summary + {len(export_df)} line items from your selected categories")
 
 def calculate_team_metrics(deals_df, dashboard_df):
     """Calculate overall team metrics"""
