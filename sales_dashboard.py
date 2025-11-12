@@ -251,6 +251,18 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
         
+        # Clean data: Remove any rows that are duplicate headers
+        # This can happen when Google Apps Script appends data and accidentally includes headers
+        if not df.empty and len(df.columns) > 0:
+            header_row = df.columns.tolist()
+            # Check if any data row exactly matches the header
+            is_header_row = df.apply(lambda row: list(row) == header_row, axis=1)
+            if is_header_row.any():
+                num_dupes = is_header_row.sum()
+                df = df[~is_header_row]
+                # Optional: log this for debugging
+                # st.sidebar.warning(f"Removed {num_dupes} duplicate header row(s) from {sheet_name}")
+        
         return df
         
     except Exception as e:
@@ -581,29 +593,41 @@ def load_all_data():
             dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
             dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
     
-    # Process invoice data
+    # Process invoice data - UPDATED to use column name mapping instead of index
     if not invoices_df.empty:
-        if len(invoices_df.columns) >= 15:
-            # Map additional columns for Shopify identification
-            rename_dict = {
-                invoices_df.columns[0]: 'Invoice Number',
-                invoices_df.columns[1]: 'Status',
-                invoices_df.columns[2]: 'Date',
-                invoices_df.columns[6]: 'Customer',
-                invoices_df.columns[10]: 'Amount',
-                invoices_df.columns[14]: 'Sales Rep'
-            }
+        # Map columns by exact column names from your sheet
+        rename_dict = {}
+        
+        for col in invoices_df.columns:
+            col_str = str(col).strip()
             
-            # Try to find HubSpot Pipeline and CSM columns
-            for idx, col in enumerate(invoices_df.columns):
-                col_str = str(col).lower()
-                if 'hubspot' in col_str and 'pipeline' in col_str:
-                    rename_dict[col] = 'HubSpot_Pipeline'
-                elif col_str == 'csm' or 'csm' in col_str:
-                    rename_dict[col] = 'CSM'
-            
-            invoices_df = invoices_df.rename(columns=rename_dict)
-            
+            if col_str == 'Document Number':
+                rename_dict[col] = 'Invoice Number'
+            elif col_str == 'Status':
+                rename_dict[col] = 'Status'
+            elif col_str == 'Date':
+                rename_dict[col] = 'Date'
+            elif col_str == 'Due Date':
+                rename_dict[col] = 'Due Date'
+            elif col_str == 'Customer':
+                rename_dict[col] = 'Customer'
+            elif col_str == 'Account':
+                rename_dict[col] = 'Account'
+            elif col_str == 'Amount (Transaction Total)':
+                rename_dict[col] = 'Amount'
+            elif col_str == 'Amount Remaining':
+                rename_dict[col] = 'Amount Remaining'
+            elif col_str == 'Sales Rep':
+                rename_dict[col] = 'Sales Rep'
+            elif col_str == 'HubSpot Pipeline':
+                rename_dict[col] = 'HubSpot_Pipeline'
+            elif col_str == 'CSM':
+                rename_dict[col] = 'CSM'
+        
+        invoices_df = invoices_df.rename(columns=rename_dict)
+        
+        # Check if we have required columns
+        if 'Amount' in invoices_df.columns and 'Date' in invoices_df.columns and 'Sales Rep' in invoices_df.columns:
             def clean_numeric(value):
                 if pd.isna(value) or str(value).strip() == '':
                     return 0
@@ -625,13 +649,13 @@ def load_all_data():
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].str.strip()
+            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
                 (invoices_df['Sales Rep'] != '') &
-                (~invoices_df['Sales Rep'].str.lower().isin(['house']))
+                (~invoices_df['Sales Rep'].str.lower().isin(['house', 'nan', 'none']))
             ]
             
             # NEW: Create Shopify ECommerce virtual rep for invoices
@@ -649,30 +673,13 @@ def load_all_data():
             if 'HubSpot_Pipeline' in invoices_df.columns:
                 shopify_invoice_mask |= (invoices_df['HubSpot_Pipeline'] == 'Ecommerce Pipeline')
             if 'CSM' in invoices_df.columns:
-                shopify_invoice_mask |= (invoices_df['CSM'] == 'Shopify ECommerce')
+                shopify_invoice_mask |= (invoices_df['CSM'] == 'Shopify')
             
-            # For Shopify/Ecommerce orders, check if an actual sales rep is mentioned
-            if shopify_invoice_mask.any():
-                shopify_candidates = invoices_df[shopify_invoice_mask].copy()
-                
-                for idx, row in shopify_candidates.iterrows():
-                    # Check if any actual sales rep is mentioned in Sales Rep or CSM fields
-                    sales_rep = str(row.get('Sales Rep', ''))
-                    csm = str(row.get('CSM', '')) if 'CSM' in shopify_candidates.columns else ''
-                    
-                    # Check if one of the 5 actual reps is mentioned
-                    actual_rep_found = None
-                    for rep in actual_sales_reps:
-                        if rep in sales_rep or rep in csm:
-                            actual_rep_found = rep
-                            break
-                    
-                    if actual_rep_found:
-                        # Attribute to the actual sales rep
-                        invoices_df.at[idx, 'Sales Rep'] = actual_rep_found
-                    else:
-                        # Attribute to Shopify ECommerce
-                        invoices_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
+            # Check if sales rep is NOT in actual sales rep list
+            shopify_invoice_mask &= ~invoices_df['Sales Rep'].isin(actual_sales_reps)
+            
+            # Apply the Shopify bucket
+            invoices_df.loc[shopify_invoice_mask, 'Sales Rep'] = 'Shopify ECommerce'
             
             # Calculate total invoices by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
@@ -697,57 +704,64 @@ def load_all_data():
                     }])
                     dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     
-    # Process sales orders data with NEW LOGIC
+    # Process sales orders data - UPDATED to use column name mapping
     if not sales_orders_df.empty:
-        # Map column positions
-        col_names = sales_orders_df.columns.tolist()
-        
+        # Map columns by exact column names from your sheet
         rename_dict = {}
         
-        # NEW: Map Internal Id column (Column A) - CRITICAL for NetSuite links
-        if len(col_names) > 0:
-            col_a_lower = str(col_names[0]).lower()
-            if 'internal' in col_a_lower and 'id' in col_a_lower:
-                rename_dict[col_names[0]] = 'Internal ID'
-        
-        # Find standard columns - only map FIRST occurrence
-        for idx, col in enumerate(col_names):
-            col_lower = str(col).lower()
-            if 'status' in col_lower and 'Status' not in rename_dict.values():
-                rename_dict[col] = 'Status'
-            elif ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
-                rename_dict[col] = 'Amount'
-            elif ('sales rep' in col_lower or 'salesrep' in col_lower) and 'Sales Rep' not in rename_dict.values():
-                rename_dict[col] = 'Sales Rep'
-            elif 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
-                rename_dict[col] = 'Customer'
-            elif ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
+        for col in sales_orders_df.columns:
+            col_str = str(col).strip()
+            
+            # Map by exact column name matching
+            if col_str == 'Internal ID' and 'Internal ID' not in rename_dict.values():
+                # First Internal ID column (Column A)
+                rename_dict[col] = 'Internal ID'
+            elif col_str == 'SO Number':
                 rename_dict[col] = 'Document Number'
-        
-        # Map specific columns by position (0-indexed) - be more careful
-        if len(col_names) > 8 and 'Order Start Date' not in rename_dict.values():
-            rename_dict[col_names[8]] = 'Order Start Date'  # Column I
-        if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
-            rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
-        if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
-            rename_dict[col_names[12]] = 'Projected Date'  # Column M
-        if len(col_names) > 27 and 'Pending Approval Date' not in rename_dict.values():
-            rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
-        
-        # NEW: Map PI || CSM column (Column G based on screenshot)
-        for idx, col in enumerate(col_names):
-            col_str = str(col).lower()
-            if ('pi' in col_str and 'csm' in col_str) or col_str == 'pi || csm':
+            elif col_str == 'Status':
+                rename_dict[col] = 'Status'
+            elif col_str == 'Customer':
+                rename_dict[col] = 'Customer'
+            elif col_str == 'Customer External ID':
+                rename_dict[col] = 'Customer External ID'
+            elif col_str == 'Sales Rep':
+                rename_dict[col] = 'Sales Rep'
+            elif col_str == 'PI || CSM':
                 rename_dict[col] = 'PI_CSM'
-                break
+            elif col_str == 'Amount (Transaction Total)':
+                rename_dict[col] = 'Amount'
+            elif col_str == 'Order Start Date':
+                rename_dict[col] = 'Order Start Date'
+            elif col_str == 'Pending Fulfillment Date':
+                rename_dict[col] = 'Pending Fulfillment Date'
+            elif col_str == 'Actual Ship Date':
+                rename_dict[col] = 'Actual Ship Date'
+            elif col_str == 'Customer Promise Last Date to Ship':
+                rename_dict[col] = 'Customer Promise Date'
+            elif col_str == 'Projected Date':
+                rename_dict[col] = 'Projected Date'
+            elif col_str == 'Pending Approval Date':
+                rename_dict[col] = 'Pending Approval Date'
+            elif col_str == 'Do Not Ship Before':
+                rename_dict[col] = 'Do Not Ship Before'
+            elif col_str == 'Memo':
+                rename_dict[col] = 'Memo'
+            elif col_str == 'Created By':
+                rename_dict[col] = 'Created By'
+            elif col_str == 'Terms':
+                rename_dict[col] = 'Terms'
+            elif col_str == 'Order Type':
+                rename_dict[col] = 'Order Type'
+            elif col_str == 'Quote':
+                rename_dict[col] = 'Quote'
+            elif col_str == 'HubSpot Pipeline':
+                rename_dict[col] = 'HubSpot_Pipeline'
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
-        # CRITICAL: Remove any duplicate columns that may have been created
+        # Remove any duplicate columns (in case Internal ID appears twice)
         if sales_orders_df.columns.duplicated().any():
-            pass  # Debug info removed
-            #st.sidebar.warning(f"⚠️ Removed duplicate columns in Sales Orders: {sales_orders_df.columns[sales_orders_df.columns.duplicated()].tolist()}")
-            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
+            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated(keep='first')]
         
         # Clean numeric values
         def clean_numeric_so(value):
@@ -769,8 +783,16 @@ def load_all_data():
         if 'Status' in sales_orders_df.columns:
             sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
         
-        # Convert date columns
-        date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']
+        # Convert date columns - using your exact column names
+        date_columns = [
+            'Order Start Date', 
+            'Customer Promise Date', 
+            'Projected Date', 
+            'Pending Approval Date',
+            'Pending Fulfillment Date',
+            'Actual Ship Date',
+            'Do Not Ship Before'
+        ]
         for col in date_columns:
             if col in sales_orders_df.columns:
                 sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
@@ -803,45 +825,24 @@ def load_all_data():
                 (sales_orders_df['Amount'] > 0) & 
                 (sales_orders_df['Sales Rep'].notna()) & 
                 (sales_orders_df['Sales Rep'] != '') &
-                (sales_orders_df['Sales Rep'] != 'nan') &
-                (~sales_orders_df['Sales Rep'].str.lower().isin(['house']))
+                (~sales_orders_df['Sales Rep'].str.lower().isin(['house', 'nan', 'none']))
             ]
         
-        # NEW: Create Shopify ECommerce virtual rep for sales orders
-        # Priority: If actual sales rep is mentioned, attribute to them. Otherwise, Shopify bucket.
+        # Create Shopify ECommerce bucket for sales orders
+        actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
+        
+        shopify_so_mask = pd.Series([False] * len(sales_orders_df), index=sales_orders_df.index)
+        
+        if 'HubSpot_Pipeline' in sales_orders_df.columns:
+            sales_orders_df['HubSpot_Pipeline'] = sales_orders_df['HubSpot_Pipeline'].astype(str).str.strip()
+            shopify_so_mask |= (sales_orders_df['HubSpot_Pipeline'] == 'Ecommerce Pipeline')
+        
         if 'PI_CSM' in sales_orders_df.columns:
             sales_orders_df['PI_CSM'] = sales_orders_df['PI_CSM'].astype(str).str.strip()
-            
-            actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
-            
-            # Identify potential Shopify orders
-            shopify_mask = (
-                (sales_orders_df['Sales Rep'] == 'Shopify ECommerce') | 
-                (sales_orders_df['PI_CSM'] == 'Shopify ECommerce')
-            )
-            
-            # For Shopify orders, check if an actual sales rep is mentioned
-            if shopify_mask.any():
-                shopify_candidates = sales_orders_df[shopify_mask].copy()
-                
-                for idx, row in shopify_candidates.iterrows():
-                    # Check if any actual sales rep is mentioned in Sales Rep or PI_CSM fields
-                    sales_rep = str(row.get('Sales Rep', ''))
-                    pi_csm = str(row.get('PI_CSM', ''))
-                    
-                    # Check if one of the 5 actual reps is mentioned
-                    actual_rep_found = None
-                    for rep in actual_sales_reps:
-                        if rep in sales_rep or rep in pi_csm:
-                            actual_rep_found = rep
-                            break
-                    
-                    if actual_rep_found:
-                        # Attribute to the actual sales rep
-                        sales_orders_df.at[idx, 'Sales Rep'] = actual_rep_found
-                    else:
-                        # Attribute to Shopify ECommerce
-                        sales_orders_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
+            shopify_so_mask |= (sales_orders_df['PI_CSM'] == 'Shopify')
+        
+        shopify_so_mask &= ~sales_orders_df['Sales Rep'].isin(actual_sales_reps)
+        sales_orders_df.loc[shopify_so_mask, 'Sales Rep'] = 'Shopify ECommerce'
                 
                 # Ensure Shopify ECommerce exists in dashboard_df only if it has attributed orders
                 shopify_order_count = (sales_orders_df['Sales Rep'] == 'Shopify ECommerce').sum()
