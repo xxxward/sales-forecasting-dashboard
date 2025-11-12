@@ -17,7 +17,12 @@ import time
 import base64
 import numpy as np
 import claude_insights
-import commission_calculator
+# Optional: Commission calculator module (if available)
+try:
+    import commission_calculator
+    COMMISSION_AVAILABLE = True
+except ImportError:
+    COMMISSION_AVAILABLE = False
 
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
