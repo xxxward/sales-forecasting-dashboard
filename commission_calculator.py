@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import hashlib
+import re
 
 # ==========================================
 # PASSWORD CONFIGURATION (Xander Only)
@@ -36,6 +37,29 @@ BRAD_OVERRIDE_RATE = 0.01
 
 # Focus months for commission calculation
 COMMISSION_MONTHS = ['2025-09', '2025-10']  # September and October 2025
+
+# ==========================================
+# EXPECTED COMMISSION VALUES (For Reconciliation)
+# ==========================================
+
+EXPECTED_COMMISSIONS = {
+    "Brad Sherman": {
+        "2025-09": {
+            "acquisition_total": 124022.00,
+            "acquisition_commission_7pct": 8681.53,
+            "lance_override_base": 19093.00,
+            "lance_override_1pct": 190.93,
+            "total_commission": 8872.45,
+            "sales_orders": [
+                "SO13290", "SO13087", "SO13194", "SO13097", "SO13105",
+                "SO13259", "SO13241", "SO13137", "SO13094", "SO12943",
+                "SO13109", "SO13057", "SO13006", "SO12445", "SO13041",
+                "SO13231", "SO13147"
+            ]
+        }
+    },
+    # Add more reps and months as you get the expected values
+}
 
 # ==========================================
 # EXCLUSION RULES
@@ -125,6 +149,20 @@ def calculate_payout_date(invoice_month_str):
         return payout_date
     except:
         return None
+
+def extract_so_number(created_from):
+    """Extract SO number from 'Sales Order #SO12345' format"""
+    if pd.isna(created_from):
+        return None
+    
+    created_from = str(created_from)
+    
+    # Look for SO followed by numbers
+    match = re.search(r'SO(\d+)', created_from)
+    if match:
+        return f"SO{match.group(1)}"
+    
+    return None
 
 def process_commission_data_fast(df):
     """
@@ -353,6 +391,18 @@ def display_commission_dashboard(invoice_df):
     
     st.markdown("---")
     
+    # Add tabs for Dashboard vs Reconciliation
+    tab1, tab2 = st.tabs(["📊 Commission Dashboard", "🔍 Reconciliation Tool"])
+    
+    with tab1:
+        display_commission_calculations(invoice_df)
+    
+    with tab2:
+        display_reconciliation_tool(invoice_df)
+
+def display_commission_calculations(invoice_df):
+    """Display the main commission calculations"""
+    
     # Process commissions
     with st.spinner("Calculating commissions..."):
         commission_df = process_commission_data_fast(invoice_df)
@@ -474,6 +524,212 @@ def display_commission_dashboard(invoice_df):
         label="📥 Download Filtered Data (CSV)",
         data=csv,
         file_name=f"commission_data_{selected_rep}_{selected_month}_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv"
+    )
+
+def display_reconciliation_tool(invoice_df):
+    """Reconciliation tool to compare expected vs calculated commissions"""
+    st.markdown("### 🔍 Commission Reconciliation Tool")
+    st.caption("Compare your boss's expected values against calculated commissions")
+    
+    # Select rep and month
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        available_reps = list(EXPECTED_COMMISSIONS.keys())
+        if not available_reps:
+            st.warning("No expected commission data loaded yet. Add values to EXPECTED_COMMISSIONS in the code.")
+            return
+        selected_rep = st.selectbox("Select Rep:", available_reps, key="recon_rep")
+    
+    with col2:
+        if selected_rep in EXPECTED_COMMISSIONS:
+            available_months = list(EXPECTED_COMMISSIONS[selected_rep].keys())
+            selected_month = st.selectbox("Select Month:", available_months, key="recon_month")
+        else:
+            return
+    
+    if not selected_rep or not selected_month:
+        return
+    
+    expected_data = EXPECTED_COMMISSIONS[selected_rep][selected_month]
+    
+    st.markdown("---")
+    st.markdown(f"### Reconciling: {selected_rep} - {selected_month}")
+    
+    # Prepare data
+    df = invoice_df.copy()
+    df.columns = df.columns.str.replace('﻿', '')
+    
+    # Parse dates and extract SO numbers
+    df['Date Parsed'] = pd.to_datetime(df['Date'], errors='coerce')
+    df['Invoice Month'] = df['Date Parsed'].apply(
+        lambda x: x.strftime('%Y-%m') if not pd.isna(x) else None
+    )
+    df['SO Number'] = df['Created From'].apply(extract_so_number)
+    
+    # Filter to this rep and month
+    rep_data = df[(df['Sales Rep'] == selected_rep) & (df['Invoice Month'] == selected_month)].copy()
+    
+    st.info(f"Found {len(rep_data):,} total invoice lines")
+    
+    # Filter to paid only
+    rep_data['Amount Remaining Numeric'] = pd.to_numeric(rep_data.get('Amount Remaining', 0), errors='coerce').fillna(0)
+    paid_data = rep_data[rep_data['Amount Remaining Numeric'] == 0].copy()
+    st.caption(f"Paid invoices: {len(paid_data):,} lines")
+    
+    # Exclude shipping/tax
+    paid_data['Item Upper'] = paid_data['Item'].str.upper()
+    excluded_keywords = ['SHIPPING', 'UPS', 'FEDEX', 'AVATAX', 'TAX', 'CONVENIENCE FEE']
+    paid_data['Is Excluded'] = paid_data['Item Upper'].apply(
+        lambda x: any(kw in str(x) for kw in excluded_keywords) if not pd.isna(x) else False
+    )
+    commissionable = paid_data[~paid_data['Is Excluded']].copy()
+    st.caption(f"Commissionable lines: {len(commissionable):,}")
+    
+    # Calculate amounts
+    commissionable['Amount Numeric'] = pd.to_numeric(commissionable['Amount'], errors='coerce').fillna(0)
+    
+    # Compare SOs
+    st.markdown("#### 📦 Sales Order Comparison")
+    
+    our_sos = set(commissionable['SO Number'].dropna().unique())
+    expected_sos = set(expected_data.get('sales_orders', []))
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Expected SOs", len(expected_sos))
+        with st.expander("View List"):
+            for so in sorted(expected_sos):
+                st.text(so)
+    
+    with col2:
+        st.metric("Found SOs", len(our_sos))
+        with st.expander("View List"):
+            for so in sorted(our_sos):
+                st.text(so)
+    
+    with col3:
+        missing_sos = expected_sos - our_sos
+        extra_sos = our_sos - expected_sos
+        matched_sos = expected_sos & our_sos
+        
+        st.metric("Matched", len(matched_sos))
+        
+        if missing_sos:
+            with st.expander(f"❌ Missing ({len(missing_sos)})"):
+                for so in sorted(missing_sos):
+                    st.text(so)
+        
+        if extra_sos:
+            with st.expander(f"➕ Extra ({len(extra_sos)})"):
+                for so in sorted(extra_sos):
+                    st.text(so)
+    
+    # Compare amounts
+    st.markdown("---")
+    st.markdown("#### 💰 Amount Comparison")
+    
+    calculated_total = commissionable['Amount Numeric'].sum()
+    expected_total = expected_data.get('acquisition_total', 0)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Expected Total", f"${expected_total:,.2f}")
+    
+    with col2:
+        st.metric("Calculated Total", f"${calculated_total:,.2f}")
+    
+    with col3:
+        diff = calculated_total - expected_total
+        diff_pct = (diff / expected_total * 100) if expected_total > 0 else 0
+        st.metric("Difference", f"${diff:,.2f}", delta=f"{diff_pct:+.2f}%")
+    
+    # Commission comparison
+    st.markdown("---")
+    st.markdown("#### 🧮 Commission Comparison")
+    
+    calc_comm = calculated_total * 0.07
+    exp_comm = expected_data.get('acquisition_commission_7pct', 0)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Expected Commission", f"${exp_comm:,.2f}")
+    
+    with col2:
+        st.metric("Calculated Commission", f"${calc_comm:,.2f}")
+    
+    with col3:
+        comm_diff = calc_comm - exp_comm
+        st.metric("Difference", f"${comm_diff:,.2f}", delta=f"${comm_diff:,.2f}")
+    
+    # Investigate missing SOs
+    if missing_sos:
+        st.markdown("---")
+        st.markdown("#### 🔎 Investigating Missing Sales Orders")
+        
+        for so in sorted(missing_sos):
+            st.markdown(f"**{so}**")
+            
+            # Check if SO exists anywhere
+            so_data = df[df['SO Number'] == so]
+            
+            if so_data.empty:
+                st.error(f"❌ Not found in invoice data at all")
+            else:
+                st.warning(f"⚠️ Found but filtered out")
+                
+                # Show why
+                so_rep = so_data['Sales Rep'].iloc[0]
+                so_month = so_data['Invoice Month'].iloc[0]
+                so_amt_remain = pd.to_numeric(so_data['Amount Remaining'].iloc[0], errors='coerce')
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if so_rep != selected_rep:
+                        st.error(f"Rep: {so_rep}")
+                    else:
+                        st.success(f"Rep: {so_rep} ✓")
+                
+                with col2:
+                    if so_month != selected_month:
+                        st.error(f"Month: {so_month}")
+                    else:
+                        st.success(f"Month: {so_month} ✓")
+                
+                with col3:
+                    if pd.isna(so_amt_remain):
+                        so_amt_remain = 0
+                    if so_amt_remain > 0:
+                        st.error(f"Unpaid: ${so_amt_remain:,.2f}")
+                    else:
+                        st.success("Paid ✓")
+                
+                with st.expander(f"View {so} details"):
+                    display_cols = ['Document Number', 'Date', 'Item', 'Amount', 'Amount Remaining', 'Status']
+                    display_cols = [c for c in display_cols if c in so_data.columns]
+                    st.dataframe(so_data[display_cols], use_container_width=True)
+    
+    # Download reconciliation report
+    st.markdown("---")
+    
+    export_df = commissionable[[
+        'Document Number', 'Date', 'SO Number', 'Sales Rep', 'Customer',
+        'Item', 'Amount Numeric', 'Amount Remaining', 'Status'
+    ]].copy()
+    
+    export_df['In Expected List'] = export_df['SO Number'].isin(expected_sos)
+    export_df.columns = ['Invoice', 'Date', 'SO#', 'Rep', 'Customer', 'Item', 'Amount', 'Amt Remaining', 'Status', 'Expected?']
+    
+    csv = export_df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Reconciliation Report (CSV)",
+        data=csv,
+        file_name=f"reconciliation_{selected_rep.replace(' ', '_')}_{selected_month}.csv",
         mime="text/csv"
     )
 
