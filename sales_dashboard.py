@@ -1146,11 +1146,10 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
         return
     
     # Calculate totals
+    total_invoiced = 0
     if 'Amount' in filtered_invoices.columns:
         filtered_invoices['Amount_Numeric'] = pd.to_numeric(filtered_invoices['Amount'], errors='coerce')
         total_invoiced = filtered_invoices['Amount_Numeric'].sum()
-    else:
-        total_invoiced = 0
     
     # Display summary metrics
     col1, col2, col3 = st.columns(3)
@@ -1162,7 +1161,7 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
         st.metric("Total Amount", f"${total_invoiced:,.0f}")
     
     with col3:
-        if len(filtered_invoices) > 0:
+        if len(filtered_invoices) > 0 and total_invoiced > 0:
             avg_invoice = total_invoiced / len(filtered_invoices)
             st.metric("Avg Invoice", f"${avg_invoice:,.0f}")
     
@@ -1181,15 +1180,12 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
         if display_columns:
             display_df = filtered_invoices[display_columns].copy()
             
-            # Format currency
-            if 'Amount' in display_df.columns:
-                display_df['Amount'] = display_df['Amount_Numeric'].apply(
+            # Format currency - only if we have both Amount and Amount_Numeric
+            if 'Amount' in display_df.columns and 'Amount_Numeric' in filtered_invoices.columns:
+                # Use the index to align properly
+                display_df['Amount'] = filtered_invoices.loc[display_df.index, 'Amount_Numeric'].apply(
                     lambda x: f"${x:,.0f}" if not pd.isna(x) else ""
                 )
-            
-            # Remove the numeric helper column if it exists
-            if 'Amount_Numeric' in display_df.columns:
-                display_df = display_df.drop('Amount_Numeric', axis=1)
             
             st.dataframe(display_df, use_container_width=True, hide_index=True)
         else:
