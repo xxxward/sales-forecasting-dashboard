@@ -1,9 +1,7 @@
 """
 Commission Calculator Module for Calyx Containers
-Handles commission calculations based on uploaded line-level invoice data from NetSuite
-Processes invoices by month with 4-week payout delay
-Password-protected access for Xander only
-Supports large XLS/XLSX files (100MB+)
+Simplified version - processes stored invoice data for commission calculations
+Focuses on Sep/Oct 2025 for Dave, Jake, Brad, and Lance only
 """
 
 import streamlit as st
@@ -12,11 +10,6 @@ import numpy as np
 from datetime import datetime, timedelta
 import hashlib
 
-# Note: Excel file support requires:
-# - openpyxl>=3.0.0 (for .xlsx files)
-# - xlrd>=2.0.0 (for old .xls files)
-# Make sure both are in your requirements.txt
-
 # ==========================================
 # PASSWORD CONFIGURATION (Xander Only)
 # ==========================================
@@ -24,39 +17,25 @@ ADMIN_EMAIL = "xward@calyxcontainers.com"
 ADMIN_PASSWORD_HASH = hashlib.sha256("Secret2025!".encode()).hexdigest()
 
 # ==========================================
-# COMMISSION RATE CONFIGURATION
+# COMMISSION CONFIGURATION - 4 REPS ONLY
 # ==========================================
 
-COMMISSION_RATES = {
-    ("Dave Borkowski", "Growth Pipeline (Upsell/Cross-sell)"): 0.05,
-    ("Jake Lynch", "Growth Pipeline (Upsell/Cross-sell)"): 0.07,
-    ("Dave Borkowski", "Retention (Existing Product)"): 0.005,
-    ("Jake Lynch", "Retention (Existing Product)"): 0.005,
-    ("Brad Sherman", "Acquisition (New Customer)"): 0.07,
-    ("Lance Mitton", "Acquisition (New Customer)"): 0.07,
-    ("Alex Gonzalez", "Acquisition (New Customer)"): 0.07,
+# Only these 4 reps get commissions
+COMMISSION_REPS = ["Dave Borkowski", "Jake Lynch", "Brad Sherman", "Lance Mitton"]
+
+# Commission rates by rep (simplified - no pipeline needed)
+REP_COMMISSION_RATES = {
+    "Dave Borkowski": 0.05,      # 5% flat rate
+    "Jake Lynch": 0.07,          # 7% flat rate
+    "Brad Sherman": 0.07,        # 7% flat rate
+    "Lance Mitton": 0.07,        # 7% flat rate
 }
 
-# Brad's override rate on Lance's deals
+# Brad's 1% override on Lance's deals
 BRAD_OVERRIDE_RATE = 0.01
-BRAD_OVERRIDE_REPS = ["Lance Mitton"]
 
-# ==========================================
-# CUSTOMER/PIPELINE MAPPING
-# ==========================================
-# Since NetSuite invoice export doesn't include HubSpot pipeline,
-# we'll need to infer it or add it manually
-# For now, we'll use a simple rule: if we have Created From (SO), it might be tracked
-# Otherwise, we'll need to add pipeline data or use a default
-
-def get_pipeline_for_customer(customer_name, created_from):
-    """
-    Determine pipeline based on customer and order info
-    This is a placeholder - you may need to enhance this logic
-    """
-    # Default: assume Retention for existing customers
-    # You can build a mapping here or pull from another source
-    return "Retention (Existing Product)"
+# Focus months for commission calculation
+COMMISSION_MONTHS = ['2025-09', '2025-10']  # September and October 2025
 
 # ==========================================
 # EXCLUSION RULES
@@ -64,8 +43,11 @@ def get_pipeline_for_customer(customer_name, created_from):
 
 EXCLUDED_ITEMS = [
     "Convenience Fee 3.5%",
-    "Shipping",
-    "Tax",
+    "SHIPPING",
+    "UPS",
+    "FEDEX",
+    "AVATAX",
+    "TAX",
 ]
 
 # ==========================================
@@ -79,278 +61,199 @@ def verify_admin(email, password):
     password_hash = hashlib.sha256(password.encode()).hexdigest()
     return password_hash == ADMIN_PASSWORD_HASH
 
+def load_invoice_data():
+    """
+    Load invoice line data from the stored CSV file
+    This should be a file you upload once and store
+    """
+    try:
+        # Try to load from session state first (if already uploaded this session)
+        if 'invoice_data' in st.session_state:
+            return st.session_state.invoice_data
+        
+        # Otherwise, need to upload
+        return None
+    except:
+        return None
+
+def should_include_line(row):
+    """
+    Quick check if this line should be included in commission calculation
+    Returns True/False
+    """
+    # Check rep
+    sales_rep = str(row.get('Sales Rep', '')).strip()
+    if sales_rep not in COMMISSION_REPS:
+        return False
+    
+    # Check if paid (Amount Remaining = 0)
+    amount_remaining = pd.to_numeric(row.get('Amount Remaining', 0), errors='coerce')
+    if pd.isna(amount_remaining):
+        amount_remaining = 0
+    if amount_remaining != 0:
+        return False
+    
+    # Check item for exclusions
+    item_name = str(row.get('Item', '')).strip().upper()
+    for excluded in EXCLUDED_ITEMS:
+        if excluded.upper() in item_name:
+            return False
+    
+    return True
+
 def parse_invoice_month(date_value):
-    """
-    Parse date and return the invoice month
-    Uses the Date column from CSV
-    """
+    """Parse date and return YYYY-MM format"""
     if pd.isna(date_value):
         return None
-    
     try:
-        if isinstance(date_value, str):
-            # Handle NetSuite date format: "11/12/25" = Nov 12, 2025
-            date_obj = pd.to_datetime(date_value, errors='coerce')
-        else:
-            date_obj = pd.to_datetime(date_value)
-        
+        date_obj = pd.to_datetime(date_value, errors='coerce')
         if pd.isna(date_obj):
             return None
-        
-        return date_obj.strftime('%Y-%m')  # Return as YYYY-MM
+        return date_obj.strftime('%Y-%m')
     except:
         return None
 
 def calculate_payout_date(invoice_month_str):
-    """
-    Calculate payout date: 4 weeks after month close
-    invoice_month_str format: 'YYYY-MM'
-    """
+    """Calculate payout date: 4 weeks after month close"""
     try:
         year, month = map(int, invoice_month_str.split('-'))
-        # Last day of invoice month
         if month == 12:
             month_end = datetime(year, 12, 31)
         else:
             month_end = datetime(year, month + 1, 1) - timedelta(days=1)
-        
-        # Add 4 weeks
         payout_date = month_end + timedelta(weeks=4)
         return payout_date
     except:
         return None
 
-def calculate_subtotal(row):
+def process_commission_data_fast(df):
     """
-    Calculate clean subtotal for commission calculation
-    Excludes shipping, tax, and convenience fees
-    
-    Uses actual CSV columns:
-    - Amount (line item amount)
-    - Amount (Shipping)
-    - Item (to identify exclusions)
+    Fast processing - filter and calculate in one pass
+    Only processes Sep/Oct 2025 for 4 reps
     """
-    # Get item name for exclusion checks
-    item_name = str(row.get('Item', '')).strip() if not pd.isna(row.get('Item', '')) else ''
-    
-    # Skip excluded items
-    if any(excluded in item_name for excluded in EXCLUDED_ITEMS):
-        return 0
-    
-    # Skip shipping lines (identified by item name)
-    if 'UPS' in item_name.upper() or 'FEDEX' in item_name.upper() or 'SHIPPING' in item_name.upper():
-        return 0
-    
-    # Skip tax lines
-    if 'AVATAX' in item_name.upper() or 'TAX' in item_name.upper():
-        return 0
-    
-    # Get amount (this is the line item amount)
-    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-    
-    if pd.isna(amount):
-        amount = 0
-    
-    # For NetSuite invoice exports, Amount already excludes shipping/tax at line level
-    # Just return the amount for non-excluded items
-    return max(0, amount)
-
-def get_payment_status(row):
-    """
-    Determine payment status of invoice
-    
-    Uses actual CSV columns:
-    - Status: "Open", "Paid In Full", etc.
-    - Amount Remaining: How much is still owed
-    - Amount (Transaction Total): Total invoice amount
-    """
-    status = str(row.get('Status', '')).strip() if not pd.isna(row.get('Status', '')) else ''
-    amount_remaining = pd.to_numeric(row.get('Amount Remaining', 0), errors='coerce')
-    
-    if pd.isna(amount_remaining):
-        amount_remaining = 0
-    
-    # Check status field
-    status_lower = status.lower()
-    
-    # If status explicitly says paid in full
-    if 'paid in full' in status_lower or 'fully paid' in status_lower:
-        return "Fully Paid"
-    
-    # If there's no amount remaining, it's fully paid
-    if amount_remaining == 0:
-        return "Fully Paid"
-    
-    # If status is "Open" and amount remaining > 0, check if partial payment made
-    # For line-level data, we'll consider "Open" with 0 remaining as paid
-    if status_lower == 'open':
-        if amount_remaining == 0:
-            return "Fully Paid"
-        # Note: We can't easily determine partial payment at line level
-        # Treat all "Open" invoices with 0 remaining as paid for commission purposes
-        return "Partially Paid"
-    
-    # Default: if there's an amount remaining, treat as partially paid
-    if amount_remaining > 0:
-        return "No Payment"
-    
-    return "Fully Paid"
-
-def resolve_sales_rep(row):
-    """Get the sales rep for commission calculation"""
-    sales_rep = row.get('Sales Rep', '')
-    
-    # Handle any null/empty values
-    if pd.isna(sales_rep) or sales_rep == '':
-        return 'Unknown'
-    
-    return str(sales_rep).strip()
-
-def get_commission_rate(sales_rep, pipeline):
-    """Get commission rate for a given rep and pipeline combination"""
-    # Normalize pipeline name
-    if pd.isna(pipeline):
-        pipeline = ''
-    
-    # Look up in commission rates table
-    rate = COMMISSION_RATES.get((sales_rep, pipeline), 0)
-    return rate
-
-def calculate_brad_override(row, subtotal):
-    """Calculate Brad's 1% override on Lance Mitton's deals"""
-    sales_rep = row.get('Final Sales Rep', '')
-    
-    if sales_rep in BRAD_OVERRIDE_REPS:
-        return subtotal * BRAD_OVERRIDE_RATE
-    
-    return 0
-
-def process_commission_data(invoices_df):
-    """
-    Main function to process commission data from uploaded file
-    Optimized for large datasets (100k+ rows)
-    Returns a DataFrame with calculated commissions
-    
-    Works with actual NetSuite CSV columns:
-    - Document Number, Status, Date, Sales Rep, Customer, Item, Amount, Amount Remaining
-    """
-    if invoices_df.empty:
+    if df.empty:
         return pd.DataFrame()
     
-    # Make a copy to avoid modifying original
-    df = invoices_df.copy()
-    
-    # Clean up BOM character if present
+    # Clean BOM
     df.columns = df.columns.str.replace('﻿', '')
     
-    total_rows = len(df)
-    st.info(f"Processing {total_rows:,} invoice line items...")
+    st.info(f"📊 Starting with {len(df):,} total invoice lines")
     
-    # Create a progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # Step 1: Quick filter to 4 reps only
+    df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
+    st.caption(f"✓ Filtered to 4 commission reps: {len(df):,} lines")
     
-    # Step 1: Resolve sales rep (already in Sales Rep column)
-    status_text.text("Step 1/8: Resolving sales reps...")
-    df['Final Sales Rep'] = df.apply(resolve_sales_rep, axis=1)
-    progress_bar.progress(12)
-    
-    # Step 2: Calculate subtotal (excluding fees, shipping, tax)
-    status_text.text("Step 2/8: Calculating subtotals...")
-    df['Subtotal'] = df.apply(calculate_subtotal, axis=1)
-    progress_bar.progress(25)
-    
-    # Step 3: Get payment status
-    status_text.text("Step 3/8: Checking payment status...")
-    df['Payment Status'] = df.apply(get_payment_status, axis=1)
-    progress_bar.progress(37)
-    
-    # Step 4: Filter to only paid/partially paid invoices (Amount Remaining = 0)
-    status_text.text("Step 4/8: Filtering to paid invoices...")
-    initial_count = len(df)
-    
-    # For commission purposes, only count lines where Amount Remaining = 0
+    # Step 2: Only paid invoices (Amount Remaining = 0)
     df['Amount Remaining Numeric'] = pd.to_numeric(df.get('Amount Remaining', 0), errors='coerce').fillna(0)
     df = df[df['Amount Remaining Numeric'] == 0].copy()
+    st.caption(f"✓ Filtered to paid invoices: {len(df):,} lines")
     
-    filtered_count = len(df)
-    st.caption(f"Filtered from {initial_count:,} to {filtered_count:,} paid line items (Amount Remaining = $0)")
-    progress_bar.progress(50)
+    # Step 3: Parse dates and filter to Sep/Oct 2025
+    df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
+    df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
+    st.caption(f"✓ Filtered to Sep/Oct 2025: {len(df):,} lines")
     
-    if filtered_count == 0:
-        st.warning("⚠️ No paid invoices found. All invoices show Amount Remaining > 0")
-        st.info("This data might be from unpaid invoices. Commission is typically only paid on invoices with Amount Remaining = $0")
-        progress_bar.empty()
-        status_text.empty()
-        return pd.DataFrame()
+    # Step 4: Exclude shipping, tax, fees
+    df['Item Upper'] = df['Item'].str.upper()
     
-    # Step 5: Parse invoice month and calculate payout date
-    status_text.text("Step 5/8: Calculating invoice months and payout dates...")
-    df['Invoice Month'] = df.apply(lambda row: parse_invoice_month(row.get('Date', '')), axis=1)
-    df['Payout Date'] = df['Invoice Month'].apply(lambda x: calculate_payout_date(x) if x else None)
-    progress_bar.progress(62)
+    def is_excluded(item_upper):
+        if pd.isna(item_upper):
+            return False
+        return any(excl in item_upper for excl in EXCLUDED_ITEMS)
     
-    # Step 6: Get commission rate (need pipeline - use default or lookup)
-    status_text.text("Step 6/8: Looking up commission rates...")
-    df['Pipeline'] = df.apply(
-        lambda row: get_pipeline_for_customer(row.get('Customer', ''), row.get('Created From', '')),
-        axis=1
-    )
-    df['Commission Rate'] = df.apply(
-        lambda row: get_commission_rate(row['Final Sales Rep'], row['Pipeline']), 
-        axis=1
-    )
-    progress_bar.progress(75)
+    df['Is Excluded'] = df['Item Upper'].apply(is_excluded)
+    df = df[~df['Is Excluded']].copy()
+    st.caption(f"✓ Excluded shipping/tax/fees: {len(df):,} commissionable lines")
     
-    # Step 7: Calculate commission amount
-    status_text.text("Step 7/8: Calculating commission amounts...")
+    if df.empty:
+        return df
+    
+    # Step 5: Calculate commissions
+    df['Amount Numeric'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+    df['Subtotal'] = df['Amount Numeric']
+    
+    # Get commission rate per rep
+    df['Commission Rate'] = df['Sales Rep'].map(REP_COMMISSION_RATES)
     df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
-    progress_bar.progress(87)
     
-    # Step 8: Calculate Brad's override
-    status_text.text("Step 8/8: Calculating Brad's override...")
-    df['Brad Override'] = df.apply(lambda row: calculate_brad_override(row, row['Subtotal']), axis=1)
-    progress_bar.progress(100)
+    # Brad's override on Lance's deals
+    df['Brad Override'] = 0.0
+    lance_mask = df['Sales Rep'] == 'Lance Mitton'
+    df.loc[lance_mask, 'Brad Override'] = df.loc[lance_mask, 'Subtotal'] * BRAD_OVERRIDE_RATE
     
-    # Clean up progress indicators
-    status_text.text("✅ Processing complete!")
-    progress_bar.empty()
-    status_text.empty()
+    # Add payout dates
+    df['Payout Date'] = df['Invoice Month'].apply(calculate_payout_date)
+    
+    # Clean up temp columns
+    df = df.drop(columns=['Amount Remaining Numeric', 'Item Upper', 'Is Excluded', 'Amount Numeric'], errors='ignore')
+    
+    st.success(f"✅ Commission calculated on {len(df):,} line items!")
     
     return df
 
+# ==========================================
+# SUMMARY FUNCTIONS
+# ==========================================
+
 def calculate_summary_by_month(commission_df):
-    """Calculate summary statistics by invoice month"""
-    if commission_df.empty or 'Invoice Month' not in commission_df.columns:
+    """Summary by month"""
+    if commission_df.empty:
         return pd.DataFrame()
     
     summary = commission_df.groupby('Invoice Month').agg({
-        'Document Number': 'count',
+        'Document Number': 'nunique',
         'Subtotal': 'sum',
         'Commission Amount': 'sum',
         'Brad Override': 'sum'
     }).reset_index()
     
-    summary.columns = ['Invoice Month', 'Transaction Count', 'Total Sales', 'Total Commission', 'Brad Override']
-    
-    # Add payout date
+    summary.columns = ['Invoice Month', 'Unique Invoices', 'Total Sales', 'Total Commission', 'Brad Override']
     summary['Payout Date'] = summary['Invoice Month'].apply(calculate_payout_date)
     
     return summary
 
 def calculate_summary_by_rep(commission_df):
-    """Calculate summary statistics by rep"""
+    """Summary by rep"""
     if commission_df.empty:
         return pd.DataFrame()
     
-    summary = commission_df.groupby('Final Sales Rep').agg({
-        'Document Number': 'count',
+    summary = commission_df.groupby('Sales Rep').agg({
+        'Document Number': 'nunique',
         'Subtotal': 'sum',
         'Commission Amount': 'sum',
         'Brad Override': 'sum'
     }).reset_index()
     
-    summary.columns = ['Sales Rep', 'Transaction Count', 'Total Sales', 'Total Commission', 'Brad Override']
+    summary.columns = ['Sales Rep', 'Unique Invoices', 'Total Sales', 'Total Commission', 'Brad Override']
+    
+    # Add Brad's total override earnings
+    brad_total_override = commission_df['Brad Override'].sum()
+    if brad_total_override > 0:
+        # Add a row for Brad's override
+        brad_override_row = pd.DataFrame({
+            'Sales Rep': ['Brad Sherman (Override)'],
+            'Unique Invoices': [0],
+            'Total Sales': [0],
+            'Total Commission': [0],
+            'Brad Override': [brad_total_override]
+        })
+        summary = pd.concat([summary, brad_override_row], ignore_index=True)
+    
+    return summary
+
+def calculate_rep_month_summary(commission_df):
+    """Summary by rep and month"""
+    if commission_df.empty:
+        return pd.DataFrame()
+    
+    summary = commission_df.groupby(['Sales Rep', 'Invoice Month']).agg({
+        'Document Number': 'nunique',
+        'Subtotal': 'sum',
+        'Commission Amount': 'sum',
+        'Brad Override': 'sum'
+    }).reset_index()
+    
+    summary.columns = ['Sales Rep', 'Invoice Month', 'Unique Invoices', 'Total Sales', 'Total Commission', 'Brad Override']
     
     return summary
 
@@ -359,7 +262,7 @@ def calculate_summary_by_rep(commission_df):
 # ==========================================
 
 def display_password_gate():
-    """Display password entry form for Xander"""
+    """Display password entry form"""
     st.markdown("""
     <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                  padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px;'>
@@ -382,130 +285,109 @@ def display_password_gate():
                     st.rerun()
                 else:
                     st.error("❌ Invalid credentials")
-    
-    return False
 
-def display_file_uploader():
-    """Display file upload interface for large XLS/XLSX/CSV files"""
-    st.markdown("### 📁 Upload Invoice Data")
-    st.caption("Upload your line-level invoice export from NetSuite (CSV, XLS, or XLSX format)")
-    st.caption("⚠️ Large files (100MB+) may take a few minutes to process")
+def display_data_manager():
+    """Manage the stored invoice data"""
+    st.markdown("### 📁 Invoice Data Management")
+    
+    # Check if data is already loaded
+    if 'invoice_data' in st.session_state and st.session_state.invoice_data is not None:
+        df = st.session_state.invoice_data
+        st.success(f"✅ Invoice data loaded: {len(df):,} total rows")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Upload New Data"):
+                del st.session_state.invoice_data
+                st.rerun()
+        
+        return df
+    
+    # No data loaded - show uploader
+    st.caption("Upload your Invoice Line Level CSV export from NetSuite")
     
     uploaded_file = st.file_uploader(
-        "Choose a file",
-        type=['csv', 'xls', 'xlsx'],
-        key="commission_file_upload"
+        "Choose CSV file",
+        type=['csv'],
+        key="invoice_data_upload"
     )
     
     if uploaded_file is not None:
         try:
-            # Show file info
-            file_size_mb = uploaded_file.size / (1024 * 1024)
-            st.info(f"📦 File size: {file_size_mb:.2f} MB")
+            df = pd.read_csv(uploaded_file, low_memory=False)
+            df.columns = df.columns.str.replace('﻿', '')  # Clean BOM
             
-            # Read the file based on type
-            file_extension = uploaded_file.name.split('.')[-1].lower()
+            st.success(f"✅ Loaded {len(df):,} invoice lines")
             
-            with st.spinner(f"Reading {file_extension.upper()} file... This may take a moment for large files"):
-                if file_extension == 'csv':
-                    df = pd.read_csv(uploaded_file, low_memory=False)
-                elif file_extension == 'xls':
-                    # Old Excel format - use xlrd engine
-                    try:
-                        df = pd.read_excel(uploaded_file, engine='xlrd')
-                    except:
-                        # If xlrd fails, try openpyxl (sometimes .xls is actually .xlsx)
-                        st.warning("Trying alternate Excel reader...")
-                        uploaded_file.seek(0)  # Reset file pointer
-                        df = pd.read_excel(uploaded_file, engine='openpyxl')
-                elif file_extension == 'xlsx':
-                    # New Excel format - use openpyxl engine
-                    df = pd.read_excel(uploaded_file, engine='openpyxl')
-                else:
-                    st.error("Unsupported file format")
-                    return None
+            # Store in session state
+            st.session_state.invoice_data = df
             
-            st.success(f"✅ File loaded successfully: {len(df):,} rows")
+            st.rerun()
             
-            # Show memory usage
-            memory_usage_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
-            st.caption(f"Memory usage: {memory_usage_mb:.2f} MB")
-            
-            # Show column mapping info
-            with st.expander("📋 View Column Names & Data Preview"):
-                st.write("**Detected columns:**", df.columns.tolist())
-                st.caption("Looking for: Document Number, Status, Date, Sales Rep, Customer, Item, Amount, Amount Remaining")
-                
-                st.markdown("**First 5 rows:**")
-                st.dataframe(df.head(), use_container_width=True)
-            
-            return df
-        
         except Exception as e:
-            st.error(f"❌ Error reading file: {str(e)}")
-            st.markdown("""
-            **Troubleshooting tips:**
-            - If you get "File is not a zip file" error, your XLS might be in old Excel format
-            - Try opening the file in Excel and saving as **CSV** or **XLSX** format
-            - CSV format works best for very large files (faster loading)
-            """)
+            st.error(f"❌ Error loading file: {str(e)}")
             return None
     
     return None
 
-def display_commission_dashboard(commission_df):
-    """Display the commission dashboard with all calculations"""
+def display_commission_dashboard(invoice_df):
+    """Display the commission dashboard"""
     
-    # Header with logout
+    # Header
     col1, col2 = st.columns([4, 1])
     
     with col1:
         st.markdown("""
         <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                      padding: 15px; border-radius: 10px; color: white;'>
-            <h2 style='color: white; margin: 0;'>💰 Commission Dashboard</h2>
+            <h2 style='color: white; margin: 0;'>💰 Commission Dashboard - Sep/Oct 2025</h2>
         </div>
         """, unsafe_allow_html=True)
     
     with col2:
         if st.button("🚪 Logout", use_container_width=True):
             st.session_state.commission_authenticated = False
+            if 'invoice_data' in st.session_state:
+                del st.session_state.invoice_data
             st.rerun()
     
     st.markdown("---")
     
+    # Process commissions
+    with st.spinner("Calculating commissions..."):
+        commission_df = process_commission_data_fast(invoice_df)
+    
+    if commission_df.empty:
+        st.warning("⚠️ No commissionable transactions found")
+        return
+    
     # Overall Summary
-    st.markdown("### 📊 Overall Summary")
+    st.markdown("### 📊 Overall Summary (Sep + Oct 2025)")
     
     col1, col2, col3, col4 = st.columns(4)
     
-    total_transactions = len(commission_df)
-    total_sales = commission_df['Subtotal'].sum()
-    total_commission = commission_df['Commission Amount'].sum()
-    total_override = commission_df['Brad Override'].sum()
-    
     with col1:
-        st.metric("Total Transactions", f"{total_transactions:,}")
+        st.metric("Total Line Items", f"{len(commission_df):,}")
     
     with col2:
-        st.metric("Total Sales Volume", f"${total_sales:,.2f}")
+        total_sales = commission_df['Subtotal'].sum()
+        st.metric("Total Sales", f"${total_sales:,.2f}")
     
     with col3:
+        total_commission = commission_df['Commission Amount'].sum()
         st.metric("Total Commission", f"${total_commission:,.2f}")
     
     with col4:
+        total_override = commission_df['Brad Override'].sum()
         st.metric("Brad's Override", f"${total_override:,.2f}")
     
     st.markdown("---")
     
-    # Summary by Month
-    st.markdown("### 📅 Commission by Invoice Month")
-    st.caption("Shows when invoices were created and when commissions will be paid (4 weeks after month close)")
-    
+    # By Month
+    st.markdown("### 📅 Commission by Month")
     month_summary = calculate_summary_by_month(commission_df)
     
     if not month_summary.empty:
-        # Format for display
         display_month = month_summary.copy()
         display_month['Total Sales'] = display_month['Total Sales'].apply(lambda x: f"${x:,.2f}")
         display_month['Total Commission'] = display_month['Total Commission'].apply(lambda x: f"${x:,.2f}")
@@ -513,122 +395,103 @@ def display_commission_dashboard(commission_df):
         display_month['Payout Date'] = display_month['Payout Date'].apply(lambda x: x.strftime('%Y-%m-%d') if not pd.isna(x) else '')
         
         st.dataframe(display_month, use_container_width=True, hide_index=True)
-    else:
-        st.info("No monthly data available")
     
     st.markdown("---")
     
-    # Summary by Rep
+    # By Rep
     st.markdown("### 👤 Commission by Sales Rep")
-    
     rep_summary = calculate_summary_by_rep(commission_df)
     
     if not rep_summary.empty:
-        # Format for display
         display_rep = rep_summary.copy()
         display_rep['Total Sales'] = display_rep['Total Sales'].apply(lambda x: f"${x:,.2f}")
         display_rep['Total Commission'] = display_rep['Total Commission'].apply(lambda x: f"${x:,.2f}")
         display_rep['Brad Override'] = display_rep['Brad Override'].apply(lambda x: f"${x:,.2f}")
         
         st.dataframe(display_rep, use_container_width=True, hide_index=True)
-    else:
-        st.info("No rep data available")
     
     st.markdown("---")
     
-    # Detailed Transaction View
+    # Rep x Month breakdown
+    st.markdown("### 📊 Commission by Rep & Month")
+    rep_month_summary = calculate_rep_month_summary(commission_df)
+    
+    if not rep_month_summary.empty:
+        display_rm = rep_month_summary.copy()
+        display_rm['Total Sales'] = display_rm['Total Sales'].apply(lambda x: f"${x:,.2f}")
+        display_rm['Total Commission'] = display_rm['Total Commission'].apply(lambda x: f"${x:,.2f}")
+        display_rm['Brad Override'] = display_rm['Brad Override'].apply(lambda x: f"${x:,.2f}")
+        
+        st.dataframe(display_rm, use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    
+    # Detailed view with filters
     st.markdown("### 📋 Detailed Transaction View")
-    st.caption(f"Showing all {len(commission_df)} commissionable transactions")
     
-    # Filter by rep
-    all_reps = ['All Reps'] + sorted(commission_df['Final Sales Rep'].unique().tolist())
-    selected_rep = st.selectbox("Filter by Rep:", all_reps)
+    col1, col2 = st.columns(2)
     
-    # Filter by month
-    if 'Invoice Month' in commission_df.columns:
-        all_months = ['All Months'] + sorted(commission_df['Invoice Month'].dropna().unique().tolist(), reverse=True)
-        selected_month = st.selectbox("Filter by Month:", all_months)
-    else:
-        selected_month = 'All Months'
+    with col1:
+        filter_reps = ['All'] + COMMISSION_REPS
+        selected_rep = st.selectbox("Filter by Rep:", filter_reps)
+    
+    with col2:
+        filter_months = ['All'] + COMMISSION_MONTHS
+        selected_month = st.selectbox("Filter by Month:", filter_months)
     
     # Apply filters
     filtered_df = commission_df.copy()
     
-    if selected_rep != 'All Reps':
-        filtered_df = filtered_df[filtered_df['Final Sales Rep'] == selected_rep]
+    if selected_rep != 'All':
+        filtered_df = filtered_df[filtered_df['Sales Rep'] == selected_rep]
     
-    if selected_month != 'All Months' and 'Invoice Month' in filtered_df.columns:
+    if selected_month != 'All':
         filtered_df = filtered_df[filtered_df['Invoice Month'] == selected_month]
     
-    st.caption(f"Filtered to {len(filtered_df)} transactions")
+    st.caption(f"Showing {len(filtered_df):,} line items")
     
-    # Select display columns
+    # Display columns
     display_columns = [
-        'Document Number', 'Date', 'Final Sales Rep', 'Customer', 'Item',
-        'Pipeline', 'Subtotal', 'Commission Rate', 'Commission Amount',
-        'Brad Override', 'Payment Status', 'Invoice Month', 'Payout Date'
+        'Document Number', 'Date', 'Sales Rep', 'Customer', 'Item',
+        'Subtotal', 'Commission Rate', 'Commission Amount', 'Brad Override',
+        'Invoice Month', 'Payout Date'
     ]
     
-    # Only show columns that exist
-    available_columns = [col for col in display_columns if col in filtered_df.columns]
-    display_df = filtered_df[available_columns].copy()
+    display_df = filtered_df[display_columns].copy()
     
-    # Format currency columns
-    currency_columns = ['Subtotal', 'Commission Amount', 'Brad Override']
-    for col in currency_columns:
-        if col in display_df.columns:
-            display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}" if not pd.isna(x) else "$0.00")
-    
-    # Format percentage
-    if 'Commission Rate' in display_df.columns:
-        display_df['Commission Rate'] = (display_df['Commission Rate'] * 100).apply(
-            lambda x: f"{x:.2f}%" if not pd.isna(x) else "0.00%"
-        )
-    
-    # Format dates
-    if 'Payout Date' in display_df.columns:
-        display_df['Payout Date'] = display_df['Payout Date'].apply(
-            lambda x: x.strftime('%Y-%m-%d') if not pd.isna(x) else ''
-        )
+    # Format
+    display_df['Subtotal'] = display_df['Subtotal'].apply(lambda x: f"${x:,.2f}")
+    display_df['Commission Rate'] = (display_df['Commission Rate'] * 100).apply(lambda x: f"{x:.1f}%")
+    display_df['Commission Amount'] = display_df['Commission Amount'].apply(lambda x: f"${x:,.2f}")
+    display_df['Brad Override'] = display_df['Brad Override'].apply(lambda x: f"${x:,.2f}" if x > 0 else "")
+    display_df['Payout Date'] = display_df['Payout Date'].apply(lambda x: x.strftime('%Y-%m-%d') if not pd.isna(x) else '')
     
     st.dataframe(display_df, use_container_width=True, hide_index=True)
     
-    # Download button
+    # Download
     csv = filtered_df.to_csv(index=False)
     st.download_button(
         label="📥 Download Filtered Data (CSV)",
         data=csv,
-        file_name=f"commission_data_{datetime.now().strftime('%Y%m%d')}.csv",
+        file_name=f"commission_data_{selected_rep}_{selected_month}_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
     )
 
 def display_commission_section(invoices_df=None, sales_orders_df=None):
-    """
-    Main entry point for commission section
-    Handles authentication, file upload, and display
-    """
-    # Check if user is authenticated
+    """Main entry point"""
+    
+    # Check authentication
     if not st.session_state.get('commission_authenticated', False):
         display_password_gate()
         return
     
-    # Display file uploader
-    uploaded_df = display_file_uploader()
+    # Manage data
+    invoice_df = display_data_manager()
     
-    if uploaded_df is not None:
-        # Process the uploaded data
-        with st.spinner("Calculating commissions..."):
-            commission_df = process_commission_data(uploaded_df)
-        
-        if commission_df.empty:
-            st.warning("⚠️ No commissionable transactions found in uploaded file.")
-            st.info("Make sure your file includes paid/partially paid invoices with the required fields.")
-            return
-        
-        # Display the dashboard
-        display_commission_dashboard(commission_df)
+    if invoice_df is not None:
+        display_commission_dashboard(invoice_df)
     else:
-        st.info("👆 Please upload your invoice data file to begin")
+        st.info("👆 Please upload your invoice data CSV to begin")
 
 if __name__ == "__main__":
     st.set_page_config(page_title="Commission Calculator", page_icon="💰", layout="wide")
