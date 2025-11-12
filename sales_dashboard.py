@@ -843,16 +843,6 @@ def load_all_data():
         
         shopify_so_mask &= ~sales_orders_df['Sales Rep'].isin(actual_sales_reps)
         sales_orders_df.loc[shopify_so_mask, 'Sales Rep'] = 'Shopify ECommerce'
-                
-                # Ensure Shopify ECommerce exists in dashboard_df only if it has attributed orders
-                shopify_order_count = (sales_orders_df['Sales Rep'] == 'Shopify ECommerce').sum()
-                if shopify_order_count > 0 and 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
-                    new_shopify_row = pd.DataFrame([{
-                        'Rep Name': 'Shopify ECommerce',
-                        'Quota': 0,
-                        'NetSuite Orders': 0  # Will be calculated from sales orders in calculate_rep_metrics
-                    }])
-                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     else:
         st.warning("Could not find required columns in NS Sales Orders")
         sales_orders_df = pd.DataFrame()
