@@ -183,7 +183,13 @@ def process_commission_data_fast(df):
     st.caption(f"✓ Filtered to 4 commission reps: {len(df):,} lines")
     
     # Step 2: Only invoices with payment (Amount Paid > 0)
-    df['Amount Paid Numeric'] = pd.to_numeric(df.get('Amount Paid', 0), errors='coerce').fillna(0)
+    # Handle case where Amount Paid column might not exist
+    if 'Amount Paid' in df.columns:
+        df['Amount Paid Numeric'] = pd.to_numeric(df['Amount Paid'], errors='coerce').fillna(0)
+    else:
+        st.warning("⚠️ 'Amount Paid' column not found in data. Skipping payment filter.")
+        df['Amount Paid Numeric'] = 0
+    
     initial_count = len(df)
     df = df[df['Amount Paid Numeric'] > 0].copy()
     st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0): {len(df):,} lines (removed {initial_count - len(df):,})")
@@ -583,7 +589,11 @@ def display_reconciliation_tool(invoice_df):
     st.info(f"Found {len(rep_data):,} total invoice lines")
     
     # Filter to paid only (Amount Paid > 0)
-    rep_data['Amount Paid Numeric'] = pd.to_numeric(rep_data.get('Amount Paid', 0), errors='coerce').fillna(0)
+    if 'Amount Paid' in rep_data.columns:
+        rep_data['Amount Paid Numeric'] = pd.to_numeric(rep_data['Amount Paid'], errors='coerce').fillna(0)
+    else:
+        rep_data['Amount Paid Numeric'] = 0
+    
     paid_data = rep_data[rep_data['Amount Paid Numeric'] > 0].copy()
     st.caption(f"Paid invoices (Amount Paid > 0): {len(paid_data):,} lines")
     
