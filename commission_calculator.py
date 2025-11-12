@@ -3,6 +3,7 @@ Commission Calculator Module for Calyx Containers
 Handles commission calculations based on uploaded line-level invoice data from NetSuite
 Processes invoices by month with 4-week payout delay
 Password-protected access for Xander only
+Supports large XLS/XLSX files (100MB+)
 """
 
 import streamlit as st
@@ -10,6 +11,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import hashlib
+
+# Note: openpyxl is used by pandas for reading Excel files
+# Make sure it's in your requirements.txt: openpyxl>=3.0.0
 
 # ==========================================
 # PASSWORD CONFIGURATION (Xander Only)
@@ -173,6 +177,7 @@ def calculate_brad_override(row, subtotal):
 def process_commission_data(invoices_df):
     """
     Main function to process commission data from uploaded file
+    Optimized for large datasets (100k+ rows)
     Returns a DataFrame with calculated commissions
     """
     if invoices_df.empty:
@@ -181,34 +186,65 @@ def process_commission_data(invoices_df):
     # Make a copy to avoid modifying original
     df = invoices_df.copy()
     
+    total_rows = len(df)
+    st.info(f"Processing {total_rows:,} invoice line items...")
+    
+    # Create a progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     # Step 1: Resolve sales rep
+    status_text.text("Step 1/8: Resolving sales reps...")
     df['Final Sales Rep'] = df.apply(resolve_sales_rep, axis=1)
+    progress_bar.progress(12)
     
     # Step 2: Calculate subtotal (excluding fees, shipping, tax)
+    status_text.text("Step 2/8: Calculating subtotals...")
     df['Subtotal'] = df.apply(calculate_subtotal, axis=1)
+    progress_bar.progress(25)
     
     # Step 3: Get payment status
+    status_text.text("Step 3/8: Checking payment status...")
     df['Payment Status'] = df.apply(get_payment_status, axis=1)
+    progress_bar.progress(37)
     
     # Step 4: Filter to only paid/partially paid invoices
+    status_text.text("Step 4/8: Filtering to paid invoices...")
+    initial_count = len(df)
     df = df[df['Payment Status'].isin(['Fully Paid', 'Partially Paid'])].copy()
+    filtered_count = len(df)
+    st.caption(f"Filtered from {initial_count:,} to {filtered_count:,} paid/partially paid line items")
+    progress_bar.progress(50)
     
     # Step 5: Parse invoice month and calculate payout date
+    status_text.text("Step 5/8: Calculating invoice months and payout dates...")
     df['Invoice Month'] = df.apply(lambda row: parse_invoice_month(row.get('Transaction Date', '')), axis=1)
     df['Payout Date'] = df['Invoice Month'].apply(lambda x: calculate_payout_date(x) if x else None)
+    progress_bar.progress(62)
     
     # Step 6: Get commission rate
+    status_text.text("Step 6/8: Looking up commission rates...")
     df['Pipeline'] = df.get('custbody_calyx_hs_pipeline', '')
     df['Commission Rate'] = df.apply(
         lambda row: get_commission_rate(row['Final Sales Rep'], row['Pipeline']), 
         axis=1
     )
+    progress_bar.progress(75)
     
     # Step 7: Calculate commission amount
+    status_text.text("Step 7/8: Calculating commission amounts...")
     df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
+    progress_bar.progress(87)
     
     # Step 8: Calculate Brad's override
+    status_text.text("Step 8/8: Calculating Brad's override...")
     df['Brad Override'] = df.apply(lambda row: calculate_brad_override(row, row['Subtotal']), axis=1)
+    progress_bar.progress(100)
+    
+    # Clean up progress indicators
+    status_text.text("✅ Processing complete!")
+    progress_bar.empty()
+    status_text.empty()
     
     return df
 
@@ -279,32 +315,55 @@ def display_password_gate():
     return False
 
 def display_file_uploader():
-    """Display file upload interface"""
+    """Display file upload interface for large XLS/XLSX/CSV files"""
     st.markdown("### 📁 Upload Invoice Data")
-    st.caption("Upload your line-level invoice export from NetSuite (CSV format)")
+    st.caption("Upload your line-level invoice export from NetSuite (CSV, XLS, or XLSX format)")
+    st.caption("⚠️ Large files (100MB+) may take a few minutes to process")
     
     uploaded_file = st.file_uploader(
-        "Choose a CSV file",
-        type=['csv'],
+        "Choose a file",
+        type=['csv', 'xls', 'xlsx'],
         key="commission_file_upload"
     )
     
     if uploaded_file is not None:
         try:
-            # Read the CSV file
-            df = pd.read_csv(uploaded_file)
+            # Show file info
+            file_size_mb = uploaded_file.size / (1024 * 1024)
+            st.info(f"📦 File size: {file_size_mb:.2f} MB")
             
-            st.success(f"✅ File uploaded successfully: {len(df)} rows loaded")
+            # Read the file based on type
+            file_extension = uploaded_file.name.split('.')[-1].lower()
+            
+            with st.spinner(f"Reading {file_extension.upper()} file... This may take a moment for large files"):
+                if file_extension == 'csv':
+                    df = pd.read_csv(uploaded_file, low_memory=False)
+                elif file_extension in ['xls', 'xlsx']:
+                    # Use openpyxl engine for better performance with large files
+                    df = pd.read_excel(uploaded_file, engine='openpyxl')
+                else:
+                    st.error("Unsupported file format")
+                    return None
+            
+            st.success(f"✅ File loaded successfully: {len(df):,} rows")
+            
+            # Show memory usage
+            memory_usage_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
+            st.caption(f"Memory usage: {memory_usage_mb:.2f} MB")
             
             # Show column mapping info
-            with st.expander("📋 View Column Names"):
-                st.write("Detected columns:", df.columns.tolist())
+            with st.expander("📋 View Column Names & Data Preview"):
+                st.write("**Detected columns:**", df.columns.tolist())
                 st.caption("Make sure your file includes: Sales Rep, Item Name, netamountnotax, shippingamount, Transaction Date, custbody_calyx_hs_pipeline, Amount Paid, Amount Due")
+                
+                st.markdown("**First 5 rows:**")
+                st.dataframe(df.head(), use_container_width=True)
             
             return df
         
         except Exception as e:
             st.error(f"❌ Error reading file: {str(e)}")
+            st.caption("If the file is very large, try exporting as CSV instead of XLS for better performance")
             return None
     
     return None
