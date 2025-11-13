@@ -513,8 +513,9 @@ def display_data_manager():
             
             # Load sales order data
             if so_file is not None:
-                so_df = pd.read_csv(so_file, low_memory=False)
-                so_df.columns = so_df.columns.str.replace('﻿', '').str.strip()
+                try:
+                    so_df = pd.read_csv(so_file, low_memory=False)
+                    so_df.columns = so_df.columns.str.replace('﻿', '').str.strip()
                 
                 # Map SO column names to Invoice column names for consistency
                 so_column_map = {
@@ -536,22 +537,31 @@ def display_data_manager():
                 # SOs don't have "Amount Paid" - they have "Status"
                 # Mark billed/fulfilled SOs as "paid" for commission purposes
                 if 'Status' in so_df.columns and 'Amount' in so_df.columns:
-                    # Convert Amount to numeric first
-                    so_df['Amount Numeric'] = pd.to_numeric(so_df['Amount'], errors='coerce').fillna(0)
+                    try:
+                        # Convert Amount to numeric first
+                        so_df['Amount Numeric'] = pd.to_numeric(so_df['Amount'], errors='coerce').fillna(0)
+                        
+                        # Check for billed/fulfilled status - ensure Status is string type
+                        so_df['Status'] = so_df['Status'].astype(str)
+                        billed_status = so_df['Status'].str.upper().str.contains('BILLED|FULFILLED|INVOICED', na=False, regex=True)
+                        
+                        # Create Amount Paid column - use Amount Numeric value where billed, 0 otherwise
+                        so_df['Amount Paid'] = 0.0
+                        so_df.loc[billed_status, 'Amount Paid'] = so_df.loc[billed_status, 'Amount Numeric']
+                        
+                        st.caption(f"💰 Marked {billed_status.sum():,} billed/fulfilled SOs as paid")
                     
-                    # Check for billed/fulfilled status
-                    billed_status = so_df['Status'].str.upper().str.contains('BILLED|FULFILLED|INVOICED', na=False)
-                    
-                    # Create Amount Paid column - use Amount Numeric value where billed, 0 otherwise
-                    so_df['Amount Paid'] = 0.0
-                    so_df.loc[billed_status, 'Amount Paid'] = so_df.loc[billed_status, 'Amount Numeric']
-                    
-                    st.caption(f"💰 Marked {billed_status.sum():,} billed/fulfilled SOs as paid")
-                
-                    # Sales Orders don't have Amount Remaining - calculate it
-                    so_df['Amount Remaining'] = so_df['Amount Numeric'] - so_df['Amount Paid']
+                        # Sales Orders don't have Amount Remaining - calculate it
+                        so_df['Amount Remaining'] = so_df['Amount Numeric'] - so_df['Amount Paid']
+                    except Exception as e:
+                        st.error(f"Error processing SO payment status: {str(e)}")
+                        st.write("Status column sample:", so_df['Status'].head())
+                        # Set defaults if processing fails
+                        so_df['Amount Paid'] = 0.0
+                        so_df['Amount Remaining'] = so_df['Amount']
                 else:
                     st.warning("⚠️ Could not create Amount Paid field - missing Status or Amount column")
+                    so_df['Amount Paid'] = 0.0
                 
                 so_df['Data Source'] = 'Sales Order'
                 dfs_to_combine.append(so_df)
@@ -566,6 +576,12 @@ def display_data_manager():
                         st.write("**Common columns:**", sorted(inv_cols & so_cols))
                         st.write("**Invoice-only columns:**", sorted(inv_cols - so_cols))
                         st.write("**SO-only columns:**", sorted(so_cols - inv_cols))
+                
+                except Exception as e:
+                    st.error(f"❌ Error loading sales order file: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
+                    return None
             
             # Combine and deduplicate
             if len(dfs_to_combine) > 0:
