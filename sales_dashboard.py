@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v52_pa_age_gte_14"
+CACHE_VERSION = "v53_debug_dave_pa_ages"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2247,6 +2247,12 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 14 business days)
             # This takes priority and removes orders from other categories
             if 'Age_Business_Days' in pending_approval_orders.columns:
+                # DEBUG: Show ages for Dave's PA orders
+                if rep_name == 'Dave Borkowski':
+                    st.write(f"🔍 Dave's Pending Approval Orders:")
+                    debug_df = pending_approval_orders[['Document Number', 'Order Start Date', 'Age_Business_Days', 'Amount']].copy()
+                    st.dataframe(debug_df)
+                
                 old_mask = pending_approval_orders['Age_Business_Days'] >= 14
                 pending_approval_old_details = pending_approval_orders[old_mask].copy()
                 # Remove duplicate columns
