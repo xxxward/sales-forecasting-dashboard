@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v53_debug_dave_pa_ages"
+CACHE_VERSION = "v54_fix_debug_columns"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2250,7 +2250,13 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                 # DEBUG: Show ages for Dave's PA orders
                 if rep_name == 'Dave Borkowski':
                     st.write(f"🔍 Dave's Pending Approval Orders:")
-                    debug_df = pending_approval_orders[['Document Number', 'Order Start Date', 'Age_Business_Days', 'Amount']].copy()
+                    debug_cols = []
+                    if 'Document Number' in pending_approval_orders.columns:
+                        debug_cols.append('Document Number')
+                    if 'Order Start Date' in pending_approval_orders.columns:
+                        debug_cols.append('Order Start Date')
+                    debug_cols.extend(['Age_Business_Days', 'Amount'])
+                    debug_df = pending_approval_orders[debug_cols].copy()
                     st.dataframe(debug_df)
                 
                 old_mask = pending_approval_orders['Age_Business_Days'] >= 14
