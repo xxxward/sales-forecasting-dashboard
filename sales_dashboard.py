@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v46_debug_duplicates"
+CACHE_VERSION = "v47_dedupe_invoices"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -716,6 +716,12 @@ def load_all_data():
                 rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
                 st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
             
+            # DEBUG: Check for duplicates BEFORE filtering
+            if 'Invoice Number' in invoices_df.columns:
+                duplicate_count_before = invoices_df['Invoice Number'].duplicated().sum()
+                if duplicate_count_before > 0:
+                    st.sidebar.warning(f"⚠️ BEFORE filter: {duplicate_count_before} duplicate invoice numbers!")
+            
             # Filter to valid invoices only:
             # - Must have Amount > 0
             # - Must have a Sales Rep assigned (not blank/nan)
@@ -727,6 +733,14 @@ def load_all_data():
                 (invoices_df['Sales Rep'].str.lower() != 'nan') &
                 (invoices_df['Sales Rep'].str.lower() != 'house')
             ]
+            
+            # CRITICAL: Remove duplicate invoices if they exist (keep first occurrence)
+            if 'Invoice Number' in invoices_df.columns:
+                before_dedupe = len(invoices_df)
+                invoices_df = invoices_df.drop_duplicates(subset=['Invoice Number'], keep='first')
+                after_dedupe = len(invoices_df)
+                if before_dedupe != after_dedupe:
+                    st.sidebar.warning(f"⚠️ Removed {before_dedupe - after_dedupe} duplicate invoices!")
             
             # DEBUG: After all filters
             after_all_filters = len(invoices_df)
