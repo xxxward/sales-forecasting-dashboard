@@ -666,21 +666,29 @@ def load_all_data():
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
             
-            # Filter to Q4 2025 only
+            # Filter to Q4 2025 only (10/1/2025 - 12/31/2025)
+            # This should match exactly what your boss filters in the sheet
             q4_start = pd.Timestamp('2025-10-01')
             q4_end = pd.Timestamp('2025-12-31')
             
+            # Apply date filter
             invoices_df = invoices_df[
                 (invoices_df['Date'] >= q4_start) & 
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].str.strip()
+            # Clean up Sales Rep field
+            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             
+            # Filter to valid invoices only:
+            # - Must have Amount > 0
+            # - Must have a Sales Rep assigned
+            # - Exclude 'House' (case insensitive)
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
                 (invoices_df['Sales Rep'] != '') &
+                (invoices_df['Sales Rep'].str.lower() != 'nan') &
                 (~invoices_df['Sales Rep'].str.lower().isin(['house']))
             ]
             
@@ -2920,17 +2928,17 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     # Boss's Q4 numbers from the LATEST screenshot (November 13, 2025)
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 750424,
+            'invoiced': 760424,
             'pending_fulfillment': 243121,
             'pending_approval': 26198,
             'hubspot': 192829,
-            'total': 1212572,
+            'total': 1222572,
             'pending_fulfillment_so_no_date': 81154,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 39174,
-            'total_q4': 1342200,
+            'total_q4': 1342900,
             'hubspot_best_case': 547752,
-            'jan_expect_commit': 100540,
+            'jan_expect_commit': 109540,
             'jan_best_case': 235871
         },
         'Dave Borkowski': {
@@ -2962,7 +2970,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'jan_best_case': 0
         },
         'Brad Sherman': {
-            'invoiced': 123605,
+            'invoiced': 123665,
             'pending_fulfillment': 95050,
             'pending_approval': 3145,
             'hubspot': 163471,
