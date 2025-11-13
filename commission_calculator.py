@@ -36,20 +36,21 @@ REP_COMMISSION_RATES = {
 BRAD_OVERRIDE_RATE = 0.01
 
 # Focus months for commission calculation
-COMMISSION_MONTHS = ['2025-09', '2025-10']  # September and October 2025
+COMMISSION_MONTHS = ['2025-09']  # September 2025 only
 
 # ==========================================
 # EXPECTED COMMISSION VALUES (For Reconciliation)
+# From actual commission Excel files for September 2025
 # ==========================================
 
 EXPECTED_COMMISSIONS = {
     "Brad Sherman": {
         "2025-09": {
-            "acquisition_total": 124022.00,
+            "total_commission": 8872.45,  # Includes his 7% + override
+            "acquisition_total": 124021.81,
             "acquisition_commission_7pct": 8681.53,
-            "lance_override_base": 19093.00,
+            "lance_override_base": 19092.75,
             "lance_override_1pct": 190.93,
-            "total_commission": 8872.45,
             "sales_orders": [
                 "SO13290", "SO13087", "SO13194", "SO13097", "SO13105",
                 "SO13259", "SO13241", "SO13137", "SO13094", "SO12943",
@@ -58,7 +59,36 @@ EXPECTED_COMMISSIONS = {
             ]
         }
     },
-    # Add more reps and months as you get the expected values
+    "Jake Lynch": {
+        "2025-09": {
+            "total_commission": 25990.00,  # From image
+            "sales_orders": [
+                "SO13259", "SO13130", "SO13023", "SO13030", "SO13029",
+                "SO13245", "SO13175", "SO13247", "SO13136", "SO13171",
+                "SO13189", "SO13202", "SO13084", "SO13236", "SO13093",
+                "SO13135", "SO13244", "SO13165", "SO13128", "SO13126"
+                # ... 84 total SOs
+            ]
+        }
+    },
+    "Dave Borkowski": {
+        "2025-09": {
+            "total_commission": 3976.00,  # From image
+            "sales_orders": [
+                "SO13197", "SO13151", "SO13118", "SO13238", "SO12640",
+                "SO13195", "SO13243", "SO13108", "SO13125", "SO13203"
+                # ... 41 total SOs
+            ]
+        }
+    },
+    "Lance Mitton": {
+        "2025-09": {
+            "total_commission": 1336.00,  # From image
+            "sales_orders": [
+                "SO12837", "SO12972", "SO12927", "SO13018"
+            ]
+        }
+    }
 }
 
 # ==========================================
@@ -220,7 +250,7 @@ def process_commission_data_fast(df):
         st.warning(f"⚠️ {no_date:,} lines have no Date value and will be excluded")
     
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
-    st.caption(f"✓ Filtered to Sep/Oct 2025 (by Invoice Date): {len(df):,} lines")
+    st.caption(f"✓ Filtered to September 2025 only (by Invoice Date): {len(df):,} lines")
     
     # Step 4: Exclude shipping, tax, fees (but KEEP tooling)
     df['Item Upper'] = df['Item'].str.upper()
@@ -442,7 +472,7 @@ def display_commission_dashboard(invoice_df):
         st.markdown("""
         <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                      padding: 15px; border-radius: 10px; color: white;'>
-            <h2 style='color: white; margin: 0;'>💰 Commission Dashboard - Sep/Oct 2025</h2>
+            <h2 style='color: white; margin: 0;'>💰 Commission Dashboard - September 2025</h2>
         </div>
         """, unsafe_allow_html=True)
     
@@ -476,7 +506,7 @@ def display_commission_calculations(invoice_df):
         return
     
     # Overall Summary
-    st.markdown("### 📊 Overall Summary (Sep + Oct 2025)")
+    st.markdown("### 📊 Overall Summary (September 2025)")
     
     col1, col2, col3, col4 = st.columns(4)
     
