@@ -640,6 +640,10 @@ def load_all_data():
             
             invoices_df = invoices_df.rename(columns=rename_dict)
             
+            # DEBUG: Show what we're starting with
+            initial_count = len(invoices_df)
+            initial_amount = invoices_df['Amount'].sum() if 'Amount' in invoices_df.columns else 0
+            
             # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
             # This fixes the Shopify eCommerce invoices that weren't being applied to reps correctly
             if 'Rep Master' in invoices_df.columns:
@@ -649,10 +653,17 @@ def load_all_data():
                 # Replace empty strings, 'nan', 'None', '#N/A', '#REF!' with original Sales Rep
                 invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
                 mask = invoices_df['Rep Master'].isin(invalid_values)
+                
+                # DEBUG: Count how many have invalid Rep Master
+                invalid_count = mask.sum()
+                st.sidebar.caption(f"🔍 Invoices with invalid Rep Master: {invalid_count}")
+                
                 # Only replace Sales Rep where Rep Master has a valid value
                 invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
                 # Drop the Rep Master column since we've copied it to Sales Rep
                 invoices_df = invoices_df.drop(columns=['Rep Master'])
+            else:
+                st.sidebar.warning("⚠️ Rep Master column not found in invoices!")
             
             if 'Corrected Customer Name' in invoices_df.columns:
                 # Corrected Customer Name takes priority - replace Customer with corrected values
@@ -675,6 +686,10 @@ def load_all_data():
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
             
+            # DEBUG: Before date filter
+            before_date_filter = len(invoices_df)
+            before_date_amount = invoices_df['Amount'].sum()
+            
             # Filter to Q4 2025 only (10/1/2025 - 12/31/2025)
             # This should match exactly what your boss filters in the sheet
             q4_start = pd.Timestamp('2025-10-01')
@@ -686,8 +701,20 @@ def load_all_data():
                 (invoices_df['Date'] <= q4_end)
             ]
             
+            # DEBUG: After date filter
+            after_date_filter = len(invoices_df)
+            after_date_amount = invoices_df['Amount'].sum()
+            st.sidebar.caption(f"📅 After date filter: {after_date_filter} invoices, ${after_date_amount:,.0f}")
+            
             # Clean up Sales Rep field
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
+            
+            # DEBUG: Show Sales Rep distribution before filtering
+            rep_counts_before = invoices_df['Sales Rep'].value_counts()
+            st.sidebar.markdown("**Sales Rep Distribution (before filter):**")
+            for rep, count in rep_counts_before.head(10).items():
+                rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
+                st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
             
             # Filter to valid invoices only:
             # - Must have Amount > 0
@@ -700,6 +727,11 @@ def load_all_data():
                 (invoices_df['Sales Rep'].str.lower() != 'nan') &
                 (~invoices_df['Sales Rep'].str.lower().isin(['house']))
             ]
+            
+            # DEBUG: After all filters
+            after_all_filters = len(invoices_df)
+            after_all_amount = invoices_df['Amount'].sum()
+            st.sidebar.caption(f"✅ After all filters: {after_all_filters} invoices, ${after_all_amount:,.0f}")
             
             # Calculate total invoices by rep (Rep Master has already assigned everything correctly)
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
