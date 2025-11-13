@@ -516,66 +516,66 @@ def display_data_manager():
                 try:
                     so_df = pd.read_csv(so_file, low_memory=False)
                     so_df.columns = so_df.columns.str.replace('﻿', '').str.strip()
-                
-                # Map SO column names to Invoice column names for consistency
-                so_column_map = {
-                    'SO #': 'Document Number',
-                    'Sales Order #': 'Document Number',
-                    'SO Number': 'Document Number',
-                    'Amount (Net of Tax)': 'Amount',  # Use net of tax as the amount
-                    'Amount (Shipping)': 'Amount (Shipping)',
-                    'HubSpot Pipeline': 'custbody_calyx_hs_pipeline',
-                }
-                
-                # Apply mapping
-                for so_col, inv_col in so_column_map.items():
-                    if so_col in so_df.columns:
-                        so_df = so_df.rename(columns={so_col: inv_col})
-                        st.caption(f"📝 Mapped '{so_col}' → '{inv_col}'")
-                
-                # For Sales Orders, we need to handle payment status differently
-                # SOs don't have "Amount Paid" - they have "Status"
-                # Mark billed/fulfilled SOs as "paid" for commission purposes
-                if 'Status' in so_df.columns and 'Amount' in so_df.columns:
-                    try:
-                        # Convert Amount to numeric first
-                        so_df['Amount Numeric'] = pd.to_numeric(so_df['Amount'], errors='coerce').fillna(0)
-                        
-                        # Check for billed/fulfilled status - ensure Status is string type
-                        so_df['Status'] = so_df['Status'].astype(str)
-                        billed_status = so_df['Status'].str.upper().str.contains('BILLED|FULFILLED|INVOICED', na=False, regex=True)
-                        
-                        # Create Amount Paid column - use Amount Numeric value where billed, 0 otherwise
-                        so_df['Amount Paid'] = 0.0
-                        so_df.loc[billed_status, 'Amount Paid'] = so_df.loc[billed_status, 'Amount Numeric']
-                        
-                        st.caption(f"💰 Marked {billed_status.sum():,} billed/fulfilled SOs as paid")
                     
-                        # Sales Orders don't have Amount Remaining - calculate it
-                        so_df['Amount Remaining'] = so_df['Amount Numeric'] - so_df['Amount Paid']
-                    except Exception as e:
-                        st.error(f"Error processing SO payment status: {str(e)}")
-                        st.write("Status column sample:", so_df['Status'].head())
-                        # Set defaults if processing fails
+                    # Map SO column names to Invoice column names for consistency
+                    so_column_map = {
+                        'SO #': 'Document Number',
+                        'Sales Order #': 'Document Number',
+                        'SO Number': 'Document Number',
+                        'Amount (Net of Tax)': 'Amount',  # Use net of tax as the amount
+                        'Amount (Shipping)': 'Amount (Shipping)',
+                        'HubSpot Pipeline': 'custbody_calyx_hs_pipeline',
+                    }
+                    
+                    # Apply mapping
+                    for so_col, inv_col in so_column_map.items():
+                        if so_col in so_df.columns:
+                            so_df = so_df.rename(columns={so_col: inv_col})
+                            st.caption(f"📝 Mapped '{so_col}' → '{inv_col}'")
+                    
+                    # For Sales Orders, we need to handle payment status differently
+                    # SOs don't have "Amount Paid" - they have "Status"
+                    # Mark billed/fulfilled SOs as "paid" for commission purposes
+                    if 'Status' in so_df.columns and 'Amount' in so_df.columns:
+                        try:
+                            # Convert Amount to numeric first
+                            so_df['Amount Numeric'] = pd.to_numeric(so_df['Amount'], errors='coerce').fillna(0)
+                            
+                            # Check for billed/fulfilled status - ensure Status is string type
+                            so_df['Status'] = so_df['Status'].astype(str)
+                            billed_status = so_df['Status'].str.upper().str.contains('BILLED|FULFILLED|INVOICED', na=False, regex=True)
+                            
+                            # Create Amount Paid column - use Amount Numeric value where billed, 0 otherwise
+                            so_df['Amount Paid'] = 0.0
+                            so_df.loc[billed_status, 'Amount Paid'] = so_df.loc[billed_status, 'Amount Numeric']
+                            
+                            st.caption(f"💰 Marked {billed_status.sum():,} billed/fulfilled SOs as paid")
+                        
+                            # Sales Orders don't have Amount Remaining - calculate it
+                            so_df['Amount Remaining'] = so_df['Amount Numeric'] - so_df['Amount Paid']
+                        except Exception as e:
+                            st.error(f"Error processing SO payment status: {str(e)}")
+                            st.write("Status column sample:", so_df['Status'].head())
+                            # Set defaults if processing fails
+                            so_df['Amount Paid'] = 0.0
+                            so_df['Amount Remaining'] = so_df['Amount']
+                    else:
+                        st.warning("⚠️ Could not create Amount Paid field - missing Status or Amount column")
                         so_df['Amount Paid'] = 0.0
-                        so_df['Amount Remaining'] = so_df['Amount']
-                else:
-                    st.warning("⚠️ Could not create Amount Paid field - missing Status or Amount column")
-                    so_df['Amount Paid'] = 0.0
-                
-                so_df['Data Source'] = 'Sales Order'
-                dfs_to_combine.append(so_df)
-                st.session_state.sales_order_data = so_df
-                st.success(f"✅ Sales Order data loaded: {len(so_df):,} rows")
-                
-                # Show column comparison
-                with st.expander("🔍 Column Comparison"):
-                    if invoice_file is not None:
-                        inv_cols = set(inv_df.columns)
-                        so_cols = set(so_df.columns)
-                        st.write("**Common columns:**", sorted(inv_cols & so_cols))
-                        st.write("**Invoice-only columns:**", sorted(inv_cols - so_cols))
-                        st.write("**SO-only columns:**", sorted(so_cols - inv_cols))
+                    
+                    so_df['Data Source'] = 'Sales Order'
+                    dfs_to_combine.append(so_df)
+                    st.session_state.sales_order_data = so_df
+                    st.success(f"✅ Sales Order data loaded: {len(so_df):,} rows")
+                    
+                    # Show column comparison
+                    with st.expander("🔍 Column Comparison"):
+                        if invoice_file is not None:
+                            inv_cols = set(inv_df.columns)
+                            so_cols = set(so_df.columns)
+                            st.write("**Common columns:**", sorted(inv_cols & so_cols))
+                            st.write("**Invoice-only columns:**", sorted(inv_cols - so_cols))
+                            st.write("**SO-only columns:**", sorted(so_cols - inv_cols))
                 
                 except Exception as e:
                     st.error(f"❌ Error loading sales order file: {str(e)}")
