@@ -1567,11 +1567,19 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 if not hs_deals.empty and 'Status' in hs_deals.columns:
                     hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
                     
-                    # Get Q1 spillover deals (close in Q4 but ship in Q1)
-                    items_to_select = hs_deals[
-                        (hs_deals.get('Counts_In_Q4', True) == False) &
-                        (hs_deals['Status'].isin(['Expect', 'Commit']))
-                    ].copy()
+                    # Get Q1 spillover deals using the Q1 2026 Spillover column
+                    # These are deals that close in Q4 but ship in Q1 2026
+                    if 'Q1 2026 Spillover' in hs_deals.columns:
+                        items_to_select = hs_deals[
+                            (hs_deals['Q1 2026 Spillover'] == 'Q1 2026') &
+                            (hs_deals['Status'].isin(['Expect', 'Commit']))
+                        ].copy()
+                    else:
+                        # Fallback to old logic if column doesn't exist
+                        items_to_select = hs_deals[
+                            (hs_deals.get('Counts_In_Q4', True) == False) &
+                            (hs_deals['Status'].isin(['Expect', 'Commit']))
+                        ].copy()
             
             # Display selection interface
             if not items_to_select.empty:
