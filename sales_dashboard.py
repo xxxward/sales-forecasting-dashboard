@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v50_include_credit_memos"
+CACHE_VERSION = "v52_pa_age_gte_14"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -748,6 +748,15 @@ def load_all_data():
                 rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
                 st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
             st.sidebar.caption(f"**Total before groupby: ${invoices_df['Amount'].sum():,.0f}**")
+            
+            # DEBUG: Show Brad Sherman's specific invoices
+            if 'Brad Sherman' in invoices_df['Sales Rep'].values:
+                brad_invoices = invoices_df[invoices_df['Sales Rep'] == 'Brad Sherman'].copy()
+                st.sidebar.markdown("**🔍 Brad Sherman Invoices:**")
+                st.sidebar.caption(f"Count: {len(brad_invoices)}")
+                st.sidebar.caption(f"Total: ${brad_invoices['Amount'].sum():,.0f}")
+                if 'Invoice Number' in brad_invoices.columns:
+                    st.sidebar.caption(f"Invoice Numbers: {brad_invoices['Invoice Number'].tolist()}")
             
             # NOW do the groupby on the cleaned data
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
@@ -2235,19 +2244,19 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             if 'Age_Business_Days' not in pending_approval_orders.columns:
                 st.warning("⚠️ Age_Business_Days column missing from Sales Orders. Cannot calculate Old PA correctly.")
             
-            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age > 14 business days)
+            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 14 business days)
             # This takes priority and removes orders from other categories
             if 'Age_Business_Days' in pending_approval_orders.columns:
-                old_mask = pending_approval_orders['Age_Business_Days'] > 14
+                old_mask = pending_approval_orders['Age_Business_Days'] >= 14
                 pending_approval_old_details = pending_approval_orders[old_mask].copy()
                 # Remove duplicate columns
                 if pending_approval_old_details.columns.duplicated().any():
                     pending_approval_old_details = pending_approval_old_details.loc[:, ~pending_approval_old_details.columns.duplicated()]
                 pending_approval_old = pending_approval_old_details['Amount'].sum() if not pending_approval_old_details.empty else 0
                 
-                # Create a mask for orders that are NOT old (Age <= 14 days)
+                # Create a mask for orders that are NOT old (Age < 14 days)
                 # These are the only ones eligible for Categories 1 and 2
-                young_orders_mask = pending_approval_orders['Age_Business_Days'] <= 14
+                young_orders_mask = pending_approval_orders['Age_Business_Days'] < 14
                 young_orders = pending_approval_orders[young_orders_mask].copy()
             else:
                 pending_approval_old = 0
