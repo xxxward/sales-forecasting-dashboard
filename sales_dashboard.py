@@ -404,8 +404,8 @@ def load_all_data():
     # Load invoice data from NetSuite
     invoices_df = load_google_sheets_data("NS Invoices", "A:Z", version=CACHE_VERSION)
     
-    # Load sales orders data from NetSuite - EXTEND to include Column AB
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AB", version=CACHE_VERSION)
+    # Load sales orders data from NetSuite - EXTEND to include Columns AC:AD (Corrected Customer Name, Rep Master)
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AD", version=CACHE_VERSION)
     
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -764,6 +764,12 @@ def load_all_data():
         if len(col_names) > 27 and 'Pending Approval Date' not in rename_dict.values():
             rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
         
+        # NEW: Map Corrected Customer Name (Column AC - index 28) and Rep Master (Column AD - index 29)
+        if len(col_names) > 28:
+            rename_dict[col_names[28]] = 'Corrected Customer Name'  # Column AC
+        if len(col_names) > 29:
+            rename_dict[col_names[29]] = 'Rep Master'  # Column AD
+        
         # NEW: Map PI || CSM column (Column G based on screenshot)
         for idx, col in enumerate(col_names):
             col_str = str(col).lower()
@@ -772,6 +778,20 @@ def load_all_data():
                 break
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
+        
+        # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
+        # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
+        if 'Rep Master' in sales_orders_df.columns:
+            # Rep Master takes priority - replace Sales Rep with Rep Master values
+            sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
+            # Drop the Rep Master column since we've copied it to Sales Rep
+            sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
+        
+        if 'Corrected Customer Name' in sales_orders_df.columns:
+            # Corrected Customer Name takes priority - replace Customer with corrected values
+            sales_orders_df['Customer'] = sales_orders_df['Corrected Customer Name']
+            # Drop the Corrected Customer Name column since we've copied it to Customer
+            sales_orders_df = sales_orders_df.drop(columns=['Corrected Customer Name'])
         
         # CRITICAL: Remove any duplicate columns that may have been created
         if sales_orders_df.columns.duplicated().any():
@@ -1411,14 +1431,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'Pending Fulfillment (without date)': metrics.get('pending_fulfillment_no_date', 0),
         'Pending Approval (without date)': metrics.get('pending_approval_no_date', 0),
         'Pending Approval (>2 weeks old)': metrics.get('pending_approval_old', 0),
-        'Q1 Spillover - Expect/Commit': metrics.get('q1_spillover_expect_commit', 0)
+        'Q1 Spillover - Expect/Commit': metrics.get('q1_spillover_expect_commit', 0),
+        'Q1 Spillover - Best Case': metrics.get('q1_spillover_best_opp', 0)
     }
     
     # Track which categories allow individual selection
     individual_select_categories = [
         'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
         'Pending Fulfillment (without date)', 'Pending Approval (without date)', 
-        'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit'
+        'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit', 'Q1 Spillover - Best Case'
     ]
     
     # Calculate individual HubSpot categories
@@ -1567,23 +1588,31 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 if not hs_deals.empty and 'Status' in hs_deals.columns:
                     hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
                     
+                    # Determine which status to filter by
+                    if 'Expect/Commit' in category:
+                        status_filter = ['Expect', 'Commit']
+                    elif 'Best Case' in category:
+                        status_filter = ['Best Case', 'Opportunity']
+                    else:
+                        status_filter = ['Expect', 'Commit']  # Default
+                    
                     # Get Q1 spillover deals using the Q1 2026 Spillover column
                     # Must match EXACTLY the logic in calculate_rep_metrics
                     if 'Q1 2026 Spillover' in hs_deals.columns:
                         items_to_select = hs_deals[
                             (hs_deals['Q1 2026 Spillover'] == 'Q1 2026') &
-                            (hs_deals['Status'].isin(['Expect', 'Commit']))
+                            (hs_deals['Status'].isin(status_filter))
                         ].copy()
                         
                         # Debug info
                         total_spillover = hs_deals[hs_deals['Q1 2026 Spillover'] == 'Q1 2026']
-                        st.caption(f"🔍 Debug: Total Q1 spillover deals = {len(total_spillover)}, Expect/Commit only = {len(items_to_select)}")
-                        st.caption(f"Total amount in Q1 spillover Expect/Commit = ${items_to_select['Amount_Numeric'].sum():,.0f}")
+                        st.caption(f"🔍 Debug: Total Q1 spillover deals = {len(total_spillover)}, {'/'.join(status_filter)} only = {len(items_to_select)}")
+                        st.caption(f"Total amount in Q1 spillover {'/'.join(status_filter)} = ${items_to_select['Amount_Numeric'].sum():,.0f}")
                     else:
                         # Fallback to old logic if column doesn't exist
                         items_to_select = hs_deals[
                             (hs_deals.get('Counts_In_Q4', True) == False) &
-                            (hs_deals['Status'].isin(['Expect', 'Commit']))
+                            (hs_deals['Status'].isin(status_filter))
                         ].copy()
                         st.caption("⚠️ Using fallback logic - Q1 2026 Spillover column not found")
             
@@ -3282,7 +3311,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     # Aggregate full team metrics from per-rep calculations
     team_quota = basic_metrics['total_quota']
     team_best_opp = basic_metrics['best_opp']
-    team_q1_spillover = 0  # Calculate fresh from rep metrics
+    team_q1_spillover_expect_commit = 0  # Q1 spillover Expect/Commit only
+    team_q1_spillover_best_opp = 0  # Q1 spillover Best Case/Opportunity
    
     team_invoiced = 0
     team_pf = 0
@@ -3335,7 +3365,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             team_pf_no_date += rep_metrics['pending_fulfillment_no_date']
             team_pa_no_date += rep_metrics['pending_approval_no_date']
             team_old_pa += rep_metrics['pending_approval_old']
-            team_q1_spillover += rep_metrics.get('q1_spillover_total', 0)
+            team_q1_spillover_expect_commit += rep_metrics.get('q1_spillover_expect_commit', 0)
+            team_q1_spillover_best_opp += rep_metrics.get('q1_spillover_best_opp', 0)
    
     # Calculate team totals
     base_forecast = team_invoiced + team_pf + team_pa + team_hs
@@ -3373,9 +3404,10 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     })
    
     # Display Q1 spillover info if applicable
-    if team_q1_spillover > 0:
+    team_q1_spillover_total = team_q1_spillover_expect_commit + team_q1_spillover_best_opp
+    if team_q1_spillover_total > 0:
         st.info(
-            f"ℹ️ **Q1 2026 Spillover**: ${team_q1_spillover:,.0f} in deals closing late Q4 2025 "
+            f"ℹ️ **Q1 2026 Spillover**: ${team_q1_spillover_total:,.0f} in deals closing late Q4 2025 "
             f"will ship in Q1 2026 due to product lead times. These are excluded from Q4 revenue recognition."
         )
    
@@ -3408,7 +3440,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         )
     
     with col4:
-        adjusted_forecast = full_forecast - team_q1_spillover
+        adjusted_forecast = full_forecast - team_q1_spillover_total
         adjusted_attainment = (adjusted_forecast / team_quota * 100) if team_quota > 0 else 0
         st.metric(
             label="🎯 Q4 Adjusted Forecast",
@@ -3466,7 +3498,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         'pending_fulfillment_no_date': team_pf_no_date,
         'pending_approval_no_date': team_pa_no_date,
         'pending_approval_old': team_old_pa,
-        'q1_spillover_expect_commit': team_q1_spillover
+        'q1_spillover_expect_commit': team_q1_spillover_expect_commit,
+        'q1_spillover_best_opp': team_q1_spillover_best_opp
     }
     build_your_own_forecast_section(
         team_metrics_for_forecast,
