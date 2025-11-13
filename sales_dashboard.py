@@ -3171,9 +3171,9 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             if metrics or rep_name == 'Shopify ECommerce':
                 boss = boss_rep_numbers[rep_name]
                 
-                # Get Q1 spillover values
-                your_expect_commit = metrics.get('q1_expect_commit', 0) if metrics else 0
-                your_best_case = metrics.get('q1_best_case', 0) if metrics else 0
+                # Get Q1 spillover values - use the correct field names from calculate_rep_metrics
+                your_expect_commit = metrics.get('q1_spillover_expect_commit', 0) if metrics else 0
+                your_best_case = metrics.get('q1_spillover_best_opp', 0) if metrics else 0
                 your_q1_total = your_expect_commit + your_best_case
                 
                 boss_q1_total = boss['jan_expect_commit'] + boss['jan_best_case']
