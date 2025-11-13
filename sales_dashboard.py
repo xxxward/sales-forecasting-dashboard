@@ -401,8 +401,8 @@ def load_all_data():
     # Load dashboard info (rep quotas and orders)
     dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
     
-    # Load invoice data from NetSuite
-    invoices_df = load_google_sheets_data("NS Invoices", "A:Z", version=CACHE_VERSION)
+    # Load invoice data from NetSuite - EXTEND to include Columns T:U (Corrected Customer Name, Rep Master)
+    invoices_df = load_google_sheets_data("NS Invoices", "A:U", version=CACHE_VERSION)
     
     # Load sales orders data from NetSuite - EXTEND to include Columns AC:AD (Corrected Customer Name, Rep Master)
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AD", version=CACHE_VERSION)
@@ -624,6 +624,12 @@ def load_all_data():
                 invoices_df.columns[14]: 'Sales Rep'
             }
             
+            # NEW: Map Corrected Customer Name (Column T - index 19) and Rep Master (Column U - index 20)
+            if len(invoices_df.columns) > 19:
+                rename_dict[invoices_df.columns[19]] = 'Corrected Customer Name'  # Column T
+            if len(invoices_df.columns) > 20:
+                rename_dict[invoices_df.columns[20]] = 'Rep Master'  # Column U
+            
             # Try to find HubSpot Pipeline and CSM columns
             for idx, col in enumerate(invoices_df.columns):
                 col_str = str(col).lower()
@@ -633,6 +639,20 @@ def load_all_data():
                     rename_dict[col] = 'CSM'
             
             invoices_df = invoices_df.rename(columns=rename_dict)
+            
+            # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
+            # This fixes the Shopify eCommerce invoices that weren't being applied to reps correctly
+            if 'Rep Master' in invoices_df.columns:
+                # Rep Master takes priority - replace Sales Rep with Rep Master values
+                invoices_df['Sales Rep'] = invoices_df['Rep Master']
+                # Drop the Rep Master column since we've copied it to Sales Rep
+                invoices_df = invoices_df.drop(columns=['Rep Master'])
+            
+            if 'Corrected Customer Name' in invoices_df.columns:
+                # Corrected Customer Name takes priority - replace Customer with corrected values
+                invoices_df['Customer'] = invoices_df['Corrected Customer Name']
+                # Drop the Corrected Customer Name column since we've copied it to Customer
+                invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
             
             def clean_numeric(value):
                 if pd.isna(value) or str(value).strip() == '':
