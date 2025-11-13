@@ -606,7 +606,16 @@ def display_reconciliation_tool(invoice_df):
     commissionable = paid_data[~paid_data['Is Excluded']].copy()
     st.caption(f"Commissionable lines: {len(commissionable):,}")
     
+    if commissionable.empty:
+        st.warning("⚠️ No commissionable transactions found after all filters")
+        return
+    
     # Calculate amounts
+    if 'Amount' not in commissionable.columns:
+        st.error("❌ 'Amount' column not found in data after filtering")
+        st.write("Available columns:", commissionable.columns.tolist())
+        return
+    
     commissionable['Amount Numeric'] = pd.to_numeric(commissionable['Amount'], errors='coerce').fillna(0)
     
     # Compare SOs
