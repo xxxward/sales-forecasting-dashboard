@@ -1568,18 +1568,24 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
                     
                     # Get Q1 spillover deals using the Q1 2026 Spillover column
-                    # These are deals that close in Q4 but ship in Q1 2026
+                    # Must match EXACTLY the logic in calculate_rep_metrics
                     if 'Q1 2026 Spillover' in hs_deals.columns:
                         items_to_select = hs_deals[
                             (hs_deals['Q1 2026 Spillover'] == 'Q1 2026') &
                             (hs_deals['Status'].isin(['Expect', 'Commit']))
                         ].copy()
+                        
+                        # Debug info
+                        total_spillover = hs_deals[hs_deals['Q1 2026 Spillover'] == 'Q1 2026']
+                        st.caption(f"🔍 Debug: Total Q1 spillover deals = {len(total_spillover)}, Expect/Commit only = {len(items_to_select)}")
+                        st.caption(f"Total amount in Q1 spillover Expect/Commit = ${items_to_select['Amount_Numeric'].sum():,.0f}")
                     else:
                         # Fallback to old logic if column doesn't exist
                         items_to_select = hs_deals[
                             (hs_deals.get('Counts_In_Q4', True) == False) &
                             (hs_deals['Status'].isin(['Expect', 'Commit']))
                         ].copy()
+                        st.caption("⚠️ Using fallback logic - Q1 2026 Spillover column not found")
             
             # Display selection interface
             if not items_to_select.empty:
