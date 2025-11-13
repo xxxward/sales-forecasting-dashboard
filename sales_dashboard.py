@@ -2906,73 +2906,105 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     
     st.title("🔍 Forecast Reconciliation with Boss's Numbers")
     
-    # Boss's Q4 numbers from the LATEST screenshot
+    # Boss's Q4 numbers from the LATEST screenshot (November 13, 2025)
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 577540,
-            'pending_fulfillment': 263183,
-            'pending_approval': 45220,
-            'hubspot': 340756,
-            'total': 1226699,
-            'pending_fulfillment_so_no_date': 87891,
+            'invoiced': 750424,
+            'pending_fulfillment': 243121,
+            'pending_approval': 26198,
+            'hubspot': 192829,
+            'total': 1212572,
+            'pending_fulfillment_so_no_date': 81154,
             'pending_approval_so_no_date': 0,
-            'old_pending_approval': 33741,
-            'total_q4': 1350638
+            'old_pending_approval': 39174,
+            'total_q4': 1332900,
+            'hubspot_best_case': 547752,
+            'jan_expect_commit': 109540,
+            'jan_best_case': 235871
         },
         'Dave Borkowski': {
-            'invoiced': 237849,
-            'pending_fulfillment': 160537,
-            'pending_approval': 13390,
-            'hubspot': 414768,
-            'total': 826545,
-            'pending_fulfillment_so_no_date': 45471,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 12244,
-            'total_q4': 884260
+            'invoiced': 327043,
+            'pending_fulfillment': 131352,
+            'pending_approval': 45479,
+            'hubspot': 353213,
+            'total': 857088,
+            'pending_fulfillment_so_no_date': 104006,
+            'pending_approval_so_no_date': 1464,
+            'old_pending_approval': 18664,
+            'total_q4': 981222,
+            'hubspot_best_case': 179927,
+            'jan_expect_commit': 88839,
+            'jan_best_case': 90311
         },
         'Alex Gonzalez': {
-            'invoiced': 314523,
-            'pending_fulfillment': 190865,
-            'pending_approval': 0,
+            'invoiced': 399261,
+            'pending_fulfillment': 229653,
+            'pending_approval': 973,
             'hubspot': 0,
-            'total': 505387,
-            'pending_fulfillment_so_no_date': 41710,
-            'pending_approval_so_no_date': 79361,
+            'total': 629886,
+            'pending_fulfillment_so_no_date': 263706,
+            'pending_approval_so_no_date': 3695,
             'old_pending_approval': 4900,
-            'total_q4': 631358
+            'total_q4': 902188,
+            'hubspot_best_case': 0,
+            'jan_expect_commit': 0,
+            'jan_best_case': 0
         },
         'Brad Sherman': {
-            'invoiced': 118211,
-            'pending_fulfillment': 38330,
-            'pending_approval': 28984,
-            'hubspot': 183103,
-            'total': 368629,
-            'pending_fulfillment_so_no_date': 29970,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 884,
-            'total_q4': 399482
+            'invoiced': 123605,
+            'pending_fulfillment': 95050,
+            'pending_approval': 3145,
+            'hubspot': 163471,
+            'total': 385332,
+            'pending_fulfillment_so_no_date': 2971,
+            'pending_approval_so_no_date': 1723,
+            'old_pending_approval': 1723,
+            'total_q4': 394588,
+            'hubspot_best_case': 112107,
+            'jan_expect_commit': 29643,
+            'jan_best_case': 62430
         },
         'Lance Mitton': {
-            'invoiced': 23948,
-            'pending_fulfillment': 2027,
-            'pending_approval': 3331,
-            'hubspot': 11000,
-            'total': 38356,
-            'pending_fulfillment_so_no_date': 1613,
+            'invoiced': 22973,
+            'pending_fulfillment': 5241,
+            'pending_approval': 3555,
+            'hubspot': 5700,
+            'total': 37469,
+            'pending_fulfillment_so_no_date': 1287,
             'pending_approval_so_no_date': 0,
-            'old_pending_approval': 60527,
-            'total_q4': 100496
+            'old_pending_approval': 60207,
+            'total_q4': 98963,
+            'hubspot_best_case': 5000,
+            'jan_expect_commit': 10000,
+            'jan_best_case': 24550
+        },
+        'House': {
+            'invoiced': 0,
+            'pending_fulfillment': 0,
+            'pending_approval': 0,
+            'hubspot': 0,
+            'total': 0,
+            'pending_fulfillment_so_no_date': 0,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 0,
+            'total_q4': 0,
+            'hubspot_best_case': 0,
+            'jan_expect_commit': 0,
+            'jan_best_case': 0
         },
         'Shopify ECommerce': {
-            'invoiced': 21348,
+            'invoiced': 29335,
             'pending_fulfillment': 0,
-            'pending_approval': 1174,
+            'pending_approval': 1345,
             'hubspot': 0,
-            'total': 23421,
+            'total': 30684,
             'pending_fulfillment_so_no_date': 0,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 1544,
-            'total_q4': 24965
+            'total_q4': 32228,
+            'hubspot_best_case': 0,
+            'jan_expect_commit': 0,
+            'jan_best_case': 1500
         }
     }
     
