@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v47_dedupe_invoices"
+CACHE_VERSION = "v48_groupby_before_filter"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -709,23 +709,7 @@ def load_all_data():
             # Clean up Sales Rep field
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             
-            # DEBUG: Show Sales Rep distribution before filtering
-            rep_counts_before = invoices_df['Sales Rep'].value_counts()
-            st.sidebar.markdown("**Sales Rep Distribution (before filter):**")
-            for rep, count in rep_counts_before.head(10).items():
-                rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
-                st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
-            
-            # DEBUG: Check for duplicates BEFORE filtering
-            if 'Invoice Number' in invoices_df.columns:
-                duplicate_count_before = invoices_df['Invoice Number'].duplicated().sum()
-                if duplicate_count_before > 0:
-                    st.sidebar.warning(f"⚠️ BEFORE filter: {duplicate_count_before} duplicate invoice numbers!")
-            
-            # Filter to valid invoices only:
-            # - Must have Amount > 0
-            # - Must have a Sales Rep assigned (not blank/nan)
-            # - Exclude 'House' only (keep Shopify ECommerce and all actual reps)
+            # Filter out invalid Sales Reps BEFORE groupby (but don't filter by existence in dashboard)
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
@@ -742,21 +726,15 @@ def load_all_data():
                 if before_dedupe != after_dedupe:
                     st.sidebar.warning(f"⚠️ Removed {before_dedupe - after_dedupe} duplicate invoices!")
             
-            # DEBUG: After all filters
-            after_all_filters = len(invoices_df)
-            after_all_amount = invoices_df['Amount'].sum()
-            st.sidebar.caption(f"✅ After all filters: {after_all_filters} invoices, ${after_all_amount:,.0f}")
+            # DEBUG: Show Sales Rep distribution AFTER cleaning but BEFORE groupby
+            st.sidebar.markdown("**Sales Rep Distribution (after cleaning):**")
+            rep_counts = invoices_df['Sales Rep'].value_counts()
+            for rep, count in rep_counts.head(10).items():
+                rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
+                st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
+            st.sidebar.caption(f"**Total before groupby: ${invoices_df['Amount'].sum():,.0f}**")
             
-            # DEBUG: Check for duplicates
-            if 'Invoice Number' in invoices_df.columns:
-                duplicate_count = invoices_df['Invoice Number'].duplicated().sum()
-                if duplicate_count > 0:
-                    st.sidebar.warning(f"⚠️ Found {duplicate_count} duplicate invoice numbers!")
-                    # Show a sample
-                    dups = invoices_df[invoices_df['Invoice Number'].duplicated(keep=False)].sort_values('Invoice Number')
-                    st.sidebar.caption(f"Sample duplicates: {dups[['Invoice Number', 'Sales Rep', 'Amount']].head(10).to_dict('records')}")
-            
-            # Calculate total invoices by rep (Rep Master has already assigned everything correctly)
+            # NOW do the groupby on the cleaned data
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
             
