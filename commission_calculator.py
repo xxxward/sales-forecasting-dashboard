@@ -222,23 +222,35 @@ def process_commission_data_fast(df):
     df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
     st.caption(f"✓ Filtered to 4 commission reps: {len(df):,} lines")
     
-    # Step 2: Only invoices with payment (Amount Paid > 0) OR Status = Paid In Full
-    # Handle case where Amount Paid column might not exist
+    # Step 2: Only invoices with payment - check multiple indicators
+    # Try Amount Paid > 0 OR Status = Paid In Full OR Amount Remaining = 0
+    payment_conditions = []
+    
     if 'Amount Paid' in df.columns:
         df['Amount Paid Numeric'] = pd.to_numeric(df['Amount Paid'], errors='coerce').fillna(0)
-    else:
-        st.warning("⚠️ 'Amount Paid' column not found in data. Using Status field only.")
-        df['Amount Paid Numeric'] = 0
+        payment_conditions.append(df['Amount Paid Numeric'] > 0)
     
-    # Check both Amount Paid > 0 OR Status = "Paid In Full"
-    paid_mask = (df['Amount Paid Numeric'] > 0)
     if 'Status' in df.columns:
-        paid_in_full_mask = df['Status'].str.upper().str.contains('PAID IN FULL', na=False)
-        paid_mask = paid_mask | paid_in_full_mask
+        paid_status_mask = df['Status'].str.upper().str.contains('PAID', na=False)
+        payment_conditions.append(paid_status_mask)
     
-    initial_count = len(df)
-    df = df[paid_mask].copy()
-    st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0 OR Status = Paid In Full): {len(df):,} lines (removed {initial_count - len(df):,})")
+    if 'Amount Remaining' in df.columns:
+        df['Amount Remaining Numeric'] = pd.to_numeric(df['Amount Remaining'], errors='coerce').fillna(0)
+        payment_conditions.append(df['Amount Remaining Numeric'] == 0)
+    
+    # Combine all payment conditions with OR
+    if len(payment_conditions) > 0:
+        paid_mask = payment_conditions[0]
+        for condition in payment_conditions[1:]:
+            paid_mask = paid_mask | condition
+        
+        initial_count = len(df)
+        df = df[paid_mask].copy()
+        
+        st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0 OR Status = Paid OR Amount Remaining = 0): {len(df):,} lines (removed {initial_count - len(df):,})")
+    else:
+        st.warning("⚠️ No payment fields found (Amount Paid, Status, Amount Remaining). Including all lines.")
+        initial_count = len(df)
     
     # Step 3: Parse INVOICE dates and filter to Sep/Oct 2025
     st.caption("📅 Using 'Date' (Invoice Date) to determine commission month")
@@ -419,45 +431,98 @@ def display_password_gate():
                     st.error("❌ Invalid credentials")
 
 def display_data_manager():
-    """Manage the stored invoice data"""
-    st.markdown("### 📁 Invoice Data Management")
+    """Manage the stored invoice and sales order data"""
+    st.markdown("### 📁 Data Management")
+    st.caption("Upload both Invoice and Sales Order data for complete coverage")
     
     # Check if data is already loaded
+    data_loaded = False
     if 'invoice_data' in st.session_state and st.session_state.invoice_data is not None:
-        df = st.session_state.invoice_data
-        st.success(f"✅ Invoice data loaded: {len(df):,} total rows")
+        data_loaded = True
+    if 'sales_order_data' in st.session_state and st.session_state.sales_order_data is not None:
+        data_loaded = True
+    
+    if data_loaded:
+        invoice_rows = len(st.session_state.get('invoice_data', pd.DataFrame())) if 'invoice_data' in st.session_state else 0
+        so_rows = len(st.session_state.get('sales_order_data', pd.DataFrame())) if 'sales_order_data' in st.session_state else 0
+        
+        st.success(f"✅ Data loaded - Invoices: {invoice_rows:,} rows | Sales Orders: {so_rows:,} rows")
         
         col1, col2 = st.columns(2)
         with col1:
             if st.button("🔄 Upload New Data"):
-                del st.session_state.invoice_data
+                if 'invoice_data' in st.session_state:
+                    del st.session_state.invoice_data
+                if 'sales_order_data' in st.session_state:
+                    del st.session_state.sales_order_data
+                if 'combined_data' in st.session_state:
+                    del st.session_state.combined_data
                 st.rerun()
         
-        return df
+        # Return combined data
+        return st.session_state.get('combined_data', None)
     
-    # No data loaded - show uploader
-    st.caption("Upload your Invoice Line Level CSV export from NetSuite")
-    
-    uploaded_file = st.file_uploader(
-        "Choose CSV file",
+    # No data loaded - show uploaders
+    st.markdown("#### Upload Option 1: Invoice Line Items (Recommended)")
+    invoice_file = st.file_uploader(
+        "Invoice Line Level CSV (last 6 months)",
         type=['csv'],
-        key="invoice_data_upload"
+        key="invoice_upload",
+        help="Line-level invoice data with payment information"
     )
     
-    if uploaded_file is not None:
+    st.markdown("#### Upload Option 2: Sales Order Line Items (Optional - for complete coverage)")
+    so_file = st.file_uploader(
+        "Sales Order Line Level CSV (last 6 months)",
+        type=['csv'],
+        key="so_upload",
+        help="Line-level sales order data - will be merged with invoice data, avoiding duplicates"
+    )
+    
+    if invoice_file is not None or so_file is not None:
         try:
-            df = pd.read_csv(uploaded_file, low_memory=False)
-            df.columns = df.columns.str.replace('﻿', '')  # Clean BOM
+            dfs_to_combine = []
             
-            st.success(f"✅ Loaded {len(df):,} invoice lines")
+            # Load invoice data
+            if invoice_file is not None:
+                inv_df = pd.read_csv(invoice_file, low_memory=False)
+                inv_df.columns = inv_df.columns.str.replace('﻿', '')
+                inv_df['Data Source'] = 'Invoice'
+                dfs_to_combine.append(inv_df)
+                st.session_state.invoice_data = inv_df
+                st.success(f"✅ Invoice data loaded: {len(inv_df):,} rows")
             
-            # Store in session state
-            st.session_state.invoice_data = df
+            # Load sales order data
+            if so_file is not None:
+                so_df = pd.read_csv(so_file, low_memory=False)
+                so_df.columns = so_df.columns.str.replace('﻿', '')
+                so_df['Data Source'] = 'Sales Order'
+                dfs_to_combine.append(so_df)
+                st.session_state.sales_order_data = so_df
+                st.success(f"✅ Sales Order data loaded: {len(so_df):,} rows")
             
-            st.rerun()
+            # Combine and deduplicate
+            if len(dfs_to_combine) > 0:
+                combined_df = pd.concat(dfs_to_combine, ignore_index=True)
+                
+                # Remove duplicates based on Document Number + Item + Amount
+                # This prevents same line from appearing twice if it's in both files
+                initial_count = len(combined_df)
+                if 'Document Number' in combined_df.columns and 'Item' in combined_df.columns:
+                    combined_df = combined_df.drop_duplicates(
+                        subset=['Document Number', 'Item', 'Amount'],
+                        keep='first'  # Keep invoice data over SO data
+                    )
+                    duplicates_removed = initial_count - len(combined_df)
+                    if duplicates_removed > 0:
+                        st.info(f"🔄 Removed {duplicates_removed:,} duplicate lines")
+                
+                st.session_state.combined_data = combined_df
+                st.success(f"✅ Combined data ready: {len(combined_df):,} total rows")
+                st.rerun()
             
         except Exception as e:
-            st.error(f"❌ Error loading file: {str(e)}")
+            st.error(f"❌ Error loading files: {str(e)}")
             return None
     
     return None
