@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v49_debug_filter_removals"
+CACHE_VERSION = "v50_include_credit_memos"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -711,32 +711,22 @@ def load_all_data():
             
             # DEBUG: Check what will be filtered out
             st.sidebar.markdown("**🔍 Filtering Analysis:**")
-            invalid_amount = (invoices_df['Amount'] <= 0).sum()
             invalid_rep_na = (invoices_df['Sales Rep'].isna()).sum()
             invalid_rep_blank = (invoices_df['Sales Rep'] == '').sum()
             invalid_rep_nan = (invoices_df['Sales Rep'].str.lower() == 'nan').sum()
             invalid_rep_house = (invoices_df['Sales Rep'].str.lower() == 'house').sum()
+            negative_amounts = (invoices_df['Amount'] < 0).sum()
+            negative_total = invoices_df[invoices_df['Amount'] < 0]['Amount'].sum()
             
-            st.sidebar.caption(f"Amount <= 0: {invalid_amount}")
+            st.sidebar.caption(f"Negative amounts (credit memos): {negative_amounts} totaling ${negative_total:,.0f}")
             st.sidebar.caption(f"Sales Rep is NA: {invalid_rep_na}")
             st.sidebar.caption(f"Sales Rep is blank: {invalid_rep_blank}")
             st.sidebar.caption(f"Sales Rep is 'nan': {invalid_rep_nan}")
             st.sidebar.caption(f"Sales Rep is 'house': {invalid_rep_house}")
             
-            # Show what will be removed
-            to_remove = invoices_df[
-                (invoices_df['Amount'] <= 0) | 
-                (invoices_df['Sales Rep'].isna()) | 
-                (invoices_df['Sales Rep'] == '') |
-                (invoices_df['Sales Rep'].str.lower() == 'nan') |
-                (invoices_df['Sales Rep'].str.lower() == 'house')
-            ]
-            if len(to_remove) > 0:
-                st.sidebar.caption(f"Will remove {len(to_remove)} rows totaling ${to_remove['Amount'].sum():,.0f}")
-            
-            # Filter out invalid Sales Reps BEFORE groupby (but don't filter by existence in dashboard)
+            # Filter out invalid Sales Reps BEFORE groupby
+            # NOTE: We DO NOT filter Amount > 0 because credit memos (negative amounts) should reduce totals
             invoices_df = invoices_df[
-                (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
                 (invoices_df['Sales Rep'] != '') &
                 (invoices_df['Sales Rep'].str.lower() != 'nan') &
