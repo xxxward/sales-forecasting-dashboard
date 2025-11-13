@@ -2971,17 +2971,17 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     # Boss's Q4 numbers from the LATEST screenshot (November 13, 2025)
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 750424,
+            'invoiced': 760424,
             'pending_fulfillment': 243121,
             'pending_approval': 26198,
             'hubspot': 192829,
-            'total': 1212572,
+            'total': 1222572,
             'pending_fulfillment_so_no_date': 81154,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 39174,
-            'total_q4': 1342200,
+            'total_q4': 1342900,
             'hubspot_best_case': 547752,
-            'jan_expect_commit': 100540,
+            'jan_expect_commit': 109540,
             'jan_best_case': 235871
         },
         'Dave Borkowski': {
@@ -3013,7 +3013,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'jan_best_case': 0
         },
         'Brad Sherman': {
-            'invoiced': 123605,
+            'invoiced': 123665,
             'pending_fulfillment': 95050,
             'pending_approval': 3145,
             'hubspot': 163471,
@@ -3039,20 +3039,6 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'hubspot_best_case': 5000,
             'jan_expect_commit': 10000,
             'jan_best_case': 24550
-        },
-        'House': {
-            'invoiced': 0,
-            'pending_fulfillment': 0,
-            'pending_approval': 0,
-            'hubspot': 0,
-            'total': 0,
-            'pending_fulfillment_so_no_date': 0,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 0,
-            'total_q4': 0,
-            'hubspot_best_case': 0,
-            'jan_expect_commit': 0,
-            'jan_best_case': 0
         },
         'Shopify ECommerce': {
             'invoiced': 29339,
