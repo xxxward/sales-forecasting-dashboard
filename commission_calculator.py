@@ -204,8 +204,17 @@ def process_commission_data_fast(df):
     if df.empty:
         return pd.DataFrame()
     
-    # Clean BOM
-    df.columns = df.columns.str.replace('﻿', '')
+    # Clean BOM and trailing spaces from column names
+    df.columns = df.columns.str.replace('﻿', '').str.strip()
+    
+    # Check for required columns
+    required_cols = ['Sales Rep', 'Date', 'Item', 'Amount']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    
+    if missing_cols:
+        st.error(f"❌ Missing required columns: {missing_cols}")
+        st.write("**Available columns:**", sorted(df.columns.tolist()))
+        return pd.DataFrame()
     
     st.info(f"📊 Starting with {len(df):,} total invoice lines")
     
@@ -308,7 +317,17 @@ def process_commission_data_fast(df):
     
     # Step 6: Calculate commissions
     df['Amount Numeric'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-    df['Subtotal'] = df['Amount Numeric']
+    
+    # Subtotal calculation: Amount - Shipping (if from SO with Amount (Shipping) column)
+    if 'Amount (Shipping)' in df.columns:
+        df['Shipping Numeric'] = pd.to_numeric(df['Amount (Shipping)'], errors='coerce').fillna(0)
+        df['Subtotal'] = df['Amount Numeric'] - df['Shipping Numeric']
+        st.caption(f"💰 Calculated Subtotal = Amount (Net of Tax) - Shipping for SO data")
+    else:
+        df['Subtotal'] = df['Amount Numeric']
+    
+    # Ensure no negative subtotals
+    df.loc[df['Subtotal'] < 0, 'Subtotal'] = 0
     
     # Get commission rate per rep (only if not already set by SO Manually Built logic)
     if 'Commission Rate' not in df.columns:
@@ -495,11 +514,49 @@ def display_data_manager():
             # Load sales order data
             if so_file is not None:
                 so_df = pd.read_csv(so_file, low_memory=False)
-                so_df.columns = so_df.columns.str.replace('﻿', '')
+                so_df.columns = so_df.columns.str.replace('﻿', '').str.strip()
+                
+                # Map SO column names to Invoice column names for consistency
+                so_column_map = {
+                    'SO #': 'Document Number',
+                    'Sales Order #': 'Document Number',
+                    'SO Number': 'Document Number',
+                    'Amount (Net of Tax)': 'Amount',  # Use net of tax as the amount
+                    'Amount (Shipping)': 'Amount (Shipping)',
+                    'HubSpot Pipeline': 'custbody_calyx_hs_pipeline',
+                }
+                
+                # Apply mapping
+                for so_col, inv_col in so_column_map.items():
+                    if so_col in so_df.columns:
+                        so_df = so_df.rename(columns={so_col: inv_col})
+                        st.caption(f"📝 Mapped '{so_col}' → '{inv_col}'")
+                
+                # For Sales Orders, we need to handle payment status differently
+                # SOs don't have "Amount Paid" - they have "Status"
+                # Mark billed/fulfilled SOs as "paid" for commission purposes
+                if 'Status' in so_df.columns:
+                    billed_status = so_df['Status'].str.upper().str.contains('BILLED|FULFILLED|INVOICED', na=False)
+                    so_df['Amount Paid'] = so_df['Amount'].where(billed_status, 0)
+                    st.caption(f"💰 Marked {billed_status.sum():,} billed/fulfilled SOs as paid")
+                
+                # Sales Orders don't have Amount Remaining - set to 0 for billed orders
+                if 'Amount Paid' in so_df.columns:
+                    so_df['Amount Remaining'] = so_df['Amount'].astype(float) - so_df['Amount Paid'].astype(float)
+                
                 so_df['Data Source'] = 'Sales Order'
                 dfs_to_combine.append(so_df)
                 st.session_state.sales_order_data = so_df
                 st.success(f"✅ Sales Order data loaded: {len(so_df):,} rows")
+                
+                # Show column comparison
+                with st.expander("🔍 Column Comparison"):
+                    if invoice_file is not None:
+                        inv_cols = set(inv_df.columns)
+                        so_cols = set(so_df.columns)
+                        st.write("**Common columns:**", sorted(inv_cols & so_cols))
+                        st.write("**Invoice-only columns:**", sorted(inv_cols - so_cols))
+                        st.write("**SO-only columns:**", sorted(so_cols - inv_cols))
             
             # Combine and deduplicate
             if len(dfs_to_combine) > 0:
