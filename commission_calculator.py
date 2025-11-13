@@ -169,6 +169,7 @@ def process_commission_data_fast(df):
     Fast processing - filter and calculate in one pass
     Only processes Sep/Oct 2025 for 4 reps
     Uses Invoice Date and Amount Paid > 0 (NetSuite methodology)
+    Now includes: Shopify mapping, SO Manually Built logic, Tooling inclusion
     """
     if df.empty:
         return pd.DataFrame()
@@ -178,21 +179,36 @@ def process_commission_data_fast(df):
     
     st.info(f"📊 Starting with {len(df):,} total invoice lines")
     
+    # Step 0: Handle Shopify ECommerce → Customer Owner mapping
+    # If Sales Rep = "Shopify ECommerce", use Customer Owner from the row
+    if 'Customer Owner' in df.columns:
+        shopify_mask = df['Sales Rep'].str.upper() == 'SHOPIFY ECOMMERCE'
+        shopify_count = shopify_mask.sum()
+        if shopify_count > 0:
+            df.loc[shopify_mask, 'Sales Rep'] = df.loc[shopify_mask, 'Customer Owner']
+            st.caption(f"🛒 Mapped {shopify_count:,} Shopify ECommerce lines to Customer Owner")
+    
     # Step 1: Quick filter to 4 reps only
     df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
     st.caption(f"✓ Filtered to 4 commission reps: {len(df):,} lines")
     
-    # Step 2: Only invoices with payment (Amount Paid > 0)
+    # Step 2: Only invoices with payment (Amount Paid > 0) OR Status = Paid In Full
     # Handle case where Amount Paid column might not exist
     if 'Amount Paid' in df.columns:
         df['Amount Paid Numeric'] = pd.to_numeric(df['Amount Paid'], errors='coerce').fillna(0)
     else:
-        st.warning("⚠️ 'Amount Paid' column not found in data. Skipping payment filter.")
+        st.warning("⚠️ 'Amount Paid' column not found in data. Using Status field only.")
         df['Amount Paid Numeric'] = 0
     
+    # Check both Amount Paid > 0 OR Status = "Paid In Full"
+    paid_mask = (df['Amount Paid Numeric'] > 0)
+    if 'Status' in df.columns:
+        paid_in_full_mask = df['Status'].str.upper().str.contains('PAID IN FULL', na=False)
+        paid_mask = paid_mask | paid_in_full_mask
+    
     initial_count = len(df)
-    df = df[df['Amount Paid Numeric'] > 0].copy()
-    st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0): {len(df):,} lines (removed {initial_count - len(df):,})")
+    df = df[paid_mask].copy()
+    st.caption(f"✓ Filtered to paid invoices (Amount Paid > 0 OR Status = Paid In Full): {len(df):,} lines (removed {initial_count - len(df):,})")
     
     # Step 3: Parse INVOICE dates and filter to Sep/Oct 2025
     st.caption("📅 Using 'Date' (Invoice Date) to determine commission month")
@@ -206,35 +222,68 @@ def process_commission_data_fast(df):
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
     st.caption(f"✓ Filtered to Sep/Oct 2025 (by Invoice Date): {len(df):,} lines")
     
-    # Step 4: Exclude shipping, tax, fees
+    # Step 4: Exclude shipping, tax, fees (but KEEP tooling)
     df['Item Upper'] = df['Item'].str.upper()
     
     def is_excluded(item_upper):
         if pd.isna(item_upper):
             return False
+        
+        # Explicitly KEEP tooling
+        if 'TOOLING' in item_upper:
+            return False
+        
+        # Exclude these
         return any(excl in item_upper for excl in EXCLUDED_ITEMS)
     
     df['Is Excluded'] = df['Item Upper'].apply(is_excluded)
     df = df[~df['Is Excluded']].copy()
-    st.caption(f"✓ Excluded shipping/tax/fees: {len(df):,} commissionable lines")
+    st.caption(f"✓ Excluded shipping/tax/fees (kept tooling): {len(df):,} commissionable lines")
     
     if df.empty:
         return df
     
-    # Step 5: Calculate commissions
+    # Step 5: Handle "SO Manually Built" pipeline
+    # For Dave/Jake: treat as Growth, for others: treat as Acquisition
+    if 'custbody_calyx_hs_pipeline' in df.columns:
+        df['Pipeline'] = df['custbody_calyx_hs_pipeline']
+        
+        manual_built_mask = df['Pipeline'].str.upper().str.contains('SO MANUALLY BUILT', na=False)
+        if manual_built_mask.sum() > 0:
+            dave_jake_mask = df['Sales Rep'].isin(['Dave Borkowski', 'Jake Lynch'])
+            
+            # Dave/Jake with SO Manually Built → Growth rate
+            df.loc[manual_built_mask & dave_jake_mask, 'Commission Rate'] = df.loc[manual_built_mask & dave_jake_mask, 'Sales Rep'].map(
+                {'Dave Borkowski': 0.05, 'Jake Lynch': 0.07}
+            )
+            
+            # Others with SO Manually Built → Acquisition rate (7%)
+            df.loc[manual_built_mask & ~dave_jake_mask, 'Commission Rate'] = 0.07
+            
+            st.caption(f"📝 Handled {manual_built_mask.sum():,} 'SO Manually Built' lines")
+    else:
+        df['Pipeline'] = 'Unknown'
+    
+    # Step 6: Calculate commissions
     df['Amount Numeric'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
     df['Subtotal'] = df['Amount Numeric']
     
-    # Get commission rate per rep
-    df['Commission Rate'] = df['Sales Rep'].map(REP_COMMISSION_RATES)
+    # Get commission rate per rep (only if not already set by SO Manually Built logic)
+    if 'Commission Rate' not in df.columns:
+        df['Commission Rate'] = 0.0
+    
+    # Fill in rates for non-manually-built orders
+    no_rate_mask = df['Commission Rate'] == 0
+    df.loc[no_rate_mask, 'Commission Rate'] = df.loc[no_rate_mask, 'Sales Rep'].map(REP_COMMISSION_RATES)
+    
     df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
     
-    # Brad's override on Lance's deals
+    # Step 7: Brad's override on Lance's deals
     df['Brad Override'] = 0.0
     lance_mask = df['Sales Rep'] == 'Lance Mitton'
     df.loc[lance_mask, 'Brad Override'] = df.loc[lance_mask, 'Subtotal'] * BRAD_OVERRIDE_RATE
     
-    # Add payout dates
+    # Step 8: Add payout dates
     df['Payout Date'] = df['Invoice Month'].apply(calculate_payout_date)
     
     # Clean up temp columns
