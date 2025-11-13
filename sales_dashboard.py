@@ -684,47 +684,7 @@ def load_all_data():
                 (~invoices_df['Sales Rep'].str.lower().isin(['house']))
             ]
             
-            # NEW: Create Shopify ECommerce virtual rep for invoices
-            # Priority: If actual sales rep is mentioned, attribute to them. Otherwise, Shopify bucket.
-            actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
-            
-            if 'HubSpot_Pipeline' in invoices_df.columns:
-                invoices_df['HubSpot_Pipeline'] = invoices_df['HubSpot_Pipeline'].astype(str).str.strip()
-            if 'CSM' in invoices_df.columns:
-                invoices_df['CSM'] = invoices_df['CSM'].astype(str).str.strip()
-            
-            # Identify potential Shopify/Ecommerce orders
-            shopify_invoice_mask = pd.Series([False] * len(invoices_df), index=invoices_df.index)
-            
-            if 'HubSpot_Pipeline' in invoices_df.columns:
-                shopify_invoice_mask |= (invoices_df['HubSpot_Pipeline'] == 'Ecommerce Pipeline')
-            if 'CSM' in invoices_df.columns:
-                shopify_invoice_mask |= (invoices_df['CSM'] == 'Shopify ECommerce')
-            
-            # For Shopify/Ecommerce orders, check if an actual sales rep is mentioned
-            if shopify_invoice_mask.any():
-                shopify_candidates = invoices_df[shopify_invoice_mask].copy()
-                
-                for idx, row in shopify_candidates.iterrows():
-                    # Check if any actual sales rep is mentioned in Sales Rep or CSM fields
-                    sales_rep = str(row.get('Sales Rep', ''))
-                    csm = str(row.get('CSM', '')) if 'CSM' in shopify_candidates.columns else ''
-                    
-                    # Check if one of the 5 actual reps is mentioned
-                    actual_rep_found = None
-                    for rep in actual_sales_reps:
-                        if rep in sales_rep or rep in csm:
-                            actual_rep_found = rep
-                            break
-                    
-                    if actual_rep_found:
-                        # Attribute to the actual sales rep
-                        invoices_df.at[idx, 'Sales Rep'] = actual_rep_found
-                    else:
-                        # Attribute to Shopify ECommerce
-                        invoices_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
-            
-            # Calculate total invoices by rep
+            # Calculate total invoices by rep (Rep Master has already assigned everything correctly)
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
             
@@ -735,17 +695,6 @@ def load_all_data():
             
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
-            
-            # NEW: Add Shopify ECommerce to dashboard if it has invoices but isn't already in dashboard
-            if 'Shopify ECommerce' in invoice_totals['Rep Name'].values:
-                if 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
-                    shopify_invoice_total = invoice_totals[invoice_totals['Rep Name'] == 'Shopify ECommerce']['Invoice Total'].iloc[0]
-                    new_shopify_row = pd.DataFrame([{
-                        'Rep Name': 'Shopify ECommerce',
-                        'Quota': 0,  # No quota for Shopify
-                        'NetSuite Orders': shopify_invoice_total
-                    }])
-                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     
     # Process sales orders data with NEW LOGIC
     if not sales_orders_df.empty:
@@ -2971,17 +2920,17 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     # Boss's Q4 numbers from the LATEST screenshot (November 13, 2025)
     boss_rep_numbers = {
         'Jake Lynch': {
-            'invoiced': 760424,
+            'invoiced': 750424,
             'pending_fulfillment': 243121,
             'pending_approval': 26198,
             'hubspot': 192829,
-            'total': 1222572,
+            'total': 1212572,
             'pending_fulfillment_so_no_date': 81154,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 39174,
-            'total_q4': 1342900,
+            'total_q4': 1342200,
             'hubspot_best_case': 547752,
-            'jan_expect_commit': 109540,
+            'jan_expect_commit': 100540,
             'jan_best_case': 235871
         },
         'Dave Borkowski': {
@@ -3013,7 +2962,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'jan_best_case': 0
         },
         'Brad Sherman': {
-            'invoiced': 123665,
+            'invoiced': 123605,
             'pending_fulfillment': 95050,
             'pending_approval': 3145,
             'hubspot': 163471,
@@ -3039,6 +2988,20 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'hubspot_best_case': 5000,
             'jan_expect_commit': 10000,
             'jan_best_case': 24550
+        },
+        'House': {
+            'invoiced': 0,
+            'pending_fulfillment': 0,
+            'pending_approval': 0,
+            'hubspot': 0,
+            'total': 0,
+            'pending_fulfillment_so_no_date': 0,
+            'pending_approval_so_no_date': 0,
+            'old_pending_approval': 0,
+            'total_q4': 0,
+            'hubspot_best_case': 0,
+            'jan_expect_commit': 0,
+            'jan_best_case': 0
         },
         'Shopify ECommerce': {
             'invoiced': 29339,
