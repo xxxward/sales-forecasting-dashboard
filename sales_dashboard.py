@@ -644,13 +644,22 @@ def load_all_data():
             # This fixes the Shopify eCommerce invoices that weren't being applied to reps correctly
             if 'Rep Master' in invoices_df.columns:
                 # Rep Master takes priority - replace Sales Rep with Rep Master values
-                invoices_df['Sales Rep'] = invoices_df['Rep Master']
+                # But first, clean up Rep Master to handle any formula errors or blanks
+                invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
+                # Replace empty strings, 'nan', 'None', '#N/A', '#REF!' with original Sales Rep
+                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+                mask = invoices_df['Rep Master'].isin(invalid_values)
+                # Only replace Sales Rep where Rep Master has a valid value
+                invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
                 # Drop the Rep Master column since we've copied it to Sales Rep
                 invoices_df = invoices_df.drop(columns=['Rep Master'])
             
             if 'Corrected Customer Name' in invoices_df.columns:
                 # Corrected Customer Name takes priority - replace Customer with corrected values
-                invoices_df['Customer'] = invoices_df['Corrected Customer Name']
+                invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
+                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+                mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
+                invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
                 # Drop the Corrected Customer Name column since we've copied it to Customer
                 invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
             
@@ -833,52 +842,6 @@ def load_all_data():
                 (sales_orders_df['Sales Rep'] != 'nan') &
                 (~sales_orders_df['Sales Rep'].str.lower().isin(['house']))
             ]
-        
-        # NEW: Create Shopify ECommerce virtual rep for sales orders
-        # Priority: If actual sales rep is mentioned, attribute to them. Otherwise, Shopify bucket.
-        if 'PI_CSM' in sales_orders_df.columns:
-            sales_orders_df['PI_CSM'] = sales_orders_df['PI_CSM'].astype(str).str.strip()
-            
-            actual_sales_reps = ['Brad Sherman', 'Lance Mitton', 'Dave Borkowski', 'Jake Lynch', 'Alex Gonzalez']
-            
-            # Identify potential Shopify orders
-            shopify_mask = (
-                (sales_orders_df['Sales Rep'] == 'Shopify ECommerce') | 
-                (sales_orders_df['PI_CSM'] == 'Shopify ECommerce')
-            )
-            
-            # For Shopify orders, check if an actual sales rep is mentioned
-            if shopify_mask.any():
-                shopify_candidates = sales_orders_df[shopify_mask].copy()
-                
-                for idx, row in shopify_candidates.iterrows():
-                    # Check if any actual sales rep is mentioned in Sales Rep or PI_CSM fields
-                    sales_rep = str(row.get('Sales Rep', ''))
-                    pi_csm = str(row.get('PI_CSM', ''))
-                    
-                    # Check if one of the 5 actual reps is mentioned
-                    actual_rep_found = None
-                    for rep in actual_sales_reps:
-                        if rep in sales_rep or rep in pi_csm:
-                            actual_rep_found = rep
-                            break
-                    
-                    if actual_rep_found:
-                        # Attribute to the actual sales rep
-                        sales_orders_df.at[idx, 'Sales Rep'] = actual_rep_found
-                    else:
-                        # Attribute to Shopify ECommerce
-                        sales_orders_df.at[idx, 'Sales Rep'] = 'Shopify ECommerce'
-                
-                # Ensure Shopify ECommerce exists in dashboard_df only if it has attributed orders
-                shopify_order_count = (sales_orders_df['Sales Rep'] == 'Shopify ECommerce').sum()
-                if shopify_order_count > 0 and 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
-                    new_shopify_row = pd.DataFrame([{
-                        'Rep Name': 'Shopify ECommerce',
-                        'Quota': 0,
-                        'NetSuite Orders': 0  # Will be calculated from sales orders in calculate_rep_metrics
-                    }])
-                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     else:
         st.warning("Could not find required columns in NS Sales Orders")
         sales_orders_df = pd.DataFrame()
