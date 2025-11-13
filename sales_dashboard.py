@@ -718,14 +718,14 @@ def load_all_data():
             
             # Filter to valid invoices only:
             # - Must have Amount > 0
-            # - Must have a Sales Rep assigned
-            # - Exclude 'House' (case insensitive)
+            # - Must have a Sales Rep assigned (not blank/nan)
+            # - Exclude 'House' only (keep Shopify ECommerce and all actual reps)
             invoices_df = invoices_df[
                 (invoices_df['Amount'] > 0) & 
                 (invoices_df['Sales Rep'].notna()) & 
                 (invoices_df['Sales Rep'] != '') &
                 (invoices_df['Sales Rep'].str.lower() != 'nan') &
-                (~invoices_df['Sales Rep'].str.lower().isin(['house']))
+                (invoices_df['Sales Rep'].str.lower() != 'house')
             ]
             
             # DEBUG: After all filters
@@ -744,6 +744,17 @@ def load_all_data():
             
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
+            
+            # Add Shopify ECommerce to dashboard if it has invoices but isn't in dashboard yet
+            if 'Shopify ECommerce' in invoice_totals['Rep Name'].values:
+                if 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
+                    shopify_total = invoice_totals[invoice_totals['Rep Name'] == 'Shopify ECommerce']['Invoice Total'].iloc[0]
+                    new_shopify_row = pd.DataFrame([{
+                        'Rep Name': 'Shopify ECommerce',
+                        'Quota': 0,
+                        'NetSuite Orders': shopify_total
+                    }])
+                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
     
     # Process sales orders data with NEW LOGIC
     if not sales_orders_df.empty:
