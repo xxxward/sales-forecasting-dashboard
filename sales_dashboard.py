@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v45_shopify_ecommerce_fix"
+CACHE_VERSION = "v46_debug_duplicates"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -733,9 +733,24 @@ def load_all_data():
             after_all_amount = invoices_df['Amount'].sum()
             st.sidebar.caption(f"✅ After all filters: {after_all_filters} invoices, ${after_all_amount:,.0f}")
             
+            # DEBUG: Check for duplicates
+            if 'Invoice Number' in invoices_df.columns:
+                duplicate_count = invoices_df['Invoice Number'].duplicated().sum()
+                if duplicate_count > 0:
+                    st.sidebar.warning(f"⚠️ Found {duplicate_count} duplicate invoice numbers!")
+                    # Show a sample
+                    dups = invoices_df[invoices_df['Invoice Number'].duplicated(keep=False)].sort_values('Invoice Number')
+                    st.sidebar.caption(f"Sample duplicates: {dups[['Invoice Number', 'Sales Rep', 'Amount']].head(10).to_dict('records')}")
+            
             # Calculate total invoices by rep (Rep Master has already assigned everything correctly)
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
+            
+            # DEBUG: Show what groupby calculated
+            st.sidebar.markdown("**📊 Invoice Totals After GroupBy:**")
+            for idx, row in invoice_totals.iterrows():
+                st.sidebar.caption(f"  {row['Rep Name']}: ${row['Invoice Total']:,.0f}")
+            st.sidebar.caption(f"**Total from groupby: ${invoice_totals['Invoice Total'].sum():,.0f}**")
             
             dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
             
