@@ -2917,9 +2917,9 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'pending_fulfillment_so_no_date': 81154,
             'pending_approval_so_no_date': 0,
             'old_pending_approval': 39174,
-            'total_q4': 1332900,
+            'total_q4': 1342200,
             'hubspot_best_case': 547752,
-            'jan_expect_commit': 109540,
+            'jan_expect_commit': 100540,
             'jan_best_case': 235871
         },
         'Dave Borkowski': {
@@ -2931,9 +2931,9 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'pending_fulfillment_so_no_date': 104006,
             'pending_approval_so_no_date': 1464,
             'old_pending_approval': 18664,
-            'total_q4': 981222,
+            'total_q4': 981221,
             'hubspot_best_case': 179927,
-            'jan_expect_commit': 88839,
+            'jan_expect_commit': 88939,
             'jan_best_case': 90311
         },
         'Alex Gonzalez': {
@@ -2957,9 +2957,9 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'hubspot': 163471,
             'total': 385332,
             'pending_fulfillment_so_no_date': 2971,
-            'pending_approval_so_no_date': 1723,
+            'pending_approval_so_no_date': 4553,
             'old_pending_approval': 1723,
-            'total_q4': 394588,
+            'total_q4': 394580,
             'hubspot_best_case': 112107,
             'jan_expect_commit': 29643,
             'jan_best_case': 62430
@@ -2993,7 +2993,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
             'jan_best_case': 0
         },
         'Shopify ECommerce': {
-            'invoiced': 29335,
+            'invoiced': 29339,
             'pending_fulfillment': 0,
             'pending_approval': 1345,
             'hubspot': 0,
@@ -3151,6 +3151,65 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
         if additional_data:
             additional_df = pd.DataFrame(additional_data)
             st.dataframe(additional_df, use_container_width=True, hide_index=True)
+        
+        # Section 3: Q1 2026 Spillover
+        st.markdown('<div class="section-header">Section 3: Q1 2026 Spillover (January)</div>', unsafe_allow_html=True)
+        st.info("These are deals that will close in late Q4 2025 but ship in Q1 2026 due to lead times")
+        
+        q1_spillover_data = []
+        q1_totals = {
+            'expect_commit_you': 0, 'expect_commit_boss': 0,
+            'best_case_you': 0, 'best_case_boss': 0,
+            'total_you': 0, 'total_boss': 0
+        }
+        
+        for rep_name in boss_rep_numbers.keys():
+            metrics = None
+            if rep_name in dashboard_df['Rep Name'].values:
+                metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
+            
+            if metrics or rep_name == 'Shopify ECommerce':
+                boss = boss_rep_numbers[rep_name]
+                
+                # Get Q1 spillover values
+                your_expect_commit = metrics.get('q1_expect_commit', 0) if metrics else 0
+                your_best_case = metrics.get('q1_best_case', 0) if metrics else 0
+                your_q1_total = your_expect_commit + your_best_case
+                
+                boss_q1_total = boss['jan_expect_commit'] + boss['jan_best_case']
+                
+                # Update totals
+                q1_totals['expect_commit_you'] += your_expect_commit
+                q1_totals['expect_commit_boss'] += boss['jan_expect_commit']
+                q1_totals['best_case_you'] += your_best_case
+                q1_totals['best_case_boss'] += boss['jan_best_case']
+                q1_totals['total_you'] += your_q1_total
+                q1_totals['total_boss'] += boss_q1_total
+                
+                q1_spillover_data.append({
+                    'Rep': rep_name,
+                    'Expect/Commit': f"${your_expect_commit:,.0f}",
+                    'Expect/Commit (Boss)': f"${boss['jan_expect_commit']:,.0f}",
+                    'Best Case': f"${your_best_case:,.0f}",
+                    'Best Case (Boss)': f"${boss['jan_best_case']:,.0f}",
+                    'Total Q1 Spillover': f"${your_q1_total:,.0f}",
+                    'Total Q1 (Boss)': f"${boss_q1_total:,.0f}"
+                })
+        
+        # Add totals row
+        q1_spillover_data.append({
+            'Rep': 'TOTAL',
+            'Expect/Commit': f"${q1_totals['expect_commit_you']:,.0f}",
+            'Expect/Commit (Boss)': f"${q1_totals['expect_commit_boss']:,.0f}",
+            'Best Case': f"${q1_totals['best_case_you']:,.0f}",
+            'Best Case (Boss)': f"${q1_totals['best_case_boss']:,.0f}",
+            'Total Q1 Spillover': f"${q1_totals['total_you']:,.0f}",
+            'Total Q1 (Boss)': f"${q1_totals['total_boss']:,.0f}"
+        })
+        
+        if q1_spillover_data:
+            q1_spillover_df = pd.DataFrame(q1_spillover_data)
+            st.dataframe(q1_spillover_df, use_container_width=True, hide_index=True)
     
     with tab2:
         st.markdown("### Pipeline-Level Comparison")
@@ -3162,11 +3221,13 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
     # Calculate differences first
     diff = totals['total_boss'] - totals['total_you']
     final_diff = additional_totals['final_boss'] - additional_totals['final_you']
+    q1_diff = q1_totals['total_boss'] - q1_totals['total_you']
     
     # Debug: Show the actual totals being compared
-    st.caption(f"Debug: Your Total = ${additional_totals['final_you']:,.0f} | Boss Total = ${additional_totals['final_boss']:,.0f} | Diff = ${abs(final_diff):,.0f}")
+    st.caption(f"Debug: Your Total Q4 = ${additional_totals['final_you']:,.0f} | Boss Total Q4 = ${additional_totals['final_boss']:,.0f} | Diff = ${abs(final_diff):,.0f}")
+    st.caption(f"Debug: Your Q1 Spillover = ${q1_totals['total_you']:,.0f} | Boss Q1 Spillover = ${q1_totals['total_boss']:,.0f} | Diff = ${abs(q1_diff):,.0f}")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric("Section 1 Variance", f"${abs(diff):,.0f}", 
@@ -3177,6 +3238,10 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
                  delta=f"{'Under' if final_diff > 0 else 'Over'} by ${abs(final_diff):,.0f}")
     
     with col3:
+        st.metric("Q1 Spillover Variance", f"${abs(q1_diff):,.0f}",
+                 delta=f"{'Under' if q1_diff > 0 else 'Over'} by ${abs(q1_diff):,.0f}")
+    
+    with col4:
         if additional_totals['final_boss'] > 0:
             # Calculate accuracy as: 100% - (percentage difference)
             accuracy = (1 - abs(final_diff) / additional_totals['final_boss']) * 100
