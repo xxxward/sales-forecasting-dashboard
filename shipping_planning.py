@@ -104,6 +104,8 @@ def load_all_data():
                 rename_dict[col] = 'Q1 2026 Spillover'
             elif col == 'Account Name':
                 rename_dict[col] = 'Account Name'
+            elif 'Pending Approval' in col or 'Expected Close' in col or 'Target Close' in col:
+                rename_dict[col] = 'Expected Close Date'
         
         deals_df = deals_df.rename(columns=rename_dict)
         
@@ -126,9 +128,11 @@ def load_all_data():
         if 'Amount' in deals_df.columns:
             deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
         
-        # Convert Close Date
+        # Convert Close Date and Expected Close Date
         if 'Close Date' in deals_df.columns:
             deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+        if 'Expected Close Date' in deals_df.columns:
+            deals_df['Expected Close Date'] = pd.to_datetime(deals_df['Expected Close Date'], errors='coerce')
         
         # Filter to Q4 2025
         q4_start = pd.Timestamp('2025-10-01')
@@ -444,7 +448,12 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
             'q1_expect_commit', 'q1_best_opp'
         ]
         
-        st.markdown("**Select items to include:**")
+        # Add Select All button
+        select_all_col, instructions_col = st.columns([1, 3])
+        with select_all_col:
+            select_all = st.button(f"Select All", key=f"select_all_{category_key}")
+        with instructions_col:
+            st.markdown("**Select items to include:**")
         
         # Track selected items for this category
         if category_key not in selected_items_dict:
@@ -459,17 +468,24 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                 if is_hubspot:
                     item_id = row.get('Record ID', idx)
                     deal_name = row.get('Deal Name', 'Unknown Deal')
-                    company = row.get('Account Name', '')
+                    company = row.get('Account Name', row.get('Customer', ''))
                     amount_val = row.get('Amount', 0)
-                    close_date = row.get('Close Date', '')
-                    if pd.notna(close_date) and hasattr(close_date, 'strftime'):
-                        close_date_str = close_date.strftime('%Y-%m-%d')
+                    
+                    # Try Expected Close Date first, then fall back to Close Date
+                    date_to_show = row.get('Expected Close Date')
+                    date_label = "Expected Close"
+                    if pd.isna(date_to_show):
+                        date_to_show = row.get('Close Date')
+                        date_label = "Close"
+                    
+                    if pd.notna(date_to_show) and hasattr(date_to_show, 'strftime'):
+                        close_date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
                     else:
-                        close_date_str = str(close_date) if pd.notna(close_date) else ''
+                        close_date_str = ""
                     
                     label = f"**{deal_name}** | {company} | ${amount_val:,.0f}"
                     if close_date_str:
-                        label += f" | Close: {close_date_str}"
+                        label += f" | {close_date_str}"
                     
                     link = f"https://app.hubspot.com/contacts/6712259/record/0-3/{item_id}/"
                 
@@ -488,16 +504,20 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                         label += f" | {date_str}"
                     link = None
                 
-                else:  # NetSuite
+                else:  # NetSuite Sales Order
                     item_id = row.get('Document Number', idx)
                     internal_id = row.get('Internal ID', '')
                     company = row.get('Customer', '')
-                    amount_val = row.get('Amount', 0)
+                    amount_val = pd.to_numeric(row.get('Amount', 0), errors='coerce')
+                    if pd.isna(amount_val):
+                        amount_val = 0
                     status = row.get('Status', '')
                     
                     # Show the most relevant date
                     date_to_show = None
                     date_label = ""
+                    
+                    # Check each date column and use the first available one
                     if pd.notna(row.get('Customer Promise Date')):
                         date_to_show = row.get('Customer Promise Date')
                         date_label = "Cust Promise"
@@ -508,21 +528,25 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                         date_to_show = row.get('Pending Approval Date')
                         date_label = "PA Date"
                     
-                    if date_to_show and hasattr(date_to_show, 'strftime'):
-                        date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
-                    else:
-                        date_str = ""
+                    date_str = ""
+                    if date_to_show is not None and hasattr(date_to_show, 'strftime'):
+                        try:
+                            date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
+                        except:
+                            date_str = ""
                     
-                    label = f"**SO# {item_id}** | {company} | ${amount_val:,.0f} | {status}"
+                    label = f"**SO# {item_id}** | {company} | ${amount_val:,.0f}"
+                    if status:
+                        label += f" | {status}"
                     if date_str:
                         label += f" | {date_str}"
                     
                     link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence=" if pd.notna(internal_id) else None
                 
-                # Checkbox for selection
+                # Checkbox for selection - default to True if Select All was clicked
                 is_selected = st.checkbox(
                     label,
-                    value=False,
+                    value=select_all,
                     key=f"{category_key}_{item_id}_{idx}"
                 )
             
