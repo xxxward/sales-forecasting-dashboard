@@ -142,6 +142,11 @@ def load_sales_orders():
     if df.empty:
         return pd.DataFrame()
     
+    # DEBUG: Show actual columns loaded
+    st.sidebar.info(f"SO Columns loaded: {len(df.columns)}")
+    with st.sidebar.expander("SO Column Names"):
+        st.write(df.columns.tolist()[:10])  # Show first 10 columns
+    
     # Rename columns based on your existing logic
     col_names = df.columns.tolist()
     rename_dict = {}
@@ -224,11 +229,14 @@ def load_sales_orders():
     # Add record metadata
     df['Record_Type'] = 'Sales_Order'
     
-    # Use Document_Number if available, otherwise use Internal_ID
+    # Try multiple possible ID columns in order of preference
     if 'Document_Number' in df.columns:
-        df['Record_ID'] = df['Document_Number']
+        df['Record_ID'] = df['Document_Number'].astype(str)
     elif 'Internal_ID' in df.columns:
-        df['Record_ID'] = df['Internal_ID']
+        df['Record_ID'] = df['Internal_ID'].astype(str)
+    elif len(df.columns) > 0:
+        # Use the first column as fallback (usually the ID)
+        df['Record_ID'] = df.iloc[:, 0].astype(str)
     else:
         df['Record_ID'] = 'SO_' + df.index.astype(str)
     
@@ -298,9 +306,11 @@ def load_invoices():
     # Add record metadata
     df['Record_Type'] = 'Invoice'
     
-    # Use Invoice_Number if available
+    # Use Invoice_Number if available, otherwise first column
     if 'Invoice_Number' in df.columns:
-        df['Record_ID'] = df['Invoice_Number']
+        df['Record_ID'] = df['Invoice_Number'].astype(str)
+    elif len(df.columns) > 0:
+        df['Record_ID'] = df.iloc[:, 0].astype(str)
     else:
         df['Record_ID'] = 'INV_' + df.index.astype(str)
     
@@ -380,6 +390,8 @@ def load_hubspot_deals():
     
     if 'Deal_ID' in df.columns:
         df['Record_ID'] = df['Deal_ID'].astype(str)
+    elif len(df.columns) > 0:
+        df['Record_ID'] = df.iloc[:, 0].astype(str)
     else:
         df['Record_ID'] = 'DEAL_' + df.index.astype(str)
     
