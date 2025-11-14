@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v54_fix_debug_columns"
+CACHE_VERSION = "v55_pa_age_gte_15_business_days"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -2232,7 +2232,7 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             rep_orders = rep_orders.loc[:, ~rep_orders.columns.duplicated()]
         
         # PENDING APPROVAL LOGIC - FIXED TO PREVENT DOUBLE COUNTING
-        # Priority: Age > 14 days takes precedence over date field status
+        # Priority: Age >= 15 business days takes precedence over date field status
         pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
         
         if not pending_approval_orders.empty:
@@ -2244,41 +2244,29 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
             if 'Age_Business_Days' not in pending_approval_orders.columns:
                 st.warning("⚠️ Age_Business_Days column missing from Sales Orders. Cannot calculate Old PA correctly.")
             
-            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 14 business days)
+            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 15 business days)
             # This takes priority and removes orders from other categories
             if 'Age_Business_Days' in pending_approval_orders.columns:
-                # DEBUG: Show ages for Dave's PA orders
-                if rep_name == 'Dave Borkowski':
-                    st.write(f"🔍 Dave's Pending Approval Orders:")
-                    debug_cols = []
-                    if 'Document Number' in pending_approval_orders.columns:
-                        debug_cols.append('Document Number')
-                    if 'Order Start Date' in pending_approval_orders.columns:
-                        debug_cols.append('Order Start Date')
-                    debug_cols.extend(['Age_Business_Days', 'Amount'])
-                    debug_df = pending_approval_orders[debug_cols].copy()
-                    st.dataframe(debug_df)
-                
-                old_mask = pending_approval_orders['Age_Business_Days'] >= 14
+                old_mask = pending_approval_orders['Age_Business_Days'] >= 15
                 pending_approval_old_details = pending_approval_orders[old_mask].copy()
                 # Remove duplicate columns
                 if pending_approval_old_details.columns.duplicated().any():
                     pending_approval_old_details = pending_approval_old_details.loc[:, ~pending_approval_old_details.columns.duplicated()]
                 pending_approval_old = pending_approval_old_details['Amount'].sum() if not pending_approval_old_details.empty else 0
                 
-                # Create a mask for orders that are NOT old (Age < 14 days)
+                # Create a mask for orders that are NOT old (Age < 15 days)
                 # These are the only ones eligible for Categories 1 and 2
-                young_orders_mask = pending_approval_orders['Age_Business_Days'] < 14
+                young_orders_mask = pending_approval_orders['Age_Business_Days'] < 15
                 young_orders = pending_approval_orders[young_orders_mask].copy()
             else:
                 pending_approval_old = 0
                 pending_approval_old_details = pd.DataFrame()
                 young_orders = pending_approval_orders.copy()
             
-            # Now process only the "young" orders (Age <= 14 days) for Categories 1 and 2
+            # Now process only the "young" orders (Age < 15 business days) for Categories 1 and 2
             if not young_orders.empty and 'Pending Approval Date' in young_orders.columns:
                 
-                # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age <= 14 days)
+                # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age < 15 business days)
                 pa_with_date_mask = (
                     (young_orders['Pending Approval Date'].notna()) &
                     (young_orders['Pending Approval Date'] != 'No Date') &
@@ -2291,7 +2279,7 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
                     pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
                 pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
                 
-                # CATEGORY 2: Pending Approval with "No Date" string (and Age <= 14 days)
+                # CATEGORY 2: Pending Approval with "No Date" string (and Age < 15 business days)
                 # Robust matching for various "No Date" formats from Google Sheets
                 pa_no_date_mask = (
                     (young_orders['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
