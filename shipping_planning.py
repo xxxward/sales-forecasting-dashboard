@@ -142,11 +142,6 @@ def load_sales_orders():
     if df.empty:
         return pd.DataFrame()
     
-    # DEBUG: Show actual columns loaded
-    st.sidebar.info(f"SO Columns loaded: {len(df.columns)}")
-    with st.sidebar.expander("SO Column Names"):
-        st.write(df.columns.tolist()[:10])  # Show first 10 columns
-    
     # Rename columns based on your existing logic
     col_names = df.columns.tolist()
     rename_dict = {}
@@ -192,9 +187,6 @@ def load_sales_orders():
         rename_dict[col_names[29]] = 'Rep_Master'
     
     df = df.rename(columns=rename_dict)
-    
-    # DEBUG: Show what key columns exist after rename
-    st.sidebar.success(f"✅ SO has: Document_Number={('Document_Number' in df.columns)}, Internal_ID={('Internal_ID' in df.columns)}, Amount={('Amount' in df.columns)}")
     
     # Apply Rep Master override
     if 'Rep_Master' in df.columns:
@@ -513,14 +505,6 @@ def load_all_planning_data():
         
         if not all_records:
             return pd.DataFrame()
-        
-        # Debug: Show columns in each dataframe before concat
-        with st.sidebar.expander("🔍 Pre-Concat Debug"):
-            for i, df in enumerate(all_records):
-                st.write(f"DF {i}: {len(df.columns)} cols, {len(df.columns.unique())} unique")
-                if len(df.columns) != len(df.columns.unique()):
-                    duplicates = df.columns[df.columns.duplicated()].tolist()
-                    st.error(f"DF {i} has duplicates: {duplicates}")
         
         try:
             combined_df = pd.concat(all_records, ignore_index=True)
