@@ -223,7 +223,14 @@ def load_sales_orders():
     
     # Add record metadata
     df['Record_Type'] = 'Sales_Order'
-    df['Record_ID'] = df['Document_Number']
+    
+    # Use Document_Number if available, otherwise use Internal_ID
+    if 'Document_Number' in df.columns:
+        df['Record_ID'] = df['Document_Number']
+    elif 'Internal_ID' in df.columns:
+        df['Record_ID'] = df['Internal_ID']
+    else:
+        df['Record_ID'] = 'SO_' + df.index.astype(str)
     
     return df
 
@@ -290,7 +297,12 @@ def load_invoices():
     
     # Add record metadata
     df['Record_Type'] = 'Invoice'
-    df['Record_ID'] = df['Invoice_Number']
+    
+    # Use Invoice_Number if available
+    if 'Invoice_Number' in df.columns:
+        df['Record_ID'] = df['Invoice_Number']
+    else:
+        df['Record_ID'] = 'INV_' + df.index.astype(str)
     
     return df
 
@@ -365,7 +377,11 @@ def load_hubspot_deals():
     
     # Add record metadata
     df['Record_Type'] = 'HubSpot_Deal'
-    df['Record_ID'] = df['Deal_ID'].astype(str) if 'Deal_ID' in df.columns else ''
+    
+    if 'Deal_ID' in df.columns:
+        df['Record_ID'] = df['Deal_ID'].astype(str)
+    else:
+        df['Record_ID'] = 'DEAL_' + df.index.astype(str)
     
     return df
 
