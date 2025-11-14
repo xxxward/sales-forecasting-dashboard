@@ -417,8 +417,8 @@ def load_all_data():
     # Load invoice data from NetSuite - EXTEND to include Columns T:U (Corrected Customer Name, Rep Master)
     invoices_df = load_google_sheets_data("NS Invoices", "A:U", version=CACHE_VERSION)
     
-    # Load sales orders data from NetSuite - EXTEND to include Columns AC:AD (Corrected Customer Name, Rep Master)
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AD", version=CACHE_VERSION)
+    # Load sales orders data from NetSuite - EXTEND to include Columns through AF (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
     
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -788,14 +788,16 @@ def load_all_data():
             rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
         if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
             rename_dict[col_names[12]] = 'Projected Date'  # Column M
-        if len(col_names) > 27 and 'Pending Approval Date' not in rename_dict.values():
-            rename_dict[col_names[27]] = 'Pending Approval Date'  # Column AB
         
-        # NEW: Map Corrected Customer Name (Column AC - index 28) and Rep Master (Column AD - index 29)
+        # NEW COLUMN POSITIONS after adding Calyx | External Order in column AC
         if len(col_names) > 28:
-            rename_dict[col_names[28]] = 'Corrected Customer Name'  # Column AC
-        if len(col_names) > 29:
-            rename_dict[col_names[29]] = 'Rep Master'  # Column AD
+            rename_dict[col_names[28]] = 'Calyx External Order'  # Column AC - NEW!
+        if len(col_names) > 29 and 'Pending Approval Date' not in rename_dict.values():
+            rename_dict[col_names[29]] = 'Pending Approval Date'  # Column AD (was AB)
+        if len(col_names) > 30:
+            rename_dict[col_names[30]] = 'Corrected Customer Name'  # Column AE (was AC)
+        if len(col_names) > 31:
+            rename_dict[col_names[31]] = 'Rep Master'  # Column AF (was AD)
         
         # NEW: Map PI || CSM column (Column G based on screenshot)
         for idx, col in enumerate(col_names):
@@ -1403,23 +1405,70 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # Available data sources with their values
     sources = {
         'Invoiced & Shipped': metrics.get('orders', 0),
-        'Pending Fulfillment (with date)': metrics.get('pending_fulfillment', 0),
+        'Pending Fulfillment (with date) - Internal': 0,  # Will calculate below
+        'Pending Fulfillment (with date) - External': 0,  # Will calculate below
         'Pending Approval (with date)': metrics.get('pending_approval', 0),
         'HubSpot Expect': metrics.get('expect_commit', 0) if 'expect_commit' in metrics else 0,
         'HubSpot Commit': 0,  # Will calculate separately
         'HubSpot Best Case': 0,  # Will calculate separately
         'HubSpot Opportunity': 0,  # Will calculate separately
-        'Pending Fulfillment (without date)': metrics.get('pending_fulfillment_no_date', 0),
+        'Pending Fulfillment (without date) - Internal': 0,  # Will calculate below
+        'Pending Fulfillment (without date) - External': 0,  # Will calculate below
         'Pending Approval (without date)': metrics.get('pending_approval_no_date', 0),
         'Pending Approval (>2 weeks old)': metrics.get('pending_approval_old', 0),
         'Q1 Spillover - Expect/Commit': metrics.get('q1_spillover_expect_commit', 0),
         'Q1 Spillover - Best Case': metrics.get('q1_spillover_best_opp', 0)
     }
     
+    # Calculate External vs Internal Pending Fulfillment splits
+    if sales_orders_df is not None and not sales_orders_df.empty:
+        if rep_name and 'Sales Rep' in sales_orders_df.columns:
+            so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+        else:
+            so_data = sales_orders_df.copy()
+        
+        if not so_data.empty and 'Calyx External Order' in so_data.columns:
+            # Pending Fulfillment WITH date - split by External/Internal
+            pf_with_date = so_data[
+                (so_data['Status'] == 'Pending Fulfillment') &
+                ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
+            ].copy()
+            
+            if not pf_with_date.empty:
+                pf_with_date['Amount_Numeric'] = pd.to_numeric(pf_with_date['Amount'], errors='coerce')
+                # External orders
+                sources['Pending Fulfillment (with date) - External'] = pf_with_date[
+                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                ]['Amount_Numeric'].sum()
+                # Internal orders (anything not marked as EXTERNAL)
+                sources['Pending Fulfillment (with date) - Internal'] = pf_with_date[
+                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                ]['Amount_Numeric'].sum()
+            
+            # Pending Fulfillment WITHOUT date - split by External/Internal
+            pf_no_date = so_data[
+                (so_data['Status'] == 'Pending Fulfillment') &
+                (so_data['Customer Promise Date'].isna()) &
+                (so_data['Projected Date'].isna())
+            ].copy()
+            
+            if not pf_no_date.empty:
+                pf_no_date['Amount_Numeric'] = pd.to_numeric(pf_no_date['Amount'], errors='coerce')
+                # External orders
+                sources['Pending Fulfillment (without date) - External'] = pf_no_date[
+                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                ]['Amount_Numeric'].sum()
+                # Internal orders (anything not marked as EXTERNAL)
+                sources['Pending Fulfillment (without date) - Internal'] = pf_no_date[
+                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                ]['Amount_Numeric'].sum()
+    
     # Track which categories allow individual selection
     individual_select_categories = [
         'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
-        'Pending Fulfillment (without date)', 'Pending Approval (without date)', 
+        'Pending Fulfillment (with date) - Internal', 'Pending Fulfillment (with date) - External',
+        'Pending Fulfillment (without date) - Internal', 'Pending Fulfillment (without date) - External',
+        'Pending Approval (without date)', 
         'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit', 'Q1 Spillover - Best Case'
     ]
     
@@ -1502,18 +1551,55 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             # Get the relevant data for this category
             items_to_select = []
             
-            # Sales Orders categories
-            if 'Pending Fulfillment (without date)' in category and sales_orders_df is not None:
+            # Sales Orders categories - NOW WITH EXTERNAL/INTERNAL SPLIT
+            if 'Pending Fulfillment (with date)' in category and sales_orders_df is not None:
                 if rep_name and 'Sales Rep' in sales_orders_df.columns:
                     so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
                 else:
                     so_data = sales_orders_df.copy()
                 
-                items_to_select = so_data[
+                # Base filter for Pending Fulfillment with date
+                base_filter = so_data[
+                    (so_data['Status'] == 'Pending Fulfillment') &
+                    ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
+                ].copy()
+                
+                # Apply External/Internal filter if specified
+                if 'External' in category and 'Calyx External Order' in base_filter.columns:
+                    items_to_select = base_filter[
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                    ].copy()
+                elif 'Internal' in category and 'Calyx External Order' in base_filter.columns:
+                    items_to_select = base_filter[
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                    ].copy()
+                else:
+                    items_to_select = base_filter
+                
+            elif 'Pending Fulfillment (without date)' in category and sales_orders_df is not None:
+                if rep_name and 'Sales Rep' in sales_orders_df.columns:
+                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+                else:
+                    so_data = sales_orders_df.copy()
+                
+                # Base filter for Pending Fulfillment without date
+                base_filter = so_data[
                     (so_data['Status'] == 'Pending Fulfillment') &
                     (so_data['Customer Promise Date'].isna()) &
                     (so_data['Projected Date'].isna())
                 ].copy()
+                
+                # Apply External/Internal filter if specified
+                if 'External' in category and 'Calyx External Order' in base_filter.columns:
+                    items_to_select = base_filter[
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                    ].copy()
+                elif 'Internal' in category and 'Calyx External Order' in base_filter.columns:
+                    items_to_select = base_filter[
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                    ].copy()
+                else:
+                    items_to_select = base_filter
                 
             elif 'Pending Approval (without date)' in category and sales_orders_df is not None:
                 if rep_name and 'Sales Rep' in sales_orders_df.columns:
@@ -1597,110 +1683,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         ].copy()
                         st.caption("⚠️ Using fallback logic - Q1 2026 Spillover column not found")
             
-            # ====== NEW DRILL-DOWN SECTION ======
-            # Display detailed drill-down BEFORE the selection interface
+            # Display selection interface
             if not items_to_select.empty:
-                st.caption(f"📊 **Viewing {len(items_to_select)} items totaling ${pd.to_numeric(items_to_select['Amount' if 'Amount' in items_to_select.columns else 'Amount_Numeric'], errors='coerce').sum():,.0f}**")
-                
-                # Create drill-down expander showing all details
-                with st.expander(f"👀 View Detailed Breakdown (click to expand)", expanded=True):
-                    # Determine if this is HubSpot or NetSuite data
-                    is_hubspot = 'Deal Name' in items_to_select.columns
-                    is_netsuite = 'Document Number' in items_to_select.columns or 'Internal ID' in items_to_select.columns
-                    
-                    # Create display dataframe with links
-                    display_df = pd.DataFrame()
-                    column_config = {}
-                    
-                    if is_hubspot and 'Record ID' in items_to_select.columns:
-                        # HubSpot deals - show links and details
-                        display_df['🔗 Link'] = items_to_select['Record ID'].apply(
-                            lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
-                        )
-                        column_config['🔗 Link'] = st.column_config.LinkColumn(
-                            "🔗 Link",
-                            help="Click to view deal in HubSpot",
-                            display_text="View Deal"
-                        )
-                        
-                        # Add Deal ID
-                        display_df['Deal ID'] = items_to_select['Record ID']
-                        
-                        # Add other HubSpot columns
-                        if 'Deal Name' in items_to_select.columns:
-                            display_df['Deal Name'] = items_to_select['Deal Name']
-                        if 'Account Name' in items_to_select.columns:
-                            display_df['Customer'] = items_to_select['Account Name']
-                        if 'Amount_Numeric' in items_to_select.columns:
-                            display_df['Amount'] = items_to_select['Amount_Numeric'].apply(lambda x: f"${x:,.2f}")
-                        elif 'Amount' in items_to_select.columns:
-                            display_df['Amount'] = pd.to_numeric(items_to_select['Amount'], errors='coerce').apply(lambda x: f"${x:,.2f}")
-                        if 'Status' in items_to_select.columns:
-                            display_df['Status'] = items_to_select['Status']
-                        if 'Pipeline' in items_to_select.columns:
-                            display_df['Pipeline'] = items_to_select['Pipeline']
-                        if 'Close Date' in items_to_select.columns:
-                            if pd.api.types.is_datetime64_any_dtype(items_to_select['Close Date']):
-                                display_df['Close Date'] = items_to_select['Close Date'].dt.strftime('%Y-%m-%d')
-                            else:
-                                display_df['Close Date'] = items_to_select['Close Date']
-                        if 'Product Type' in items_to_select.columns:
-                            display_df['Product Type'] = items_to_select['Product Type']
-                    
-                    elif is_netsuite:
-                        # NetSuite sales orders - show SO# and links
-                        if 'Internal ID' in items_to_select.columns:
-                            display_df['🔗 Link'] = items_to_select['Internal ID'].apply(
-                                lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
-                            )
-                            column_config['🔗 Link'] = st.column_config.LinkColumn(
-                                "🔗 Link",
-                                help="Click to view sales order in NetSuite",
-                                display_text="View SO"
-                            )
-                            # Also show Internal ID as a regular column
-                            display_df['Internal ID'] = items_to_select['Internal ID']
-                        
-                        # Add SO# (Document Number)
-                        if 'Document Number' in items_to_select.columns:
-                            display_df['SO#'] = items_to_select['Document Number']
-                        
-                        # Add other NetSuite columns
-                        if 'Customer' in items_to_select.columns:
-                            display_df['Customer'] = items_to_select['Customer']
-                        if 'Amount' in items_to_select.columns:
-                            display_df['Amount'] = pd.to_numeric(items_to_select['Amount'], errors='coerce').apply(lambda x: f"${x:,.2f}")
-                        if 'Status' in items_to_select.columns:
-                            display_df['Status'] = items_to_select['Status']
-                        if 'Order Start Date' in items_to_select.columns:
-                            if pd.api.types.is_datetime64_any_dtype(items_to_select['Order Start Date']):
-                                display_df['Order Start Date'] = items_to_select['Order Start Date'].dt.strftime('%Y-%m-%d')
-                            else:
-                                display_df['Order Start Date'] = items_to_select['Order Start Date']
-                        if 'Age_Business_Days' in items_to_select.columns:
-                            display_df['Age (Days)'] = items_to_select['Age_Business_Days']
-                    
-                    # Display the formatted dataframe
-                    if not display_df.empty:
-                        st.dataframe(
-                            display_df,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config=column_config if column_config else None
-                        )
-                        
-                        # Summary statistics
-                        amount_col = 'Amount_Numeric' if 'Amount_Numeric' in items_to_select.columns else 'Amount'
-                        total_amount = pd.to_numeric(items_to_select[amount_col], errors='coerce').sum()
-                        st.caption(f"💰 **Total: ${total_amount:,.2f} | Count: {len(items_to_select)} items**")
-                    else:
-                        st.warning("Could not format data for display")
-                        st.dataframe(items_to_select, use_container_width=True, hide_index=True)
-                
-                st.markdown("---")
-                st.markdown(f"##### ✅ Select items to include in your forecast:")
-                st.caption(f"Check the boxes below to select specific items from the {len(items_to_select)} available")
-            # ====== END NEW DRILL-DOWN SECTION ======
+                st.caption(f"Found {len(items_to_select)} items - select the ones you want to include")
                 
                 selected_items = []
                 
@@ -1868,13 +1853,17 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 so_data = sales_orders_df.copy()
             
             if not so_data.empty:
-                # Pending Fulfillment with date (always bulk)
-                if selected_sources.get('Pending Fulfillment (with date)', False):
-                    pf_data = so_data[so_data['Status'] == 'Pending Fulfillment'].copy()
-                    for _, row in pf_data.iterrows():
-                        if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
+                # Pending Fulfillment WITH date - External (always bulk, not selectable)
+                if selected_sources.get('Pending Fulfillment (with date) - External', False):
+                    pf_data = so_data[
+                        (so_data['Status'] == 'Pending Fulfillment') &
+                        ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
+                    ].copy()
+                    if 'Calyx External Order' in pf_data.columns:
+                        pf_external = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL']
+                        for _, row in pf_external.iterrows():
                             export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment',
+                                'Type': 'Sales Order - PF (External)',
                                 'ID': row.get('Document Number', ''),
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
@@ -1883,7 +1872,42 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
                 
-                # Pending Approval with date (always bulk)
+                # Pending Fulfillment WITH date - Internal (can be individual selection)
+                if selected_sources.get('Pending Fulfillment (with date) - Internal', False):
+                    category = 'Pending Fulfillment (with date) - Internal'
+                    if individual_selection_mode.get(category, False) and category in individual_selections:
+                        # Use individual selections
+                        for item in individual_selections[category]:
+                            row = item['row']
+                            export_data.append({
+                                'Type': 'Sales Order - PF (Internal)',
+                                'ID': row.get('Document Number', ''),
+                                'Name': '',
+                                'Customer': row.get('Customer', ''),
+                                'Amount': item['amount'],
+                                'Date': row.get('Order Start Date', ''),
+                                'Sales Rep': row.get('Sales Rep', '')
+                            })
+                    else:
+                        # Bulk export
+                        pf_data = so_data[
+                            (so_data['Status'] == 'Pending Fulfillment') &
+                            ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
+                        ].copy()
+                        if 'Calyx External Order' in pf_data.columns:
+                            pf_internal = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL']
+                            for _, row in pf_internal.iterrows():
+                                export_data.append({
+                                    'Type': 'Sales Order - PF (Internal)',
+                                    'ID': row.get('Document Number', ''),
+                                    'Name': '',
+                                    'Customer': row.get('Customer', ''),
+                                    'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                    'Date': row.get('Order Start Date', ''),
+                                    'Sales Rep': row.get('Sales Rep', '')
+                                })
+                
+                # Pending Approval with date (always bulk - no change)
                 if selected_sources.get('Pending Approval (with date)', False):
                     pa_data = so_data[so_data['Status'] == 'Pending Approval'].copy()
                     for _, row in pa_data.iterrows():
@@ -1898,15 +1922,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
                 
-                # Pending Fulfillment without date - check individual mode
-                if selected_sources.get('Pending Fulfillment (without date)', False):
-                    category = 'Pending Fulfillment (without date)'
+                # Pending Fulfillment WITHOUT date - External
+                if selected_sources.get('Pending Fulfillment (without date) - External', False):
+                    category = 'Pending Fulfillment (without date) - External'
                     if individual_selection_mode.get(category, False) and category in individual_selections:
                         # Use individual selections
                         for item in individual_selections[category]:
                             row = item['row']
                             export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment (No Date)',
+                                'Type': 'Sales Order - PF No Date (External)',
                                 'ID': row.get('Document Number', ''),
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
@@ -1921,16 +1945,54 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             (so_data['Customer Promise Date'].isna()) &
                             (so_data['Projected Date'].isna())
                         ].copy()
-                        for _, row in pf_no_date.iterrows():
+                        if 'Calyx External Order' in pf_no_date.columns:
+                            pf_external = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL']
+                            for _, row in pf_external.iterrows():
+                                export_data.append({
+                                    'Type': 'Sales Order - PF No Date (External)',
+                                    'ID': row.get('Document Number', ''),
+                                    'Name': '',
+                                    'Customer': row.get('Customer', ''),
+                                    'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                    'Date': row.get('Order Start Date', ''),
+                                    'Sales Rep': row.get('Sales Rep', '')
+                                })
+                
+                # Pending Fulfillment WITHOUT date - Internal
+                if selected_sources.get('Pending Fulfillment (without date) - Internal', False):
+                    category = 'Pending Fulfillment (without date) - Internal'
+                    if individual_selection_mode.get(category, False) and category in individual_selections:
+                        # Use individual selections
+                        for item in individual_selections[category]:
+                            row = item['row']
                             export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment (No Date)',
+                                'Type': 'Sales Order - PF No Date (Internal)',
                                 'ID': row.get('Document Number', ''),
                                 'Name': '',
                                 'Customer': row.get('Customer', ''),
-                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                'Amount': item['amount'],
                                 'Date': row.get('Order Start Date', ''),
                                 'Sales Rep': row.get('Sales Rep', '')
                             })
+                    else:
+                        # Bulk export
+                        pf_no_date = so_data[
+                            (so_data['Status'] == 'Pending Fulfillment') &
+                            (so_data['Customer Promise Date'].isna()) &
+                            (so_data['Projected Date'].isna())
+                        ].copy()
+                        if 'Calyx External Order' in pf_no_date.columns:
+                            pf_internal = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL']
+                            for _, row in pf_internal.iterrows():
+                                export_data.append({
+                                    'Type': 'Sales Order - PF No Date (Internal)',
+                                    'ID': row.get('Document Number', ''),
+                                    'Name': '',
+                                    'Customer': row.get('Customer', ''),
+                                    'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
+                                    'Date': row.get('Order Start Date', ''),
+                                    'Sales Rep': row.get('Sales Rep', '')
+                                })
                 
                 # Pending Approval without date - check individual mode
                 if selected_sources.get('Pending Approval (without date)', False):
