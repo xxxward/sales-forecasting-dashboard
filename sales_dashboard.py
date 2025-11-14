@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v59_pa_age_gte_13_final"
+CACHE_VERSION = "v60_debug_hubspot_totals"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -541,21 +541,29 @@ def load_all_data():
             
             if 'Close Date' in deals_df.columns:
                 before_count = len(deals_df)
+                before_amount = deals_df['Amount'].sum()
+                
                 deals_df = deals_df[
                     (deals_df['Close Date'] >= q4_start) & 
                     (deals_df['Close Date'] <= q4_end)
                 ]
                 after_count = len(deals_df)
+                after_amount = deals_df['Amount'].sum()
                 
-                #st.sidebar.info(f"📅 Q4 2025 Filter: {before_count} deals → {after_count} deals")
+                st.sidebar.markdown("### 📊 HubSpot Data Loaded")
+                st.sidebar.caption(f"Total deals before Q4 filter: {before_count} (${before_amount:,.0f})")
+                st.sidebar.caption(f"Q4 2025 deals: {after_count} (${after_amount:,.0f})")
+                st.sidebar.caption(f"Filtered out: {before_count - after_count} deals")
                 
-                if after_count == 0:
-                    pass  # Debug info removed
-                    #st.sidebar.error("❌ No deals found in Q4 2025 (Oct-Dec 2025)")
-                    #st.sidebar.info("💡 Your data range is 2019-2021. You may need to refresh your Google Sheet with current HubSpot data.")
-                else:
-                    pass  # Debug info removed
-                    #st.sidebar.success(f"✅ Found {after_count} Q4 2025 deals worth ${deals_df['Amount'].sum():,.0f}")
+                # Show breakdown by rep for Expect/Commit
+                if 'Deal Owner' in deals_df.columns and 'Status' in deals_df.columns:
+                    expect_commit = deals_df[deals_df['Status'].isin(['Expect', 'Commit'])]
+                    st.sidebar.markdown("**Expect/Commit by Rep:**")
+                    for rep in ['Brad Sherman', 'Jake Lynch', 'Dave Borkowski', 'Lance Mitton']:
+                        rep_deals = expect_commit[expect_commit['Deal Owner'] == rep]
+                        if not rep_deals.empty:
+                            st.sidebar.caption(f"{rep}: {len(rep_deals)} deals, ${rep_deals['Amount'].sum():,.0f}")
+
             else:
                 pass  # Debug info removed
                 #st.sidebar.error("❌ Cannot apply date filter - no Close Date column")
