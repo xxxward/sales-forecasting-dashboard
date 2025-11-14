@@ -436,10 +436,22 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
         return
     
     with st.expander(f"{title}: ${amount:,.0f} (👀 Click to see {item_count} {'item' if item_count == 1 else 'items'})"):
+        # Initialize session state for this category's select all
+        select_all_key = f"select_all_{category_key}"
+        if select_all_key not in st.session_state:
+            st.session_state[select_all_key] = False
+        
         # Determine data type
         is_hubspot = 'Deal Name' in details_df.columns
         is_invoice = 'Invoice Number' in details_df.columns
         is_netsuite = 'Document Number' in details_df.columns or 'Internal ID' in details_df.columns
+        
+        # DEBUG: Show what columns we have for sales orders
+        if is_netsuite and item_count > 0:
+            st.caption(f"🔍 Debug - Columns available: {', '.join(details_df.columns.tolist()[:10])}")
+            # Show first row data
+            first_row = details_df.iloc[0]
+            st.caption(f"🔍 Debug - First SO#: {first_row.get('Document Number', 'MISSING')}, Amount: {first_row.get('Amount', 'MISSING')}, Customer: {first_row.get('Customer', 'MISSING')}")
         
         # Determine if this category needs ship dates
         needs_ship_dates = category_key in [
@@ -449,9 +461,15 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
         ]
         
         # Add Select All button
-        select_all_col, instructions_col = st.columns([1, 3])
+        select_all_col, deselect_col, instructions_col = st.columns([1, 1, 2])
         with select_all_col:
-            select_all = st.button(f"Select All", key=f"select_all_{category_key}")
+            if st.button(f"✓ Select All", key=f"btn_select_all_{category_key}"):
+                st.session_state[select_all_key] = True
+                st.rerun()
+        with deselect_col:
+            if st.button(f"✗ Deselect All", key=f"btn_deselect_all_{category_key}"):
+                st.session_state[select_all_key] = False
+                st.rerun()
         with instructions_col:
             st.markdown("**Select items to include:**")
         
@@ -508,9 +526,21 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                     item_id = row.get('Document Number', idx)
                     internal_id = row.get('Internal ID', '')
                     company = row.get('Customer', '')
-                    amount_val = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    if pd.isna(amount_val):
-                        amount_val = 0
+                    
+                    # Get amount - try different approaches
+                    amount_val = row.get('Amount', 0)
+                    if isinstance(amount_val, str):
+                        # Clean string amounts
+                        amount_val = amount_val.replace(',', '').replace('$', '').strip()
+                        try:
+                            amount_val = float(amount_val)
+                        except:
+                            amount_val = 0
+                    else:
+                        amount_val = pd.to_numeric(amount_val, errors='coerce')
+                        if pd.isna(amount_val):
+                            amount_val = 0
+                    
                     status = row.get('Status', '')
                     
                     # Show the most relevant date
@@ -543,10 +573,10 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                     
                     link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence=" if pd.notna(internal_id) else None
                 
-                # Checkbox for selection - default to True if Select All was clicked
+                # Checkbox for selection - use session state value
                 is_selected = st.checkbox(
                     label,
-                    value=select_all,
+                    value=st.session_state[select_all_key],
                     key=f"{category_key}_{item_id}_{idx}"
                 )
             
