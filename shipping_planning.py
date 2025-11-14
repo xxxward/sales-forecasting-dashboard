@@ -163,14 +163,12 @@ def load_sales_orders():
         if 'so' in col_b_name.lower() and 'number' in col_b_name.lower():
             rename_dict[col_names[1]] = 'Document_Number'
     
-    # Find standard columns
+    # Find standard columns - look for fuzzy matches
     for idx, col in enumerate(col_names):
         col_lower = str(col).lower()
         if 'status' in col_lower and 'Status' not in rename_dict.values():
             rename_dict[col] = 'Status'
-        elif 'document' in col_lower and 'Document_Number' not in rename_dict.values():
-            rename_dict[col] = 'Document_Number'
-        elif 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
+        elif 'customer' in col_lower and 'promise' not in col_lower and 'external' not in col_lower and 'Customer' not in rename_dict.values():
             rename_dict[col] = 'Customer'
         elif ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
             rename_dict[col] = 'Amount'
@@ -194,6 +192,9 @@ def load_sales_orders():
         rename_dict[col_names[29]] = 'Rep_Master'
     
     df = df.rename(columns=rename_dict)
+    
+    # DEBUG: Show what key columns exist after rename
+    st.sidebar.success(f"✅ SO has: Document_Number={('Document_Number' in df.columns)}, Internal_ID={('Internal_ID' in df.columns)}, Amount={('Amount' in df.columns)}")
     
     # Apply Rep Master override
     if 'Rep_Master' in df.columns:
