@@ -640,25 +640,44 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     gap_to_quota = quota - custom_forecast
     attainment_pct = (custom_forecast / quota * 100) if quota > 0 else 0
     
-    # Display results
+    # Calculate shipping metrics
+    invoiced_shipped = sources.get('Invoiced & Shipped', 0)
+    to_ship = custom_forecast - invoiced_shipped
+    
+    # Calculate working days remaining in Q4 (approximate)
+    today = datetime.now()
+    q4_end = datetime(2025, 12, 31)
+    remaining_calendar_days = (q4_end - today).days
+    # Rough estimate: 5/7 of days are working days
+    working_days_remaining = max(1, int(remaining_calendar_days * (5/7)))
+    per_day_needed = to_ship / working_days_remaining if working_days_remaining > 0 else 0
+    
+    # Display results - OPS FOCUSED
     st.markdown("---")
-    st.markdown("#### 📊 Your Custom Forecast")
+    st.markdown("#### 📦 Shipping Plan Summary")
     
     result_col1, result_col2, result_col3, result_col4 = st.columns(4)
     
     with result_col1:
-        st.metric("Quota", f"${quota:,.0f}")
+        st.metric("Q4 Quota", f"${quota:,.0f}")
     
     with result_col2:
-        st.metric("Custom Forecast", f"${custom_forecast:,.0f}")
+        shipped_pct = (invoiced_shipped / quota * 100) if quota > 0 else 0
+        st.metric("✅ Shipped", f"${invoiced_shipped:,.0f}", 
+                 delta=f"{shipped_pct:.1f}%",
+                 delta_color="normal")
     
     with result_col3:
-        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", 
-                 delta=f"${-gap_to_quota:,.0f}" if gap_to_quota < 0 else None,
-                 delta_color="inverse")
+        st.metric("📦 To Ship", f"${to_ship:,.0f}",
+                 delta=f"Per day: ${per_day_needed:,.0f}",
+                 delta_color="off",
+                 help=f"Based on ~{working_days_remaining} working days remaining in Q4")
     
     with result_col4:
-        st.metric("Attainment", f"{attainment_pct:.1f}%")
+        gap_pct = (gap_to_quota / quota * 100) if quota > 0 else 0
+        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}",
+                 delta=f"{gap_pct:.1f}% short" if gap_to_quota > 0 else f"{abs(gap_pct):.1f}% over",
+                 delta_color="inverse")
     
     # Export functionality
     if any(selected_sources.values()):
