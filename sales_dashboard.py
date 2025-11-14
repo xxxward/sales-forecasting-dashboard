@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v55_pa_age_gte_15_business_days"
+CACHE_VERSION = "v56_remove_all_debug"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -640,10 +640,6 @@ def load_all_data():
             
             invoices_df = invoices_df.rename(columns=rename_dict)
             
-            # DEBUG: Show what we're starting with
-            initial_count = len(invoices_df)
-            initial_amount = invoices_df['Amount'].sum() if 'Amount' in invoices_df.columns else 0
-            
             # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
             # This fixes the Shopify eCommerce invoices that weren't being applied to reps correctly
             if 'Rep Master' in invoices_df.columns:
@@ -653,10 +649,6 @@ def load_all_data():
                 # Replace empty strings, 'nan', 'None', '#N/A', '#REF!' with original Sales Rep
                 invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
                 mask = invoices_df['Rep Master'].isin(invalid_values)
-                
-                # DEBUG: Count how many have invalid Rep Master
-                invalid_count = mask.sum()
-                st.sidebar.caption(f"🔍 Invoices with invalid Rep Master: {invalid_count}")
                 
                 # Only replace Sales Rep where Rep Master has a valid value
                 invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
@@ -686,10 +678,6 @@ def load_all_data():
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
             
-            # DEBUG: Before date filter
-            before_date_filter = len(invoices_df)
-            before_date_amount = invoices_df['Amount'].sum()
-            
             # Filter to Q4 2025 only (10/1/2025 - 12/31/2025)
             # This should match exactly what your boss filters in the sheet
             q4_start = pd.Timestamp('2025-10-01')
@@ -701,28 +689,8 @@ def load_all_data():
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            # DEBUG: After date filter
-            after_date_filter = len(invoices_df)
-            after_date_amount = invoices_df['Amount'].sum()
-            st.sidebar.caption(f"📅 After date filter: {after_date_filter} invoices, ${after_date_amount:,.0f}")
-            
             # Clean up Sales Rep field
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
-            
-            # DEBUG: Check what will be filtered out
-            st.sidebar.markdown("**🔍 Filtering Analysis:**")
-            invalid_rep_na = (invoices_df['Sales Rep'].isna()).sum()
-            invalid_rep_blank = (invoices_df['Sales Rep'] == '').sum()
-            invalid_rep_nan = (invoices_df['Sales Rep'].str.lower() == 'nan').sum()
-            invalid_rep_house = (invoices_df['Sales Rep'].str.lower() == 'house').sum()
-            negative_amounts = (invoices_df['Amount'] < 0).sum()
-            negative_total = invoices_df[invoices_df['Amount'] < 0]['Amount'].sum()
-            
-            st.sidebar.caption(f"Negative amounts (credit memos): {negative_amounts} totaling ${negative_total:,.0f}")
-            st.sidebar.caption(f"Sales Rep is NA: {invalid_rep_na}")
-            st.sidebar.caption(f"Sales Rep is blank: {invalid_rep_blank}")
-            st.sidebar.caption(f"Sales Rep is 'nan': {invalid_rep_nan}")
-            st.sidebar.caption(f"Sales Rep is 'house': {invalid_rep_house}")
             
             # Filter out invalid Sales Reps BEFORE groupby
             # NOTE: We DO NOT filter Amount > 0 because credit memos (negative amounts) should reduce totals
@@ -741,32 +709,9 @@ def load_all_data():
                 if before_dedupe != after_dedupe:
                     st.sidebar.warning(f"⚠️ Removed {before_dedupe - after_dedupe} duplicate invoices!")
             
-            # DEBUG: Show Sales Rep distribution AFTER cleaning but BEFORE groupby
-            st.sidebar.markdown("**Sales Rep Distribution (after cleaning):**")
-            rep_counts = invoices_df['Sales Rep'].value_counts()
-            for rep, count in rep_counts.head(10).items():
-                rep_amount = invoices_df[invoices_df['Sales Rep'] == rep]['Amount'].sum()
-                st.sidebar.caption(f"  {rep}: {count} invoices, ${rep_amount:,.0f}")
-            st.sidebar.caption(f"**Total before groupby: ${invoices_df['Amount'].sum():,.0f}**")
-            
-            # DEBUG: Show Brad Sherman's specific invoices
-            if 'Brad Sherman' in invoices_df['Sales Rep'].values:
-                brad_invoices = invoices_df[invoices_df['Sales Rep'] == 'Brad Sherman'].copy()
-                st.sidebar.markdown("**🔍 Brad Sherman Invoices:**")
-                st.sidebar.caption(f"Count: {len(brad_invoices)}")
-                st.sidebar.caption(f"Total: ${brad_invoices['Amount'].sum():,.0f}")
-                if 'Invoice Number' in brad_invoices.columns:
-                    st.sidebar.caption(f"Invoice Numbers: {brad_invoices['Invoice Number'].tolist()}")
-            
-            # NOW do the groupby on the cleaned data
+            # Calculate invoice totals by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
-            
-            # DEBUG: Show what groupby calculated
-            st.sidebar.markdown("**📊 Invoice Totals After GroupBy:**")
-            for idx, row in invoice_totals.iterrows():
-                st.sidebar.caption(f"  {row['Rep Name']}: ${row['Invoice Total']:,.0f}")
-            st.sidebar.caption(f"**Total from groupby: ${invoice_totals['Invoice Total'].sum():,.0f}**")
             
             dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
             
