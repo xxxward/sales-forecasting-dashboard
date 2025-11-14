@@ -429,29 +429,17 @@ def calculate_team_metrics(deals_df, dashboard_df, invoices_df, sales_orders_df)
     return metrics
 
 def display_drill_down_with_ship_dates(title, amount, details_df, category_key, ship_dates_dict, selected_items_dict):
-    """Display collapsible section with checkboxes for individual selection and ship date inputs"""
+    """Display collapsible section with ALL items listed and individual checkboxes"""
     
     item_count = len(details_df)
     if item_count == 0:
         return
     
-    with st.expander(f"{title}: ${amount:,.0f} (👀 Click to see {item_count} {'item' if item_count == 1 else 'items'})"):
-        # Initialize session state for this category's select all
-        select_all_key = f"select_all_{category_key}"
-        if select_all_key not in st.session_state:
-            st.session_state[select_all_key] = False
-        
+    with st.expander(f"{title}: ${amount:,.0f} (👀 {item_count} {'item' if item_count == 1 else 'items'})"):
         # Determine data type
         is_hubspot = 'Deal Name' in details_df.columns
-        is_invoice = 'Invoice Number' in details_df.columns
+        is_invoice = 'Invoice Number' in details_df.columns  
         is_netsuite = 'Document Number' in details_df.columns or 'Internal ID' in details_df.columns
-        
-        # DEBUG: Show what columns we have for sales orders
-        if is_netsuite and item_count > 0:
-            st.caption(f"🔍 Debug - Columns available: {', '.join(details_df.columns.tolist()[:10])}")
-            # Show first row data
-            first_row = details_df.iloc[0]
-            st.caption(f"🔍 Debug - First SO#: {first_row.get('Document Number', 'MISSING')}, Amount: {first_row.get('Amount', 'MISSING')}, Customer: {first_row.get('Customer', 'MISSING')}")
         
         # Determine if this category needs ship dates
         needs_ship_dates = category_key in [
@@ -460,18 +448,7 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
             'q1_expect_commit', 'q1_best_opp'
         ]
         
-        # Add Select All button
-        select_all_col, deselect_col, instructions_col = st.columns([1, 1, 2])
-        with select_all_col:
-            if st.button(f"✓ Select All", key=f"btn_select_all_{category_key}"):
-                st.session_state[select_all_key] = True
-                st.rerun()
-        with deselect_col:
-            if st.button(f"✗ Deselect All", key=f"btn_deselect_all_{category_key}"):
-                st.session_state[select_all_key] = False
-                st.rerun()
-        with instructions_col:
-            st.markdown("**Select items to include:**")
+        st.markdown("**💡 Tip:** Check the boxes to select items for your shipping plan")
         
         # Track selected items for this category
         if category_key not in selected_items_dict:
@@ -479,115 +456,81 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
         
         # Display items with checkboxes
         for idx, row in details_df.iterrows():
-            col1, col2 = st.columns([3, 1])
+            # Build display based on type
+            if is_hubspot:
+                item_id = str(row.get('Record ID', idx))
+                deal_name = row.get('Deal Name', 'Unknown Deal')
+                company = row.get('Account Name', row.get('Customer', ''))
+                amount_val = float(row.get('Amount', 0)) if pd.notna(row.get('Amount')) else 0
+                
+                # Try Expected Close Date first, then Close Date
+                date_to_show = row.get('Expected Close Date')
+                date_label = "Expected"
+                if pd.isna(date_to_show):
+                    date_to_show = row.get('Close Date')
+                    date_label = "Close"
+                
+                date_str = ""
+                if pd.notna(date_to_show) and hasattr(date_to_show, 'strftime'):
+                    date_str = f" | {date_label}: {date_to_show.strftime('%Y-%m-%d')}"
+                
+                label = f"{deal_name} | {company} | ${amount_val:,.0f}{date_str}"
+                link = f"https://app.hubspot.com/contacts/6712259/record/0-3/{item_id}/"
+            
+            elif is_invoice:
+                item_id = str(row.get('Invoice Number', idx))
+                company = row.get('Customer', '')
+                amount_val = float(row.get('Amount', 0)) if pd.notna(row.get('Amount')) else 0
+                
+                date_str = ""
+                invoice_date = row.get('Date')
+                if pd.notna(invoice_date) and hasattr(invoice_date, 'strftime'):
+                    date_str = f" | {invoice_date.strftime('%Y-%m-%d')}"
+                
+                label = f"INV #{item_id} | {company} | ${amount_val:,.0f}{date_str}"
+                link = None
+            
+            else:  # NetSuite Sales Order
+                item_id = str(row.get('Document Number', idx))
+                internal_id = str(row.get('Internal ID', ''))
+                company = row.get('Customer', '')
+                
+                # Handle amount carefully
+                amount_val = row.get('Amount', 0)
+                try:
+                    amount_val = float(amount_val)
+                except:
+                    amount_val = 0
+                
+                status = row.get('Status', '')
+                
+                # Get first available date
+                date_str = ""
+                for date_col, date_label in [('Customer Promise Date', 'Cust'), ('Projected Date', 'Proj'), ('Pending Approval Date', 'PA')]:
+                    date_val = row.get(date_col)
+                    if pd.notna(date_val) and hasattr(date_val, 'strftime'):
+                        date_str = f" | {date_label}: {date_val.strftime('%Y-%m-%d')}"
+                        break
+                
+                label = f"SO #{item_id} | {company} | ${amount_val:,.0f} | {status}{date_str}"
+                link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence=" if internal_id else None
+            
+            # Create two columns: checkbox+label and link
+            col1, col2 = st.columns([4, 1])
             
             with col1:
-                # Build display label based on type
-                if is_hubspot:
-                    item_id = row.get('Record ID', idx)
-                    deal_name = row.get('Deal Name', 'Unknown Deal')
-                    company = row.get('Account Name', row.get('Customer', ''))
-                    amount_val = row.get('Amount', 0)
-                    
-                    # Try Expected Close Date first, then fall back to Close Date
-                    date_to_show = row.get('Expected Close Date')
-                    date_label = "Expected Close"
-                    if pd.isna(date_to_show):
-                        date_to_show = row.get('Close Date')
-                        date_label = "Close"
-                    
-                    if pd.notna(date_to_show) and hasattr(date_to_show, 'strftime'):
-                        close_date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
-                    else:
-                        close_date_str = ""
-                    
-                    label = f"**{deal_name}** | {company} | ${amount_val:,.0f}"
-                    if close_date_str:
-                        label += f" | {close_date_str}"
-                    
-                    link = f"https://app.hubspot.com/contacts/6712259/record/0-3/{item_id}/"
-                
-                elif is_invoice:
-                    item_id = row.get('Invoice Number', idx)
-                    company = row.get('Customer', '')
-                    amount_val = row.get('Amount', 0)
-                    invoice_date = row.get('Date', '')
-                    if pd.notna(invoice_date) and hasattr(invoice_date, 'strftime'):
-                        date_str = invoice_date.strftime('%Y-%m-%d')
-                    else:
-                        date_str = str(invoice_date) if pd.notna(invoice_date) else ''
-                    
-                    label = f"**INV #{item_id}** | {company} | ${amount_val:,.0f}"
-                    if date_str:
-                        label += f" | {date_str}"
-                    link = None
-                
-                else:  # NetSuite Sales Order
-                    item_id = row.get('Document Number', idx)
-                    internal_id = row.get('Internal ID', '')
-                    company = row.get('Customer', '')
-                    
-                    # Get amount - try different approaches
-                    amount_val = row.get('Amount', 0)
-                    if isinstance(amount_val, str):
-                        # Clean string amounts
-                        amount_val = amount_val.replace(',', '').replace('$', '').strip()
-                        try:
-                            amount_val = float(amount_val)
-                        except:
-                            amount_val = 0
-                    else:
-                        amount_val = pd.to_numeric(amount_val, errors='coerce')
-                        if pd.isna(amount_val):
-                            amount_val = 0
-                    
-                    status = row.get('Status', '')
-                    
-                    # Show the most relevant date
-                    date_to_show = None
-                    date_label = ""
-                    
-                    # Check each date column and use the first available one
-                    if pd.notna(row.get('Customer Promise Date')):
-                        date_to_show = row.get('Customer Promise Date')
-                        date_label = "Cust Promise"
-                    elif pd.notna(row.get('Projected Date')):
-                        date_to_show = row.get('Projected Date')
-                        date_label = "Projected"
-                    elif pd.notna(row.get('Pending Approval Date')):
-                        date_to_show = row.get('Pending Approval Date')
-                        date_label = "PA Date"
-                    
-                    date_str = ""
-                    if date_to_show is not None and hasattr(date_to_show, 'strftime'):
-                        try:
-                            date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
-                        except:
-                            date_str = ""
-                    
-                    label = f"**SO# {item_id}** | {company} | ${amount_val:,.0f}"
-                    if status:
-                        label += f" | {status}"
-                    if date_str:
-                        label += f" | {date_str}"
-                    
-                    link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence=" if pd.notna(internal_id) else None
-                
-                # Checkbox for selection - use session state value
                 is_selected = st.checkbox(
                     label,
-                    value=st.session_state[select_all_key],
-                    key=f"{category_key}_{item_id}_{idx}"
+                    value=False,
+                    key=f"{category_key}_{item_id}_{idx}_v2"
                 )
             
             with col2:
-                # Show link if available
                 if link:
                     st.markdown(f"[View →]({link})")
             
-            # If selected, add to tracking and show ship date input if needed
+            # Track selected items
             if is_selected:
-                # Track this selection
                 selected_items_dict[category_key].append({
                     'id': item_id,
                     'amount': amount_val,
@@ -598,12 +541,11 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
                 if needs_ship_dates:
                     default_date = datetime.now() + timedelta(days=14)
                     ship_date = st.date_input(
-                        f"📅 Ship Date",
+                        f"📅 Ship Date for {item_id}",
                         value=default_date,
-                        key=f"ship_date_{category_key}_{item_id}_{idx}"
+                        key=f"ship_{category_key}_{item_id}_{idx}_v2"
                     )
                     
-                    # Store in ship dates dictionary
                     ship_dates_dict[f"{category_key}_{item_id}"] = {
                         'ship_date': ship_date,
                         'amount': amount_val,
@@ -616,7 +558,7 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
             selected_total = sum(item['amount'] for item in selected_items_dict[category_key])
             st.success(f"✓ Selected {selected_count} of {item_count} items | Total: ${selected_total:,.0f}")
         else:
-            st.info(f"No items selected (0 of {item_count})")
+            st.caption(f"No items selected yet (0 of {item_count})")
 
 def create_ship_date_chart(ship_dates_dict, custom_forecast):
     """Create a timeline chart showing when things will ship"""
