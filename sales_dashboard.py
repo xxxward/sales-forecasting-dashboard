@@ -234,7 +234,7 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 
 # Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v60_debug_hubspot_totals"
+CACHE_VERSION = "v61_fix_dec31_timestamp"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
@@ -536,8 +536,9 @@ def load_all_data():
                 #st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
             # FILTER: Only Q4 2025 deals (Oct 1 - Dec 31, 2025)
+            # Use < Jan 1, 2026 to include all of Dec 31 regardless of timestamp
             q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
+            q4_end = pd.Timestamp('2026-01-01')
             
             if 'Close Date' in deals_df.columns:
                 before_count = len(deals_df)
@@ -545,7 +546,7 @@ def load_all_data():
                 
                 deals_df = deals_df[
                     (deals_df['Close Date'] >= q4_start) & 
-                    (deals_df['Close Date'] <= q4_end)
+                    (deals_df['Close Date'] < q4_end)
                 ]
                 after_count = len(deals_df)
                 after_amount = deals_df['Amount'].sum()
