@@ -407,8 +407,6 @@ def categorize_records(row):
         status = row.get('Live_Status')
         
         # Determine if there's an estimated ship date
-        # Main dashboard looks for 'Estimated Ship Date' column
-        # We need to check Customer_Promise_Date or Projected_Date
         has_date = pd.notna(row.get('Live_Expected_Date'))
         
         if status == 'Pending Fulfillment':
@@ -428,15 +426,17 @@ def categorize_records(row):
                 return 'PA_With_Date'
             else:
                 return 'PA_No_Date'
+        
+        # If it's a Sales Order but not PF or PA, it's Other
+        return 'Other'
     
     elif row['Record_Type'] == 'HubSpot_Deal':
         status = row.get('Live_Status', '')
         close_date = row.get('Live_Expected_Date')
         
-        # Check if Q1 spillover (based on Counts_In_Q4 flag from main dashboard)
+        # Check if Q1 spillover (close date is in 2026)
         is_q1 = False
         if pd.notna(close_date):
-            # Q1 spillover if close date is in 2026
             if close_date >= pd.Timestamp('2026-01-01'):
                 is_q1 = True
         
@@ -446,6 +446,9 @@ def categorize_records(row):
             return 'Q1_Spillover_Best_Case' if is_q1 else 'HubSpot_Best_Case'
         elif status == 'Opportunity':
             return 'HubSpot_Opportunity'
+        
+        # If it's a Deal but no matching status
+        return 'Other'
     
     return 'Other'
 
@@ -541,6 +544,15 @@ def load_all_planning_data():
         
         # Add category
         combined_df['Category'] = combined_df.apply(categorize_records, axis=1)
+        
+        # DEBUG: Show sample data for categorization troubleshooting
+        print("DEBUG: Sample row for categorization:")
+        if not combined_df.empty:
+            sample = combined_df[combined_df['Record_Type'] == 'Sales_Order'].iloc[0] if len(combined_df[combined_df['Record_Type'] == 'Sales_Order']) > 0 else combined_df.iloc[0]
+            print(f"  Record_Type: {sample.get('Record_Type')}")
+            print(f"  Live_Status: {sample.get('Live_Status')}")
+            print(f"  Live_Expected_Date: {sample.get('Live_Expected_Date')}")
+            print(f"  Category assigned: {sample.get('Category')}")
         
         # Initialize planning columns with explicit data types
         combined_df['Override_Amount'] = pd.Series(dtype='float64')
