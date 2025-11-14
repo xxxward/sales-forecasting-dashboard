@@ -452,6 +452,9 @@ def load_all_planning_data():
         inv_df = load_invoices()
         deals_df = load_hubspot_deals()
         
+        # DEBUG: Show what loaded
+        st.sidebar.info(f"📊 Data Loaded:\n- Sales Orders: {len(so_df)}\n- Invoices: {len(inv_df)}\n- HubSpot Deals: {len(deals_df)}")
+        
         # Standardize column names for each source
         if not so_df.empty:
             # Remove duplicate columns first
@@ -945,10 +948,18 @@ def main():
         
         # Calculate totals by category for the checkboxes
         category_totals = {}
+        category_counts = {}
         if not planning_df.empty:
             for category in planning_df['Category'].unique():
                 cat_df = planning_df[planning_df['Category'] == category]
                 category_totals[category] = cat_df['Live_Amount'].sum()
+                category_counts[category] = len(cat_df)
+        
+        # DEBUG: Show what categories exist
+        with st.expander("🔍 Debug: Category Breakdown"):
+            st.write("Categories found in data:")
+            for cat, total in category_totals.items():
+                st.write(f"- {cat}: {category_counts[cat]} items, ${total:,.0f}")
         
         # Create checkbox interface like "Build Your Own Forecast"
         st.markdown("#### 📦 Select Components to Include")
