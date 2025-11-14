@@ -462,6 +462,9 @@ def load_all_planning_data():
         
         # Standardize column names for each source
         if not so_df.empty:
+            # Remove duplicate columns first
+            so_df = so_df.loc[:, ~so_df.columns.duplicated()]
+            
             so_df = so_df.rename(columns={
                 'Amount': 'Live_Amount',
                 'Customer_Promise_Date': 'Live_Expected_Date',
@@ -475,6 +478,9 @@ def load_all_planning_data():
                     so_df['Live_Expected_Date'] = so_df['Projected_Date']
         
         if not inv_df.empty:
+            # Remove duplicate columns first
+            inv_df = inv_df.loc[:, ~inv_df.columns.duplicated()]
+            
             inv_df = inv_df.rename(columns={
                 'Amount': 'Live_Amount',
                 'Date': 'Live_Expected_Date',
@@ -484,6 +490,9 @@ def load_all_planning_data():
             })
         
         if not deals_df.empty:
+            # Remove duplicate columns first
+            deals_df = deals_df.loc[:, ~deals_df.columns.duplicated()]
+            
             deals_df = deals_df.rename(columns={
                 'Amount': 'Live_Amount',
                 'Close_Date': 'Live_Expected_Date',
@@ -505,7 +514,31 @@ def load_all_planning_data():
         if not all_records:
             return pd.DataFrame()
         
-        combined_df = pd.concat(all_records, ignore_index=True)
+        # Debug: Show columns in each dataframe before concat
+        with st.sidebar.expander("🔍 Pre-Concat Debug"):
+            for i, df in enumerate(all_records):
+                st.write(f"DF {i}: {len(df.columns)} cols, {len(df.columns.unique())} unique")
+                if len(df.columns) != len(df.columns.unique()):
+                    duplicates = df.columns[df.columns.duplicated()].tolist()
+                    st.error(f"DF {i} has duplicates: {duplicates}")
+        
+        try:
+            combined_df = pd.concat(all_records, ignore_index=True)
+        except Exception as e:
+            st.error(f"Error during concat: {str(e)}")
+            st.error("Trying to fix by selecting only needed columns...")
+            
+            # Select only the columns we absolutely need
+            needed_cols = ['Record_Type', 'Record_ID', 'Sales_Rep', 'Customer', 
+                          'Live_Amount', 'Live_Expected_Date', 'Live_Status']
+            
+            fixed_records = []
+            for df in all_records:
+                # Keep only columns that exist and are needed
+                cols_to_keep = [c for c in needed_cols if c in df.columns]
+                fixed_records.append(df[cols_to_keep])
+            
+            combined_df = pd.concat(fixed_records, ignore_index=True)
         
         # Add category
         combined_df['Category'] = combined_df.apply(categorize_records, axis=1)
