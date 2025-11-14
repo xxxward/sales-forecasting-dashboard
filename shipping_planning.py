@@ -399,40 +399,46 @@ def load_hubspot_deals():
     return df
 
 def categorize_records(row):
-    """Categorize each record into planning buckets"""
+    """Categorize each record into planning buckets - MATCHING MAIN DASHBOARD LOGIC"""
     if row['Record_Type'] == 'Invoice':
         return 'Invoiced_Shipped'
     
     elif row['Record_Type'] == 'Sales_Order':
-        if row.get('Status') == 'Pending Fulfillment':
-            # Determine expected date
-            expected_date = row.get('Customer_Promise_Date') or row.get('Projected_Date')
-            if pd.notna(expected_date):
+        status = row.get('Live_Status')
+        
+        # Determine if there's an estimated ship date
+        # Main dashboard looks for 'Estimated Ship Date' column
+        # We need to check Customer_Promise_Date or Projected_Date
+        has_date = pd.notna(row.get('Live_Expected_Date'))
+        
+        if status == 'Pending Fulfillment':
+            if has_date:
                 return 'PF_With_Date'
             else:
                 return 'PF_No_Date'
         
-        elif row.get('Status') == 'Pending Approval':
-            # Check for date and age
-            expected_date = row.get('Pending_Approval_Date') or row.get('Customer_Promise_Date')
-            if pd.notna(expected_date):
-                # Calculate age
-                age_days = (pd.Timestamp.now() - expected_date).days
-                if age_days > 14:
-                    return 'PA_Old_Date'
-                else:
-                    return 'PA_With_Date'
+        elif status == 'Pending Approval':
+            if has_date:
+                # Check if it's old (>2 weeks from Order Start Date)
+                order_date = row.get('Order_Start_Date')
+                if pd.notna(order_date):
+                    days_old = (pd.Timestamp.now() - order_date).days
+                    if days_old > 14:
+                        return 'PA_Old_Date'
+                return 'PA_With_Date'
             else:
                 return 'PA_No_Date'
     
     elif row['Record_Type'] == 'HubSpot_Deal':
-        status = row.get('Status', '')
-        close_date = row.get('Close_Date')
+        status = row.get('Live_Status', '')
+        close_date = row.get('Live_Expected_Date')
         
-        # Check if Q1 spillover
+        # Check if Q1 spillover (based on Counts_In_Q4 flag from main dashboard)
         is_q1 = False
-        if pd.notna(close_date) and close_date >= pd.Timestamp('2025-01-01'):
-            is_q1 = True
+        if pd.notna(close_date):
+            # Q1 spillover if close date is in 2026
+            if close_date >= pd.Timestamp('2026-01-01'):
+                is_q1 = True
         
         if status in ['Commit', 'Expect']:
             return 'Q1_Spillover_Expect' if is_q1 else 'HubSpot_Expect'
@@ -460,17 +466,23 @@ def load_all_planning_data():
             # Remove duplicate columns first
             so_df = so_df.loc[:, ~so_df.columns.duplicated()]
             
+            # Create Estimated Ship Date (Customer Promise Date takes priority, then Projected Date)
+            if 'Customer_Promise_Date' in so_df.columns and 'Projected_Date' in so_df.columns:
+                so_df['Estimated_Ship_Date'] = so_df['Customer_Promise_Date'].fillna(so_df['Projected_Date'])
+            elif 'Customer_Promise_Date' in so_df.columns:
+                so_df['Estimated_Ship_Date'] = so_df['Customer_Promise_Date']
+            elif 'Projected_Date' in so_df.columns:
+                so_df['Estimated_Ship_Date'] = so_df['Projected_Date']
+            else:
+                so_df['Estimated_Ship_Date'] = pd.NaT
+            
             so_df = so_df.rename(columns={
                 'Amount': 'Live_Amount',
-                'Customer_Promise_Date': 'Live_Expected_Date',
+                'Estimated_Ship_Date': 'Live_Expected_Date',
                 'Status': 'Live_Status',
                 'Sales_Rep': 'Sales_Rep',
                 'Customer': 'Customer'
             })
-            # Use Customer Promise Date or Projected Date as expected
-            if 'Live_Expected_Date' not in so_df.columns or so_df['Live_Expected_Date'].isna().all():
-                if 'Projected_Date' in so_df.columns:
-                    so_df['Live_Expected_Date'] = so_df['Projected_Date']
         
         if not inv_df.empty:
             # Remove duplicate columns first
