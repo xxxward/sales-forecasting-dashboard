@@ -27,9 +27,15 @@ except ImportError:
 # Optional: Shipping planning module (if available)
 try:
     import shipping_planning
+    from importlib import reload
+    reload(shipping_planning)  # Force reload to pick up any changes
     SHIPPING_PLANNING_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     SHIPPING_PLANNING_AVAILABLE = False
+    SHIPPING_PLANNING_ERROR = str(e)
+except Exception as e:
+    SHIPPING_PLANNING_AVAILABLE = False
+    SHIPPING_PLANNING_ERROR = f"Error loading module: {str(e)}"
 
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
@@ -4079,8 +4085,23 @@ def main():
         if SHIPPING_PLANNING_AVAILABLE:
             shipping_planning.main()
         else:
-            st.error("❌ Shipping Planning module not found. Make sure shipping_planning.py is in your repository.")
-            st.info("Upload shipping_planning.py to your GitHub repository to enable this feature.")
+            st.error("❌ Shipping Planning module not found.")
+            if 'SHIPPING_PLANNING_ERROR' in globals():
+                st.error(f"Error details: {SHIPPING_PLANNING_ERROR}")
+            st.info("Make sure shipping_planning.py is in your repository at the same level as this dashboard file.")
+            st.code("Expected file location: shipping_planning.py")
+            
+            # Debug info
+            with st.expander("🔧 Debug Information"):
+                st.write("**Current working directory:**")
+                import os
+                st.code(os.getcwd())
+                st.write("**Files in current directory:**")
+                try:
+                    files = os.listdir('.')
+                    st.code('\n'.join([f for f in files if f.endswith('.py')]))
+                except Exception as e:
+                    st.error(f"Cannot list files: {e}")
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
