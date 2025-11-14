@@ -406,6 +406,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     # Track which categories allow individual selection
     individual_select_categories = [
+        'Invoiced & Shipped',  # NEW - allow drilling into invoices
+        'Pending Fulfillment (with date)',  # NEW - allow drilling into PF with dates
+        'Pending Approval (with date)',  # NEW - allow drilling into PA with dates
         'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
         'Pending Fulfillment (without date)', 'Pending Approval (without date)', 
         'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit', 'Q1 Spillover - Best Case'
@@ -490,8 +493,41 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             # Get the relevant data for this category
             items_to_select = []
             
+            # NEW: Invoiced & Shipped
+            if 'Invoiced & Shipped' in category and invoices_df is not None:
+                if rep_name and 'Sales Rep' in invoices_df.columns:
+                    inv_data = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
+                else:
+                    inv_data = invoices_df.copy()
+                
+                items_to_select = inv_data.copy()
+            
+            # NEW: Pending Fulfillment WITH date
+            elif 'Pending Fulfillment (with date)' in category and sales_orders_df is not None:
+                if rep_name and 'Sales Rep' in sales_orders_df.columns:
+                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+                else:
+                    so_data = sales_orders_df.copy()
+                
+                items_to_select = so_data[
+                    (so_data['Status'] == 'Pending Fulfillment') &
+                    (so_data['Customer Promise Date'].notna() | so_data['Projected Date'].notna())
+                ].copy()
+            
+            # NEW: Pending Approval WITH date
+            elif 'Pending Approval (with date)' in category and sales_orders_df is not None:
+                if rep_name and 'Sales Rep' in sales_orders_df.columns:
+                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+                else:
+                    so_data = sales_orders_df.copy()
+                
+                items_to_select = so_data[
+                    (so_data['Status'] == 'Pending Approval') &
+                    (so_data['Customer Promise Date'].notna() | so_data['Projected Date'].notna())
+                ].copy()
+            
             # Sales Orders categories
-            if 'Pending Fulfillment (without date)' in category and sales_orders_df is not None:
+            elif 'Pending Fulfillment (without date)' in category and sales_orders_df is not None:
                 if rep_name and 'Sales Rep' in sales_orders_df.columns:
                     so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
                 else:
@@ -641,7 +677,17 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     attainment_pct = (custom_forecast / quota * 100) if quota > 0 else 0
     
     # Calculate shipping metrics
-    invoiced_shipped = sources.get('Invoiced & Shipped', 0)
+    # Only count invoiced_shipped if it was actually selected
+    if selected_sources.get('Invoiced & Shipped', False):
+        if individual_selection_mode.get('Invoiced & Shipped', False):
+            # Use individual selections if in individual mode
+            invoiced_shipped = sum(item['amount'] for item in individual_selections.get('Invoiced & Shipped', []))
+        else:
+            # Use full category amount
+            invoiced_shipped = sources.get('Invoiced & Shipped', 0)
+    else:
+        invoiced_shipped = 0
+    
     to_ship = custom_forecast - invoiced_shipped
     
     # Calculate working days remaining in Q4 (approximate)
