@@ -24,6 +24,13 @@ try:
 except ImportError:
     COMMISSION_AVAILABLE = False
 
+# Optional: Shipping planning module (if available)
+try:
+    import shipping_planning
+    SHIPPING_PLANNING_AVAILABLE = True
+except ImportError:
+    SHIPPING_PLANNING_AVAILABLE = False
+
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
 
@@ -3960,7 +3967,7 @@ def main():
         st.markdown("### 🎯 Dashboard Navigation")
         view_mode = st.radio(
             "Select View:",
-            ["Team Overview", "Individual Rep", "Reconciliation", "AI Insights", "💰 Commission"],
+            ["Team Overview", "Individual Rep", "Reconciliation", "AI Insights", "💰 Commission", "📦 Q4 Shipping Plan"],
             label_visibility="collapsed"
         )
         
@@ -4067,6 +4074,13 @@ def main():
     elif view_mode == "💰 Commission":
         # Commission calculator view (password protected)
         commission_calculator.display_commission_section(invoices_df, sales_orders_df)
+    elif view_mode == "📦 Q4 Shipping Plan":
+        # Shipping planning view
+        if SHIPPING_PLANNING_AVAILABLE:
+            shipping_planning.main()
+        else:
+            st.error("❌ Shipping Planning module not found. Make sure shipping_planning.py is in your repository.")
+            st.info("Upload shipping_planning.py to your GitHub repository to enable this feature.")
     else:  # Reconciliation view
         display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
