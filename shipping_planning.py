@@ -151,9 +151,17 @@ def load_sales_orders():
     col_names = df.columns.tolist()
     rename_dict = {}
     
-    # Map Internal ID (Column A)
+    # Map Internal ID (Column A) - note it has a SPACE not underscore
     if len(col_names) > 0:
-        rename_dict[col_names[0]] = 'Internal_ID'
+        col_a_name = str(col_names[0])
+        if 'internal' in col_a_name.lower() and 'id' in col_a_name.lower():
+            rename_dict[col_names[0]] = 'Internal_ID'
+    
+    # Map SO Number (Column B)
+    if len(col_names) > 1:
+        col_b_name = str(col_names[1])
+        if 'so' in col_b_name.lower() and 'number' in col_b_name.lower():
+            rename_dict[col_names[1]] = 'Document_Number'
     
     # Find standard columns
     for idx, col in enumerate(col_names):
