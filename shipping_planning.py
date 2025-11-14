@@ -424,8 +424,8 @@ def calculate_team_metrics(deals_df, dashboard_df, invoices_df, sales_orders_df)
     
     return metrics
 
-def display_drill_down_with_ship_dates(title, amount, details_df, category_key, ship_dates_dict):
-    """Display collapsible section with proper formatting and ship date inputs"""
+def display_drill_down_with_ship_dates(title, amount, details_df, category_key, ship_dates_dict, selected_items_dict):
+    """Display collapsible section with checkboxes for individual selection and ship date inputs"""
     
     item_count = len(details_df)
     if item_count == 0:
@@ -444,135 +444,125 @@ def display_drill_down_with_ship_dates(title, amount, details_df, category_key, 
             'q1_expect_commit', 'q1_best_opp'
         ]
         
-        # Create display dataframe
-        display_df = pd.DataFrame()
+        st.markdown("**Select items to include:**")
         
-        if is_hubspot and 'Record ID' in details_df.columns:
-            # HubSpot deals
-            display_df['🔗 Link'] = details_df['Record ID'].apply(
-                lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
-            )
-            
-            if 'Record ID' in details_df.columns:
-                display_df['Deal ID'] = details_df['Record ID']
-            if 'Deal Name' in details_df.columns:
-                display_df['Deal Name'] = details_df['Deal Name']
-            if 'Account Name' in details_df.columns:
-                display_df['Company'] = details_df['Account Name']
-            elif 'Customer' in details_df.columns:
-                display_df['Company'] = details_df['Customer']
-            if 'Amount' in details_df.columns:
-                display_df['Amount'] = details_df['Amount'].apply(lambda x: f"${x:,.0f}")
-            if 'Status' in details_df.columns:
-                display_df['Status'] = details_df['Status']
-            if 'Close Date' in details_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(details_df['Close Date']):
-                    display_df['Close Date'] = details_df['Close Date'].dt.strftime('%Y-%m-%d')
-                else:
-                    display_df['Close Date'] = details_df['Close Date']
+        # Track selected items for this category
+        if category_key not in selected_items_dict:
+            selected_items_dict[category_key] = []
         
-        elif is_invoice and 'Invoice Number' in details_df.columns:
-            # Invoices - no link needed, just display info
-            if 'Invoice Number' in details_df.columns:
-                display_df['Invoice #'] = details_df['Invoice Number']
-            if 'Customer' in details_df.columns:
-                display_df['Company'] = details_df['Customer']
-            if 'Amount' in details_df.columns:
-                display_df['Amount'] = details_df['Amount'].apply(lambda x: f"${x:,.0f}")
-            if 'Date' in details_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(details_df['Date']):
-                    display_df['Invoice Date'] = details_df['Date'].dt.strftime('%Y-%m-%d')
-                else:
-                    display_df['Invoice Date'] = details_df['Date']
-        
-        elif is_netsuite:
-            # NetSuite sales orders
-            if 'Internal ID' in details_df.columns:
-                display_df['🔗 Link'] = details_df['Internal ID'].apply(
-                    lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
-                )
-                display_df['Internal ID'] = details_df['Internal ID']
+        # Display items with checkboxes
+        for idx, row in details_df.iterrows():
+            col1, col2 = st.columns([3, 1])
             
-            if 'Document Number' in details_df.columns:
-                display_df['SO#'] = details_df['Document Number']
-            if 'Customer' in details_df.columns:
-                display_df['Company'] = details_df['Customer']
-            if 'Amount' in details_df.columns:
-                display_df['Amount'] = details_df['Amount'].apply(lambda x: f"${x:,.0f}")
-            if 'Status' in details_df.columns:
-                display_df['Status'] = details_df['Status']
-            
-            # Add existing dates if available
-            if 'Customer Promise Date' in details_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(details_df['Customer Promise Date']):
-                    display_df['Customer Promise Date'] = details_df['Customer Promise Date'].dt.strftime('%Y-%m-%d')
-                else:
-                    display_df['Customer Promise Date'] = details_df['Customer Promise Date']
-            if 'Projected Date' in details_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(details_df['Projected Date']):
-                    display_df['Projected Date'] = details_df['Projected Date'].dt.strftime('%Y-%m-%d')
-                else:
-                    display_df['Projected Date'] = details_df['Projected Date']
-            if 'Pending Approval Date' in details_df.columns:
-                if pd.api.types.is_datetime64_any_dtype(details_df['Pending Approval Date']):
-                    display_df['Pending Approval Date'] = details_df['Pending Approval Date'].dt.strftime('%Y-%m-%d')
-                else:
-                    display_df['Pending Approval Date'] = details_df['Pending Approval Date']
-        
-        # Display the dataframe
-        if not display_df.empty:
-            # Configure link column if it exists
-            column_config = {}
-            if '🔗 Link' in display_df.columns:
-                column_config['🔗 Link'] = st.column_config.LinkColumn(
-                    "🔗 Link",
-                    help="Click to view in NetSuite/HubSpot",
-                    display_text="View"
-                )
-            
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config=column_config if column_config else None
-            )
-            
-            # Ship date inputs (only for categories that need them)
-            if needs_ship_dates:
-                st.markdown("---")
-                st.markdown("**📅 Set Ship Dates for Export**")
-                st.caption("These dates will only be used in the export file and do not affect the calculations above")
-                
-                # Create ship date inputs for each item
-                for idx, row in details_df.iterrows():
-                    # Get identifier
-                    if 'Record ID' in row:
-                        item_id = f"{category_key}_{row['Record ID']}"
-                        item_label = row.get('Deal Name', 'Unknown Deal')
-                    elif 'Document Number' in row:
-                        item_id = f"{category_key}_{row['Document Number']}"
-                        item_label = f"SO# {row['Document Number']}"
+            with col1:
+                # Build display label based on type
+                if is_hubspot:
+                    item_id = row.get('Record ID', idx)
+                    deal_name = row.get('Deal Name', 'Unknown Deal')
+                    company = row.get('Account Name', '')
+                    amount_val = row.get('Amount', 0)
+                    close_date = row.get('Close Date', '')
+                    if pd.notna(close_date) and hasattr(close_date, 'strftime'):
+                        close_date_str = close_date.strftime('%Y-%m-%d')
                     else:
-                        item_id = f"{category_key}_{idx}"
-                        item_label = f"Item {idx}"
+                        close_date_str = str(close_date) if pd.notna(close_date) else ''
                     
-                    # Ship date input
+                    label = f"**{deal_name}** | {company} | ${amount_val:,.0f}"
+                    if close_date_str:
+                        label += f" | Close: {close_date_str}"
+                    
+                    link = f"https://app.hubspot.com/contacts/6712259/record/0-3/{item_id}/"
+                
+                elif is_invoice:
+                    item_id = row.get('Invoice Number', idx)
+                    company = row.get('Customer', '')
+                    amount_val = row.get('Amount', 0)
+                    invoice_date = row.get('Date', '')
+                    if pd.notna(invoice_date) and hasattr(invoice_date, 'strftime'):
+                        date_str = invoice_date.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(invoice_date) if pd.notna(invoice_date) else ''
+                    
+                    label = f"**INV #{item_id}** | {company} | ${amount_val:,.0f}"
+                    if date_str:
+                        label += f" | {date_str}"
+                    link = None
+                
+                else:  # NetSuite
+                    item_id = row.get('Document Number', idx)
+                    internal_id = row.get('Internal ID', '')
+                    company = row.get('Customer', '')
+                    amount_val = row.get('Amount', 0)
+                    status = row.get('Status', '')
+                    
+                    # Show the most relevant date
+                    date_to_show = None
+                    date_label = ""
+                    if pd.notna(row.get('Customer Promise Date')):
+                        date_to_show = row.get('Customer Promise Date')
+                        date_label = "Cust Promise"
+                    elif pd.notna(row.get('Projected Date')):
+                        date_to_show = row.get('Projected Date')
+                        date_label = "Projected"
+                    elif pd.notna(row.get('Pending Approval Date')):
+                        date_to_show = row.get('Pending Approval Date')
+                        date_label = "PA Date"
+                    
+                    if date_to_show and hasattr(date_to_show, 'strftime'):
+                        date_str = f"{date_label}: {date_to_show.strftime('%Y-%m-%d')}"
+                    else:
+                        date_str = ""
+                    
+                    label = f"**SO# {item_id}** | {company} | ${amount_val:,.0f} | {status}"
+                    if date_str:
+                        label += f" | {date_str}"
+                    
+                    link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence=" if pd.notna(internal_id) else None
+                
+                # Checkbox for selection
+                is_selected = st.checkbox(
+                    label,
+                    value=False,
+                    key=f"{category_key}_{item_id}_{idx}"
+                )
+            
+            with col2:
+                # Show link if available
+                if link:
+                    st.markdown(f"[View →]({link})")
+            
+            # If selected, add to tracking and show ship date input if needed
+            if is_selected:
+                # Track this selection
+                selected_items_dict[category_key].append({
+                    'id': item_id,
+                    'amount': amount_val,
+                    'row': row
+                })
+                
+                # Show ship date input if needed
+                if needs_ship_dates:
                     default_date = datetime.now() + timedelta(days=14)
                     ship_date = st.date_input(
-                        f"{item_label} - Ship Date",
+                        f"📅 Ship Date",
                         value=default_date,
-                        key=f"ship_date_{item_id}"
+                        key=f"ship_date_{category_key}_{item_id}_{idx}"
                     )
                     
-                    # Store in dictionary
-                    ship_dates_dict[item_id] = {
+                    # Store in ship dates dictionary
+                    ship_dates_dict[f"{category_key}_{item_id}"] = {
                         'ship_date': ship_date,
-                        'amount': row.get('Amount', 0),
+                        'amount': amount_val,
                         'row': row
                     }
         
-        # Summary statistics
-        st.caption(f"Total: ${details_df['Amount'].sum():,.0f} | Count: {len(details_df)} items")
+        # Summary
+        selected_count = len(selected_items_dict.get(category_key, []))
+        if selected_count > 0:
+            selected_total = sum(item['amount'] for item in selected_items_dict[category_key])
+            st.success(f"✓ Selected {selected_count} of {item_count} items | Total: ${selected_total:,.0f}")
+        else:
+            st.info(f"No items selected (0 of {item_count})")
 
 def create_ship_date_chart(ship_dates_dict, custom_forecast):
     """Create a timeline chart showing when things will ship"""
@@ -658,6 +648,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
         st.session_state.ship_dates = {}
     
     ship_dates_dict = {}
+    selected_items_dict = {}
     
     # Create columns for checkboxes
     col1, col2, col3 = st.columns(3)
@@ -726,7 +717,8 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Invoiced & Shipped'],
             metrics.get('invoices_details', pd.DataFrame()),
             'invoices',
-            ship_dates_dict
+            ship_dates_dict,
+            selected_items_dict
         )
     
     if selected_sources.get('Pending Fulfillment (with date)', False):
@@ -735,7 +727,8 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Pending Fulfillment (with date)'],
             metrics.get('pending_fulfillment_details', pd.DataFrame()),
             'pf_date',
-            ship_dates_dict
+            ship_dates_dict,
+            selected_items_dict
         )
     
     if selected_sources.get('Pending Approval (with date)', False):
@@ -744,7 +737,8 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Pending Approval (with date)'],
             metrics.get('pending_approval_details', pd.DataFrame()),
             'pa_date',
-            ship_dates_dict
+            ship_dates_dict,
+            selected_items_dict
         )
     
     if selected_sources.get('HubSpot Expect', False):
@@ -753,7 +747,8 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['HubSpot Expect'],
             metrics.get('expect_commit_deals', pd.DataFrame()),
             'hs_expect',
-            ship_dates_dict
+            ship_dates_dict,
+            selected_items_dict
         )
     
     if selected_sources.get('HubSpot Commit', False):
@@ -762,7 +757,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['HubSpot Commit'],
             metrics.get('commit_deals', pd.DataFrame()),
             'hs_commit',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('HubSpot Best Case', False):
@@ -771,7 +766,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['HubSpot Best Case'],
             metrics.get('best_case_deals', pd.DataFrame()),
             'hs_best_case',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('HubSpot Opportunity', False):
@@ -780,7 +775,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['HubSpot Opportunity'],
             metrics.get('opportunity_deals', pd.DataFrame()),
             'hs_opportunity',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('Pending Fulfillment (without date)', False):
@@ -789,7 +784,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Pending Fulfillment (without date)'],
             metrics.get('pending_fulfillment_no_date_details', pd.DataFrame()),
             'pf_no_date',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('Pending Approval (without date)', False):
@@ -798,7 +793,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Pending Approval (without date)'],
             metrics.get('pending_approval_no_date_details', pd.DataFrame()),
             'pa_no_date',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('Pending Approval (>2 weeks old)', False):
@@ -807,7 +802,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Pending Approval (>2 weeks old)'],
             metrics.get('pending_approval_old_details', pd.DataFrame()),
             'pa_old',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('Q1 Spillover - Expect/Commit', False):
@@ -816,7 +811,7 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Q1 Spillover - Expect/Commit'],
             metrics.get('q1_spillover_expect_commit_deals', pd.DataFrame()),
             'q1_expect_commit',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
     if selected_sources.get('Q1 Spillover - Best Case', False):
@@ -825,15 +820,17 @@ def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None,
             sources['Q1 Spillover - Best Case'],
             metrics.get('q1_spillover_best_opp_deals', pd.DataFrame()),
             'q1_best_opp',
-            ship_dates_dict
+            ship_dates_dict, selected_items_dict
         )
     
-    # Calculate totals
-    custom_forecast = sum(sources[source] for source, selected in selected_sources.items() if selected)
+    # Calculate totals based on individually selected items
+    custom_forecast = 0
+    for category, items in selected_items_dict.items():
+        custom_forecast += sum(item['amount'] for item in items)
     
-    # Only count invoiced_shipped if it was selected
-    if selected_sources.get('Invoiced & Shipped', False):
-        invoiced_shipped = sources.get('Invoiced & Shipped', 0)
+    # Only count invoiced_shipped if items were selected
+    if 'invoices' in selected_items_dict and selected_items_dict['invoices']:
+        invoiced_shipped = sum(item['amount'] for item in selected_items_dict['invoices'])
     else:
         invoiced_shipped = 0
     
