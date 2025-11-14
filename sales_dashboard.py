@@ -1597,9 +1597,110 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         ].copy()
                         st.caption("⚠️ Using fallback logic - Q1 2026 Spillover column not found")
             
-            # Display selection interface
+            # ====== NEW DRILL-DOWN SECTION ======
+            # Display detailed drill-down BEFORE the selection interface
             if not items_to_select.empty:
-                st.caption(f"Found {len(items_to_select)} items - select the ones you want to include")
+                st.caption(f"📊 **Viewing {len(items_to_select)} items totaling ${pd.to_numeric(items_to_select['Amount' if 'Amount' in items_to_select.columns else 'Amount_Numeric'], errors='coerce').sum():,.0f}**")
+                
+                # Create drill-down expander showing all details
+                with st.expander(f"👀 View Detailed Breakdown (click to expand)", expanded=True):
+                    # Determine if this is HubSpot or NetSuite data
+                    is_hubspot = 'Deal Name' in items_to_select.columns
+                    is_netsuite = 'Document Number' in items_to_select.columns or 'Internal ID' in items_to_select.columns
+                    
+                    # Create display dataframe with links
+                    display_df = pd.DataFrame()
+                    column_config = {}
+                    
+                    if is_hubspot and 'Record ID' in items_to_select.columns:
+                        # HubSpot deals - show links and details
+                        display_df['🔗 Link'] = items_to_select['Record ID'].apply(
+                            lambda x: f'https://app.hubspot.com/contacts/6712259/record/0-3/{x}/' if pd.notna(x) else ''
+                        )
+                        column_config['🔗 Link'] = st.column_config.LinkColumn(
+                            "🔗 Link",
+                            help="Click to view deal in HubSpot",
+                            display_text="View Deal"
+                        )
+                        
+                        # Add Deal ID
+                        display_df['Deal ID'] = items_to_select['Record ID']
+                        
+                        # Add other HubSpot columns
+                        if 'Deal Name' in items_to_select.columns:
+                            display_df['Deal Name'] = items_to_select['Deal Name']
+                        if 'Account Name' in items_to_select.columns:
+                            display_df['Customer'] = items_to_select['Account Name']
+                        if 'Amount_Numeric' in items_to_select.columns:
+                            display_df['Amount'] = items_to_select['Amount_Numeric'].apply(lambda x: f"${x:,.2f}")
+                        elif 'Amount' in items_to_select.columns:
+                            display_df['Amount'] = pd.to_numeric(items_to_select['Amount'], errors='coerce').apply(lambda x: f"${x:,.2f}")
+                        if 'Status' in items_to_select.columns:
+                            display_df['Status'] = items_to_select['Status']
+                        if 'Pipeline' in items_to_select.columns:
+                            display_df['Pipeline'] = items_to_select['Pipeline']
+                        if 'Close Date' in items_to_select.columns:
+                            if pd.api.types.is_datetime64_any_dtype(items_to_select['Close Date']):
+                                display_df['Close Date'] = items_to_select['Close Date'].dt.strftime('%Y-%m-%d')
+                            else:
+                                display_df['Close Date'] = items_to_select['Close Date']
+                        if 'Product Type' in items_to_select.columns:
+                            display_df['Product Type'] = items_to_select['Product Type']
+                    
+                    elif is_netsuite:
+                        # NetSuite sales orders - show SO# and links
+                        if 'Internal ID' in items_to_select.columns:
+                            display_df['🔗 Link'] = items_to_select['Internal ID'].apply(
+                                lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
+                            )
+                            column_config['🔗 Link'] = st.column_config.LinkColumn(
+                                "🔗 Link",
+                                help="Click to view sales order in NetSuite",
+                                display_text="View SO"
+                            )
+                            # Also show Internal ID as a regular column
+                            display_df['Internal ID'] = items_to_select['Internal ID']
+                        
+                        # Add SO# (Document Number)
+                        if 'Document Number' in items_to_select.columns:
+                            display_df['SO#'] = items_to_select['Document Number']
+                        
+                        # Add other NetSuite columns
+                        if 'Customer' in items_to_select.columns:
+                            display_df['Customer'] = items_to_select['Customer']
+                        if 'Amount' in items_to_select.columns:
+                            display_df['Amount'] = pd.to_numeric(items_to_select['Amount'], errors='coerce').apply(lambda x: f"${x:,.2f}")
+                        if 'Status' in items_to_select.columns:
+                            display_df['Status'] = items_to_select['Status']
+                        if 'Order Start Date' in items_to_select.columns:
+                            if pd.api.types.is_datetime64_any_dtype(items_to_select['Order Start Date']):
+                                display_df['Order Start Date'] = items_to_select['Order Start Date'].dt.strftime('%Y-%m-%d')
+                            else:
+                                display_df['Order Start Date'] = items_to_select['Order Start Date']
+                        if 'Age_Business_Days' in items_to_select.columns:
+                            display_df['Age (Days)'] = items_to_select['Age_Business_Days']
+                    
+                    # Display the formatted dataframe
+                    if not display_df.empty:
+                        st.dataframe(
+                            display_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config=column_config if column_config else None
+                        )
+                        
+                        # Summary statistics
+                        amount_col = 'Amount_Numeric' if 'Amount_Numeric' in items_to_select.columns else 'Amount'
+                        total_amount = pd.to_numeric(items_to_select[amount_col], errors='coerce').sum()
+                        st.caption(f"💰 **Total: ${total_amount:,.2f} | Count: {len(items_to_select)} items**")
+                    else:
+                        st.warning("Could not format data for display")
+                        st.dataframe(items_to_select, use_container_width=True, hide_index=True)
+                
+                st.markdown("---")
+                st.markdown(f"##### ✅ Select items to include in your forecast:")
+                st.caption(f"Check the boxes below to select specific items from the {len(items_to_select)} available")
+            # ====== END NEW DRILL-DOWN SECTION ======
                 
                 selected_items = []
                 
