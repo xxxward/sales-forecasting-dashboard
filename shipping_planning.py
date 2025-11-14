@@ -172,10 +172,8 @@ def load_all_data():
         
         # Apply Rep Master override
         if 'Rep Master' in invoices_df.columns:
-            invoices_df['Sales Rep'] = invoices_df['Rep Master'].where(
-                invoices_df['Rep Master'].notna() & (invoices_df['Rep Master'] != ''),
-                invoices_df['Sales Rep']
-            )
+            mask = invoices_df['Rep Master'].notna() & (invoices_df['Rep Master'] != '')
+            invoices_df.loc[mask, 'Sales Rep'] = invoices_df.loc[mask, 'Rep Master']
         
         # Clean Amount
         def clean_numeric(value):
@@ -221,10 +219,8 @@ def load_all_data():
         
         # Apply Rep Master override
         if 'Rep Master' in sales_orders_df.columns:
-            sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master'].where(
-                sales_orders_df['Rep Master'].notna() & (sales_orders_df['Rep Master'] != ''),
-                sales_orders_df['Sales Rep']
-            )
+            mask = sales_orders_df['Rep Master'].notna() & (sales_orders_df['Rep Master'] != '')
+            sales_orders_df.loc[mask, 'Sales Rep'] = sales_orders_df.loc[mask, 'Rep Master']
         
         # Clean Amount
         def clean_numeric(value):
