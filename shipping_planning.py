@@ -1,10 +1,11 @@
 """
-Q4 2025 Shipping Planning Tool - SIMPLIFIED VERSION
-Just loads data and uses the exact Build Your Own Forecast interface
+Q4 2025 Shipping Planning Tool - CLEAN VERSION
+Simple checkbox selection interface like the original
 """
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -13,11 +14,11 @@ from datetime import datetime, timedelta
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
-CACHE_VERSION = "v1_simple"
+CACHE_VERSION = "v3_clean"
 
 @st.cache_data(ttl=CACHE_TTL)
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
-    """Load data from Google Sheets - EXACT COPY from main dashboard"""
+    """Load data from Google Sheets"""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Missing Google Cloud credentials")
@@ -56,7 +57,7 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         return pd.DataFrame()
 
 def load_all_data():
-    """Load data - EXACT COPY from main dashboard load_all_data function"""
+    """Load and process all data - EXACT PATTERN FROM SALES DASHBOARD"""
     
     # Load deals
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:R", version=CACHE_VERSION)
@@ -70,7 +71,7 @@ def load_all_data():
     # Load sales orders
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AD", version=CACHE_VERSION)
     
-    # Process deals - SIMPLIFIED VERSION (just the essentials)
+    # Process deals
     if not deals_df.empty and len(deals_df.columns) >= 6:
         col_names = deals_df.columns.tolist()
         rename_dict = {}
@@ -80,30 +81,18 @@ def load_all_data():
                 rename_dict[col] = 'Record ID'
             elif col == 'Deal Name':
                 rename_dict[col] = 'Deal Name'
-            elif col == 'Deal Stage':
-                rename_dict[col] = 'Deal Stage'
             elif col == 'Close Date':
                 rename_dict[col] = 'Close Date'
-            elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
-                rename_dict[col] = 'Deal Owner'
             elif col == 'Amount':
                 rename_dict[col] = 'Amount'
             elif col == 'Close Status':
                 rename_dict[col] = 'Status'
-            elif col == 'Pipeline':
-                rename_dict[col] = 'Pipeline'
-            elif col == 'Deal Type':
-                rename_dict[col] = 'Product Type'
             elif col == 'Q1 2026 Spillover':
                 rename_dict[col] = 'Q1 2026 Spillover'
+            elif col == 'Account Name':
+                rename_dict[col] = 'Account Name'
         
         deals_df = deals_df.rename(columns=rename_dict)
-        
-        # Create Deal Owner if needed
-        if 'Deal Owner' not in deals_df.columns:
-            if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
-                deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
-                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
         
         # Clean Amount
         def clean_numeric(value):
@@ -129,7 +118,7 @@ def load_all_data():
         if 'Close Date' in deals_df.columns:
             deals_df = deals_df[(deals_df['Close Date'] >= q4_start) & (deals_df['Close Date'] < q4_end)]
         
-        # Add Counts_In_Q4 flag (simplified - just check if Q1 2026 Spillover column says "Q1 2026")
+        # Add Counts_In_Q4 flag
         if 'Q1 2026 Spillover' in deals_df.columns:
             deals_df['Counts_In_Q4'] = deals_df['Q1 2026 Spillover'] != 'Q1 2026'
         else:
@@ -152,7 +141,7 @@ def load_all_data():
         dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
         dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
     
-    # Process invoices
+    # Process invoices - EXACT PATTERN FROM SALES DASHBOARD
     if not invoices_df.empty and len(invoices_df.columns) >= 15:
         rename_dict = {
             invoices_df.columns[0]: 'Invoice Number',
@@ -170,13 +159,21 @@ def load_all_data():
         
         invoices_df = invoices_df.rename(columns=rename_dict)
         
-        # Apply Rep Master override
+        # Apply Rep Master override - EXACT PATTERN FROM SALES DASHBOARD
         if 'Rep Master' in invoices_df.columns:
             invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
             invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
             mask = invoices_df['Rep Master'].isin(invalid_values)
             invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
             invoices_df = invoices_df.drop(columns=['Rep Master'])
+        
+        # Apply customer name correction - EXACT PATTERN FROM SALES DASHBOARD
+        if 'Corrected Customer Name' in invoices_df.columns:
+            invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
+            invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+            mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
+            invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
+            invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
         
         def clean_numeric(value):
             if pd.isna(value) or str(value).strip() == '':
@@ -193,10 +190,15 @@ def load_all_data():
         # Filter to Q4 2025
         q4_start = pd.Timestamp('2025-10-01')
         q4_end = pd.Timestamp('2025-12-31')
-        invoices_df = invoices_df[(invoices_df['Date'] >= q4_start) & (invoices_df['Date'] <= q4_end)]
         
-        # Clean Sales Rep
+        invoices_df = invoices_df[
+            (invoices_df['Date'] >= q4_start) & 
+            (invoices_df['Date'] <= q4_end)
+        ]
+        
+        # Remove invalid reps
         invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
+        
         invoices_df = invoices_df[
             (invoices_df['Sales Rep'].notna()) & 
             (invoices_df['Sales Rep'] != '') &
@@ -204,29 +206,21 @@ def load_all_data():
             (invoices_df['Sales Rep'].str.lower() != 'house')
         ]
         
-        # Remove duplicates
+        # Deduplicate
         if 'Invoice Number' in invoices_df.columns:
             invoices_df = invoices_df.drop_duplicates(subset=['Invoice Number'], keep='first')
-        
-        # Calculate invoice totals by rep
-        invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
-        invoice_totals.columns = ['Rep Name', 'Invoice Total']
-        
-        dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
-        dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
-        dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
-        dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
-        dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
     
-    # Process sales orders  
-    if not sales_orders_df.empty:
+    # Process sales orders - WORKING PATTERN FROM shipping_planning__3_.py
+    if not sales_orders_df.empty and len(sales_orders_df.columns) >= 10:
         col_names = sales_orders_df.columns.tolist()
         rename_dict = {}
         
-        # Find standard columns
-        for idx, col in enumerate(col_names):
-            col_lower = str(col).lower()
-            if 'status' in col_lower and 'Status' not in rename_dict.values():
+        # First pass: flexible matching by column name
+        for col in col_names:
+            col_lower = col.lower()
+            if 'internal' in col_lower and 'id' in col_lower and 'Internal ID' not in rename_dict.values():
+                rename_dict[col] = 'Internal ID'
+            elif 'status' in col_lower and 'Status' not in rename_dict.values():
                 rename_dict[col] = 'Status'
             elif ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
                 rename_dict[col] = 'Amount'
@@ -237,13 +231,15 @@ def load_all_data():
             elif ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
                 rename_dict[col] = 'Document Number'
         
-        # Map specific columns by position
-        if len(col_names) > 8:
-            rename_dict[col_names[8]] = 'Order Start Date'
-        if len(col_names) > 11:
-            rename_dict[col_names[11]] = 'Customer Promise Date'
-        if len(col_names) > 12:
-            rename_dict[col_names[12]] = 'Projected Date'
+        # Second pass: map by position for date columns
+        if len(col_names) > 3:
+            rename_dict[col_names[3]] = 'Order Start Date'
+        if len(col_names) > 23:
+            rename_dict[col_names[23]] = 'Customer Promise Date'
+        if len(col_names) > 24:
+            rename_dict[col_names[24]] = 'Projected Date'
+        if len(col_names) > 25:
+            rename_dict[col_names[25]] = 'Pending Approval Date'
         
         # Map Rep Master
         if len(col_names) > 29:
@@ -251,10 +247,14 @@ def load_all_data():
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
-        # Apply Rep Master override
+        # Apply Rep Master override - EXACT PATTERN FROM SALES DASHBOARD
         if 'Rep Master' in sales_orders_df.columns:
             sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
+        
+        # CRITICAL: Remove any duplicate columns
+        if sales_orders_df.columns.duplicated().any():
+            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
         
         def clean_numeric(value):
             if pd.isna(value) or str(value).strip() == '':
@@ -274,11 +274,10 @@ def load_all_data():
         if 'Status' in sales_orders_df.columns:
             sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
         
-        # Convert date columns
-        date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date']
-        for col in date_columns:
-            if col in sales_orders_df.columns:
-                sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
+        # Convert dates
+        for date_col in ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']:
+            if date_col in sales_orders_df.columns:
+                sales_orders_df[date_col] = pd.to_datetime(sales_orders_df[date_col], errors='coerce')
         
         # Filter to Pending statuses
         if 'Status' in sales_orders_df.columns:
@@ -286,19 +285,26 @@ def load_all_data():
                 sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
             ]
         
-        # Calculate age
+        # Filter to Q4 2025 based on Order Start Date
         if 'Order Start Date' in sales_orders_df.columns:
-            today = pd.Timestamp.now()
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            sales_orders_df = sales_orders_df[
+                (sales_orders_df['Order Start Date'] >= q4_start) & 
+                (sales_orders_df['Order Start Date'] <= q4_end)
+            ]
+        
+        # Calculate business days for aging
+        if 'Pending Approval Date' in sales_orders_df.columns:
+            today = pd.Timestamp.now().normalize()
             
-            def business_days_between(start_date, end_date):
-                if pd.isna(start_date):
+            def calculate_business_days(date_val):
+                if pd.isna(date_val):
                     return 0
-                days = pd.bdate_range(start=start_date, end=end_date).size - 1
-                return max(0, days)
+                date_val = pd.to_datetime(date_val).normalize()
+                return max(0, len(pd.bdate_range(date_val, today)))
             
-            sales_orders_df['Age_Business_Days'] = sales_orders_df['Order Start Date'].apply(
-                lambda x: business_days_between(x, today)
-            )
+            sales_orders_df['Age_Business_Days'] = sales_orders_df['Pending Approval Date'].apply(calculate_business_days)
         
         # Remove invalid rows
         if 'Amount' in sales_orders_df.columns and 'Sales Rep' in sales_orders_df.columns:
@@ -313,90 +319,95 @@ def load_all_data():
     return deals_df, dashboard_df, invoices_df, sales_orders_df
 
 def calculate_team_metrics(deals_df, dashboard_df, invoices_df, sales_orders_df):
-    """Calculate metrics - SIMPLIFIED VERSION"""
+    """Calculate team-level metrics"""
     
     metrics = {
         'orders': 0,
         'pending_fulfillment': 0,
-        'pending_fulfillment_no_date': 0,
         'pending_approval': 0,
+        'expect_commit': 0,
+        'pending_fulfillment_no_date': 0,
         'pending_approval_no_date': 0,
         'pending_approval_old': 0,
-        'expect_commit': 0,
         'q1_spillover_expect_commit': 0,
         'q1_spillover_best_opp': 0
     }
     
-    # Get total invoiced from dashboard
-    if not dashboard_df.empty and 'NetSuite Orders' in dashboard_df.columns:
-        metrics['orders'] = dashboard_df['NetSuite Orders'].sum()
+    # Invoiced & Shipped
+    if invoices_df is not None and not invoices_df.empty:
+        metrics['orders'] = invoices_df['Amount'].sum()
     
-    # Calculate SO metrics
-    if not sales_orders_df.empty:
-        # Create Estimated Ship Date column
-        if 'Customer Promise Date' in sales_orders_df.columns and 'Projected Date' in sales_orders_df.columns:
-            sales_orders_df['Estimated Ship Date'] = sales_orders_df['Customer Promise Date'].fillna(sales_orders_df['Projected Date'])
-        elif 'Customer Promise Date' in sales_orders_df.columns:
-            sales_orders_df['Estimated Ship Date'] = sales_orders_df['Customer Promise Date']
-        elif 'Projected Date' in sales_orders_df.columns:
-            sales_orders_df['Estimated Ship Date'] = sales_orders_df['Projected Date']
-        
+    # Sales Orders
+    if sales_orders_df is not None and not sales_orders_df.empty:
         # Pending Fulfillment
-        pf_df = sales_orders_df[sales_orders_df.get('Status', '') == 'Pending Fulfillment']
-        metrics['pending_fulfillment'] = pf_df[pf_df['Estimated Ship Date'].notna()]['Amount'].sum()
-        metrics['pending_fulfillment_no_date'] = pf_df[pf_df['Estimated Ship Date'].isna()]['Amount'].sum()
+        pf_orders = sales_orders_df[sales_orders_df['Status'] == 'Pending Fulfillment'].copy()
+        if not pf_orders.empty:
+            pf_orders['Has_Date'] = (
+                pf_orders['Customer Promise Date'].notna() | 
+                pf_orders['Projected Date'].notna()
+            )
+            
+            metrics['pending_fulfillment'] = pf_orders[pf_orders['Has_Date'] == True]['Amount'].sum()
+            metrics['pending_fulfillment_no_date'] = pf_orders[pf_orders['Has_Date'] == False]['Amount'].sum()
         
         # Pending Approval
-        pa_df = sales_orders_df[sales_orders_df.get('Status', '') == 'Pending Approval']
-        metrics['pending_approval'] = pa_df[pa_df['Estimated Ship Date'].notna()]['Amount'].sum()
-        metrics['pending_approval_no_date'] = pa_df[pa_df['Estimated Ship Date'].isna()]['Amount'].sum()
-        
-        # Pending Approval > 2 weeks old
-        if 'Age_Business_Days' in pa_df.columns:
-            old_pa = pa_df[pa_df['Age_Business_Days'] >= 10]
-            metrics['pending_approval_old'] = old_pa['Amount'].sum()
+        pa_orders = sales_orders_df[sales_orders_df['Status'] == 'Pending Approval'].copy()
+        if not pa_orders.empty:
+            pa_with_date = pa_orders[pa_orders['Pending Approval Date'].notna()]
+            pa_no_date = pa_orders[pa_orders['Pending Approval Date'].isna()]
+            
+            # Old PA
+            if 'Age_Business_Days' in pa_orders.columns:
+                pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 10]
+                metrics['pending_approval_old'] = pa_old['Amount'].sum()
+                
+                # Young PA with date
+                pa_young_with_date = pa_with_date[pa_with_date['Age_Business_Days'] < 10]
+                metrics['pending_approval'] = pa_young_with_date['Amount'].sum()
+            else:
+                metrics['pending_approval'] = pa_with_date['Amount'].sum()
+            
+            metrics['pending_approval_no_date'] = pa_no_date['Amount'].sum()
     
-    # Calculate HubSpot metrics
-    if not deals_df.empty and 'Status' in deals_df.columns:
+    # HubSpot Deals
+    if deals_df is not None and not deals_df.empty and 'Status' in deals_df.columns:
         deals_df['Amount_Numeric'] = pd.to_numeric(deals_df['Amount'], errors='coerce')
         
         # Q4 deals
         q4_deals = deals_df[deals_df.get('Counts_In_Q4', True) == True]
-        expect_commit = q4_deals[q4_deals['Status'].isin(['Expect', 'Commit'])]['Amount_Numeric'].sum()
-        metrics['expect_commit'] = expect_commit
+        
+        expect_deals = q4_deals[q4_deals['Status'] == 'Expect']
+        commit_deals = q4_deals[q4_deals['Status'] == 'Commit']
+        
+        metrics['expect_commit'] = expect_deals['Amount_Numeric'].sum() + commit_deals['Amount_Numeric'].sum()
         
         # Q1 Spillover
         if 'Q1 2026 Spillover' in deals_df.columns:
             q1_deals = deals_df[deals_df['Q1 2026 Spillover'] == 'Q1 2026']
-            metrics['q1_spillover_expect_commit'] = q1_deals[q1_deals['Status'].isin(['Expect', 'Commit'])]['Amount_Numeric'].sum()
-            metrics['q1_spillover_best_opp'] = q1_deals[q1_deals['Status'].isin(['Best Case', 'Opportunity'])]['Amount_Numeric'].sum()
+            
+            q1_expect_commit = q1_deals[q1_deals['Status'].isin(['Expect', 'Commit'])]
+            q1_best_opp = q1_deals[q1_deals['Status'].isin(['Best Case', 'Opportunity'])]
+            
+            metrics['q1_spillover_expect_commit'] = q1_expect_commit['Amount_Numeric'].sum()
+            metrics['q1_spillover_best_opp'] = q1_best_opp['Amount_Numeric'].sum()
     
     return metrics
 
-# Import the exact Build Your Own Forecast function from main dashboard
-def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None):
-    """
-    Interactive section where users can select which data sources to include in their forecast
-    """
-    st.markdown("### 🎯 Build Your Own Forecast")
-    st.caption("Select the components you want to include in your custom forecast calculation")
+def build_shipping_plan_section(metrics, quota, deals_df=None, invoices_df=None, sales_orders_df=None):
+    """Simple checkbox selection - like the original"""
     
-    # Initialize session state for individual selections if not exists
-    if 'selected_individual_items' not in st.session_state:
-        st.session_state.selected_individual_items = {}
+    st.markdown("### 📦 Build Your Shipping Plan")
+    st.caption("Select the components you want to include in your custom forecast calculation")
     
     # Create columns for checkboxes
     col1, col2, col3 = st.columns(3)
     
-    # Available data sources with their values
+    # Available data sources
     sources = {
         'Invoiced & Shipped': metrics.get('orders', 0),
         'Pending Fulfillment (with date)': metrics.get('pending_fulfillment', 0),
         'Pending Approval (with date)': metrics.get('pending_approval', 0),
-        'HubSpot Expect': metrics.get('expect_commit', 0) if 'expect_commit' in metrics else 0,
-        'HubSpot Commit': 0,  # Will calculate separately
-        'HubSpot Best Case': 0,  # Will calculate separately
-        'HubSpot Opportunity': 0,  # Will calculate separately
+        'HubSpot Expect/Commit': metrics.get('expect_commit', 0),
         'Pending Fulfillment (without date)': metrics.get('pending_fulfillment_no_date', 0),
         'Pending Approval (without date)': metrics.get('pending_approval_no_date', 0),
         'Pending Approval (>2 weeks old)': metrics.get('pending_approval_old', 0),
@@ -404,596 +415,86 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'Q1 Spillover - Best Case': metrics.get('q1_spillover_best_opp', 0)
     }
     
-    # Track which categories allow individual selection
-    individual_select_categories = [
-        'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
-        'Pending Fulfillment (without date)', 'Pending Approval (without date)', 
-        'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit', 'Q1 Spillover - Best Case'
-    ]
-    
-    # Calculate individual HubSpot categories
-    if deals_df is not None and not deals_df.empty:
-        if rep_name:
-            rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
-        else:
-            rep_deals = deals_df.copy()
-        
-        if not rep_deals.empty and 'Status' in rep_deals.columns:
-            rep_deals['Amount_Numeric'] = pd.to_numeric(rep_deals['Amount'], errors='coerce')
-            
-            # Filter for Q4 only
-            q4_deals = rep_deals[rep_deals.get('Counts_In_Q4', True) == True]
-            
-            sources['HubSpot Expect'] = q4_deals[q4_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
-            sources['HubSpot Commit'] = q4_deals[q4_deals['Status'] == 'Commit']['Amount_Numeric'].sum()
-            sources['HubSpot Best Case'] = q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
-            sources['HubSpot Opportunity'] = q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
-    
-    # Create checkboxes in columns with individual selection option
+    # Create checkboxes
     selected_sources = {}
-    individual_selection_mode = {}
     source_list = list(sources.keys())
     
     with col1:
-        for source in source_list[0:4]:
+        for source in source_list[0:3]:
             selected_sources[source] = st.checkbox(
                 f"{source}: ${sources[source]:,.0f}",
                 value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
+                key=f"team_{source}"
             )
-            
-            # Add "Select Individual" option for applicable categories
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
-                    value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
-                )
     
     with col2:
-        for source in source_list[4:8]:
+        for source in source_list[3:6]:
             selected_sources[source] = st.checkbox(
                 f"{source}: ${sources[source]:,.0f}",
                 value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
+                key=f"team_{source}"
             )
-            
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
-                    value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
-                )
     
     with col3:
-        for source in source_list[8:]:
+        for source in source_list[6:]:
             selected_sources[source] = st.checkbox(
                 f"{source}: ${sources[source]:,.0f}",
                 value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
+                key=f"team_{source}"
             )
-            
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
-                    value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
-                )
     
-    # Show individual selection interfaces for each category
-    individual_selections = {}
+    # Calculate totals
+    custom_forecast = sum(sources[source] for source, selected in selected_sources.items() if selected)
     
-    for category, is_individual in individual_selection_mode.items():
-        if is_individual:
-            st.markdown(f"#### 🛒 Select Individual Items: {category}")
-            
-            # Get the relevant data for this category
-            items_to_select = []
-            
-            # Sales Orders categories
-            if 'Pending Fulfillment (without date)' in category and sales_orders_df is not None:
-                if rep_name and 'Sales Rep' in sales_orders_df.columns:
-                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-                else:
-                    so_data = sales_orders_df.copy()
-                
-                items_to_select = so_data[
-                    (so_data['Status'] == 'Pending Fulfillment') &
-                    (so_data['Customer Promise Date'].isna()) &
-                    (so_data['Projected Date'].isna())
-                ].copy()
-                
-            elif 'Pending Approval (without date)' in category and sales_orders_df is not None:
-                if rep_name and 'Sales Rep' in sales_orders_df.columns:
-                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-                else:
-                    so_data = sales_orders_df.copy()
-                
-                items_to_select = so_data[
-                    (so_data['Status'] == 'Pending Approval') &
-                    (so_data['Customer Promise Date'].isna()) &
-                    (so_data['Projected Date'].isna())
-                ].copy()
-                
-            elif 'Pending Approval (>2 weeks old)' in category and sales_orders_df is not None:
-                if rep_name and 'Sales Rep' in sales_orders_df.columns:
-                    so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-                else:
-                    so_data = sales_orders_df.copy()
-                
-                if 'Age_Business_Days' in so_data.columns:
-                    items_to_select = so_data[
-                        (so_data['Status'] == 'Pending Approval') &
-                        (so_data['Age_Business_Days'] >= 10)
-                    ].copy()
-                    
-            # HubSpot deals categories
-            elif 'HubSpot' in category and deals_df is not None:
-                if rep_name:
-                    hs_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
-                else:
-                    hs_deals = deals_df.copy()
-                
-                if not hs_deals.empty and 'Status' in hs_deals.columns:
-                    hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
-                    q4_deals = hs_deals[hs_deals.get('Counts_In_Q4', True) == True]
-                    
-                    if 'Expect' in category:
-                        items_to_select = q4_deals[q4_deals['Status'] == 'Expect'].copy()
-                    elif 'Commit' in category:
-                        items_to_select = q4_deals[q4_deals['Status'] == 'Commit'].copy()
-                    elif 'Best Case' in category:
-                        items_to_select = q4_deals[q4_deals['Status'] == 'Best Case'].copy()
-                    elif 'Opportunity' in category:
-                        items_to_select = q4_deals[q4_deals['Status'] == 'Opportunity'].copy()
-            
-            # Q1 Spillover deals
-            elif 'Q1 Spillover' in category and deals_df is not None:
-                if rep_name:
-                    hs_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
-                else:
-                    hs_deals = deals_df.copy()
-                
-                if not hs_deals.empty and 'Status' in hs_deals.columns:
-                    hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
-                    
-                    # Determine which status to filter by
-                    if 'Expect/Commit' in category:
-                        status_filter = ['Expect', 'Commit']
-                    elif 'Best Case' in category:
-                        status_filter = ['Best Case', 'Opportunity']
-                    else:
-                        status_filter = ['Expect', 'Commit']  # Default
-                    
-                    # Get Q1 spillover deals using the Q1 2026 Spillover column
-                    # Must match EXACTLY the logic in calculate_rep_metrics
-                    if 'Q1 2026 Spillover' in hs_deals.columns:
-                        items_to_select = hs_deals[
-                            (hs_deals['Q1 2026 Spillover'] == 'Q1 2026') &
-                            (hs_deals['Status'].isin(status_filter))
-                        ].copy()
-                        
-                        # Debug info
-                        total_spillover = hs_deals[hs_deals['Q1 2026 Spillover'] == 'Q1 2026']
-                        st.caption(f"🔍 Debug: Total Q1 spillover deals = {len(total_spillover)}, {'/'.join(status_filter)} only = {len(items_to_select)}")
-                        st.caption(f"Total amount in Q1 spillover {'/'.join(status_filter)} = ${items_to_select['Amount_Numeric'].sum():,.0f}")
-                    else:
-                        # Fallback to old logic if column doesn't exist
-                        items_to_select = hs_deals[
-                            (hs_deals.get('Counts_In_Q4', True) == False) &
-                            (hs_deals['Status'].isin(status_filter))
-                        ].copy()
-                        st.caption("⚠️ Using fallback logic - Q1 2026 Spillover column not found")
-            
-            # Display selection interface
-            if not items_to_select.empty:
-                st.caption(f"Found {len(items_to_select)} items - select the ones you want to include")
-                
-                selected_items = []
-                
-                # Create a more compact selection interface
-                for idx, row in items_to_select.iterrows():
-                    # Determine display info based on type
-                    if 'Deal Name' in row:
-                        item_id = row.get('Record ID', idx)
-                        item_name = row.get('Deal Name', 'Unknown')
-                        item_customer = row.get('Account Name', '')
-                        item_amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    else:
-                        item_id = row.get('Document Number', idx)
-                        item_name = f"SO #{item_id}"
-                        item_customer = row.get('Customer', '')
-                        item_amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    
-                    # Checkbox for each item
-                    is_selected = st.checkbox(
-                        f"{item_name} - {item_customer} - ${item_amount:,.0f}",
-                        value=False,
-                        key=f"{'team' if rep_name is None else rep_name}_{category}_{item_id}"
-                    )
-                    
-                    if is_selected:
-                        selected_items.append({
-                            'id': item_id,
-                            'amount': item_amount,
-                            'row': row
-                        })
-                
-                individual_selections[category] = selected_items
-                st.caption(f"✓ Selected {len(selected_items)} of {len(items_to_select)} items")
-            else:
-                st.info(f"No items found in this category")
+    # Only count invoiced_shipped if it was selected
+    if selected_sources.get('Invoiced & Shipped', False):
+        invoiced_shipped = sources.get('Invoiced & Shipped', 0)
+    else:
+        invoiced_shipped = 0
     
-    # Calculate custom forecast
-    custom_forecast = 0
-    
-    for source, selected in selected_sources.items():
-        if selected:
-            if individual_selection_mode.get(source, False):
-                # Use individual selections
-                if source in individual_selections:
-                    custom_forecast += sum(item['amount'] for item in individual_selections[source])
-            else:
-                # Use full category amount
-                custom_forecast += sources[source]
-    
+    to_ship = custom_forecast - invoiced_shipped
     gap_to_quota = quota - custom_forecast
-    attainment_pct = (custom_forecast / quota * 100) if quota > 0 else 0
+    
+    # Calculate working days remaining
+    today = datetime.now()
+    q4_end = datetime(2025, 12, 31)
+    remaining_calendar_days = (q4_end - today).days
+    working_days_remaining = max(1, int(remaining_calendar_days * (5/7)))
+    per_day_needed = to_ship / working_days_remaining if working_days_remaining > 0 else 0
     
     # Display results
     st.markdown("---")
-    st.markdown("#### 📊 Your Custom Forecast")
+    st.markdown("#### 📦 Shipping Plan Summary")
     
     result_col1, result_col2, result_col3, result_col4 = st.columns(4)
     
     with result_col1:
-        st.metric("Quota", f"${quota:,.0f}")
+        st.metric("Q4 Quota", f"${quota:,.0f}")
     
     with result_col2:
-        st.metric("Custom Forecast", f"${custom_forecast:,.0f}")
+        shipped_pct = (invoiced_shipped / quota * 100) if quota > 0 else 0
+        st.metric("✅ Shipped", f"${invoiced_shipped:,.0f}", 
+                 delta=f"{shipped_pct:.1f}%",
+                 delta_color="normal")
     
     with result_col3:
-        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", 
-                 delta=f"${-gap_to_quota:,.0f}" if gap_to_quota < 0 else None,
-                 delta_color="inverse")
+        st.metric("📦 To Ship", f"${to_ship:,.0f}",
+                 delta=f"Per day: ${per_day_needed:,.0f}",
+                 delta_color="off",
+                 help=f"Based on ~{working_days_remaining} working days remaining in Q4")
     
     with result_col4:
-        st.metric("Attainment", f"{attainment_pct:.1f}%")
-    
-    # Export functionality
-    if any(selected_sources.values()):
-        st.markdown("---")
-        
-        # Collect data for export with summary
-        export_summary = []
-        export_data = []
-        
-        # Build summary section
-        export_summary.append({
-            'Category': '=== FORECAST SUMMARY ===',
-            'Amount': ''
-        })
-        export_summary.append({
-            'Category': 'Quota',
-            'Amount': f"${quota:,.0f}"
-        })
-        export_summary.append({
-            'Category': 'Custom Forecast',
-            'Amount': f"${custom_forecast:,.0f}"
-        })
-        export_summary.append({
-            'Category': 'Gap to Quota',
-            'Amount': f"${gap_to_quota:,.0f}"
-        })
-        export_summary.append({
-            'Category': 'Attainment %',
-            'Amount': f"{attainment_pct:.1f}%"
-        })
-        export_summary.append({
-            'Category': '',
-            'Amount': ''
-        })
-        export_summary.append({
-            'Category': '=== SELECTED COMPONENTS ===',
-            'Amount': ''
-        })
-        
-        # Add each selected component total
-        for source, selected in selected_sources.items():
-            if selected:
-                if individual_selection_mode.get(source, False) and source in individual_selections:
-                    # Show individual selection count
-                    item_count = len(individual_selections[source])
-                    item_total = sum(item['amount'] for item in individual_selections[source])
-                    export_summary.append({
-                        'Category': f"{source} ({item_count} items selected)",
-                        'Amount': f"${item_total:,.0f}"
-                    })
-                else:
-                    export_summary.append({
-                        'Category': source,
-                        'Amount': f"${sources[source]:,.0f}"
-                    })
-        
-        export_summary.append({
-            'Category': '',
-            'Amount': ''
-        })
-        export_summary.append({
-            'Category': '=== DETAILED LINE ITEMS ===',
-            'Amount': ''
-        })
-        export_summary.append({
-            'Category': '',
-            'Amount': ''
-        })
-        
-        # Get invoices data (always bulk)
-        if selected_sources.get('Invoiced & Shipped', False) and invoices_df is not None:
-            if rep_name and 'Sales Rep' in invoices_df.columns:
-                inv_data = invoices_df[invoices_df['Sales Rep'] == rep_name].copy()
-            else:
-                inv_data = invoices_df.copy()
-            
-            if not inv_data.empty:
-                for _, row in inv_data.iterrows():
-                    export_data.append({
-                        'Type': 'Invoice',
-                        'ID': row.get('Document Number', row.get('Invoice Number', '')),
-                        'Name': '',
-                        'Customer': row.get('Account Name', row.get('Customer', '')),
-                        'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                        'Date': row.get('Date', row.get('Transaction Date', '')),
-                        'Sales Rep': row.get('Sales Rep', '')
-                    })
-        
-        # Get sales orders data - check individual vs bulk
-        if sales_orders_df is not None:
-            if rep_name and 'Sales Rep' in sales_orders_df.columns:
-                so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-            else:
-                so_data = sales_orders_df.copy()
-            
-            if not so_data.empty:
-                # Pending Fulfillment with date (always bulk)
-                if selected_sources.get('Pending Fulfillment (with date)', False):
-                    pf_data = so_data[so_data['Status'] == 'Pending Fulfillment'].copy()
-                    for _, row in pf_data.iterrows():
-                        if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                
-                # Pending Approval with date (always bulk)
-                if selected_sources.get('Pending Approval (with date)', False):
-                    pa_data = so_data[so_data['Status'] == 'Pending Approval'].copy()
-                    for _, row in pa_data.iterrows():
-                        if pd.notna(row.get('Customer Promise Date')) or pd.notna(row.get('Projected Date')):
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Approval',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                
-                # Pending Fulfillment without date - check individual mode
-                if selected_sources.get('Pending Fulfillment (without date)', False):
-                    category = 'Pending Fulfillment (without date)'
-                    if individual_selection_mode.get(category, False) and category in individual_selections:
-                        # Use individual selections
-                        for item in individual_selections[category]:
-                            row = item['row']
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment (No Date)',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': item['amount'],
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                    else:
-                        # Bulk export
-                        pf_no_date = so_data[
-                            (so_data['Status'] == 'Pending Fulfillment') &
-                            (so_data['Customer Promise Date'].isna()) &
-                            (so_data['Projected Date'].isna())
-                        ].copy()
-                        for _, row in pf_no_date.iterrows():
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Fulfillment (No Date)',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                
-                # Pending Approval without date - check individual mode
-                if selected_sources.get('Pending Approval (without date)', False):
-                    category = 'Pending Approval (without date)'
-                    if individual_selection_mode.get(category, False) and category in individual_selections:
-                        # Use individual selections
-                        for item in individual_selections[category]:
-                            row = item['row']
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Approval (No Date)',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': item['amount'],
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                    else:
-                        # Bulk export
-                        pa_no_date = so_data[
-                            (so_data['Status'] == 'Pending Approval') &
-                            (so_data['Customer Promise Date'].isna()) &
-                            (so_data['Projected Date'].isna())
-                        ].copy()
-                        for _, row in pa_no_date.iterrows():
-                            export_data.append({
-                                'Type': 'Sales Order - Pending Approval (No Date)',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                
-                # Old Pending Approval - check individual mode
-                if selected_sources.get('Pending Approval (>2 weeks old)', False):
-                    category = 'Pending Approval (>2 weeks old)'
-                    if individual_selection_mode.get(category, False) and category in individual_selections:
-                        # Use individual selections
-                        for item in individual_selections[category]:
-                            row = item['row']
-                            export_data.append({
-                                'Type': 'Sales Order - Old Pending Approval',
-                                'ID': row.get('Document Number', ''),
-                                'Name': '',
-                                'Customer': row.get('Customer', ''),
-                                'Amount': item['amount'],
-                                'Date': row.get('Order Start Date', ''),
-                                'Sales Rep': row.get('Sales Rep', '')
-                            })
-                    else:
-                        # Bulk export
-                        if 'Age_Business_Days' in so_data.columns:
-                            old_pa = so_data[
-                                (so_data['Status'] == 'Pending Approval') &
-                                (so_data['Age_Business_Days'] >= 10)
-                            ].copy()
-                            for _, row in old_pa.iterrows():
-                                export_data.append({
-                                    'Type': 'Sales Order - Old Pending Approval',
-                                    'ID': row.get('Document Number', ''),
-                                    'Name': '',
-                                    'Customer': row.get('Customer', ''),
-                                    'Amount': pd.to_numeric(row.get('Amount', 0), errors='coerce'),
-                                    'Date': row.get('Order Start Date', ''),
-                                    'Sales Rep': row.get('Sales Rep', '')
-                                })
-        
-        # Get HubSpot deals data - check individual vs bulk
-        if deals_df is not None and not deals_df.empty:
-            if rep_name:
-                hs_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
-            else:
-                hs_deals = deals_df.copy()
-            
-            if not hs_deals.empty and 'Status' in hs_deals.columns:
-                hs_deals['Amount_Numeric'] = pd.to_numeric(hs_deals['Amount'], errors='coerce')
-                
-                # Filter for selected categories with individual selection support
-                for status_name, checkbox_name in [
-                    ('Expect', 'HubSpot Expect'),
-                    ('Commit', 'HubSpot Commit'),
-                    ('Best Case', 'HubSpot Best Case'),
-                    ('Opportunity', 'HubSpot Opportunity')
-                ]:
-                    if selected_sources.get(checkbox_name, False):
-                        if individual_selection_mode.get(checkbox_name, False) and checkbox_name in individual_selections:
-                            # Use individual selections
-                            for item in individual_selections[checkbox_name]:
-                                row = item['row']
-                                export_data.append({
-                                    'Type': f'HubSpot Deal - {status_name}',
-                                    'ID': row.get('Record ID', ''),
-                                    'Name': row.get('Deal Name', ''),
-                                    'Customer': row.get('Account Name', ''),
-                                    'Amount': item['amount'],
-                                    'Date': row.get('Close Date', ''),
-                                    'Sales Rep': row.get('Deal Owner', '')
-                                })
-                        else:
-                            # Bulk export
-                            status_deals = hs_deals[hs_deals['Status'] == status_name].copy()
-                            for _, row in status_deals.iterrows():
-                                export_data.append({
-                                    'Type': f'HubSpot Deal - {status_name}',
-                                    'ID': row.get('Record ID', ''),
-                                    'Name': row.get('Deal Name', ''),
-                                    'Customer': row.get('Account Name', ''),
-                                    'Amount': row.get('Amount_Numeric', 0),
-                                    'Date': row.get('Close Date', ''),
-                                    'Sales Rep': row.get('Deal Owner', '')
-                                })
-                
-                # Q1 Spillover - check individual mode
-                if selected_sources.get('Q1 Spillover - Expect/Commit', False):
-                    category = 'Q1 Spillover - Expect/Commit'
-                    if individual_selection_mode.get(category, False) and category in individual_selections:
-                        # Use individual selections
-                        for item in individual_selections[category]:
-                            row = item['row']
-                            export_data.append({
-                                'Type': 'HubSpot Deal - Q1 Spillover',
-                                'ID': row.get('Record ID', ''),
-                                'Name': row.get('Deal Name', ''),
-                                'Customer': row.get('Account Name', ''),
-                                'Amount': item['amount'],
-                                'Date': row.get('Close Date', ''),
-                                'Sales Rep': row.get('Deal Owner', '')
-                            })
-                    else:
-                        # Bulk export
-                        q1_deals = hs_deals[
-                            (hs_deals.get('Counts_In_Q4', True) == False) &
-                            (hs_deals['Status'].isin(['Expect', 'Commit']))
-                        ].copy()
-                        for _, row in q1_deals.iterrows():
-                            export_data.append({
-                                'Type': 'HubSpot Deal - Q1 Spillover',
-                                'ID': row.get('Record ID', ''),
-                                'Name': row.get('Deal Name', ''),
-                                'Customer': row.get('Account Name', ''),
-                                'Amount': row.get('Amount_Numeric', 0),
-                                'Date': row.get('Close Date', ''),
-                                'Sales Rep': row.get('Deal Owner', '')
-                            })
-        
-        # Create export dataframes
-        if export_data:
-            summary_df = pd.DataFrame(export_summary)
-            export_df = pd.DataFrame(export_data)
-            
-            # Format amounts for export
-            export_df['Amount'] = export_df['Amount'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "$0")
-            
-            # Combine summary and detail
-            final_export = summary_df.to_csv(index=False) + '\n' + export_df.to_csv(index=False)
-            
-            st.download_button(
-                label="📥 Download Your Winning Pipeline",
-                data=final_export,
-                file_name=f"winning_pipeline_{'team' if rep_name is None else rep_name}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                help="Download your selected forecast components with summary and details",
-                key=f"download_pipeline_{'team' if rep_name is None else rep_name}_v1"
-            )
-            
-            st.caption(f"Export includes summary + {len(export_df)} line items from your selected categories")
-
+        gap_pct = (gap_to_quota / quota * 100) if quota > 0 else 0
+        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}",
+                 delta=f"{gap_pct:.1f}% short" if gap_to_quota > 0 else f"{abs(gap_pct):.1f}% over",
+                 delta_color="inverse")
 
 def main():
     st.markdown("""
     <div style='text-align: center; padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
                  color: white; border-radius: 10px; margin-bottom: 20px;'>
         <h3>📦 Q4 2025 Shipping Planning</h3>
-        <p style='font-size: 14px; margin: 0;'>Build Your Shipping Plan - Same as Forecast Tool</p>
+        <p style='font-size: 14px; margin: 0;'>Simple Checkbox Selection</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -1011,11 +512,10 @@ def main():
     # Get total quota
     quota = dashboard_df['Quota'].sum() if not dashboard_df.empty else 5_021_440
     
-    # Call the EXACT Build Your Own Forecast function
-    build_your_own_forecast_section(
+    # Call the shipping plan function
+    build_shipping_plan_section(
         metrics=metrics,
         quota=quota,
-        rep_name=None,  # Team view
         deals_df=deals_df,
         invoices_df=invoices_df,
         sales_orders_df=sales_orders_df
