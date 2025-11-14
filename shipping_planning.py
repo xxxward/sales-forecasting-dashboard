@@ -179,28 +179,34 @@ def load_all_data():
         invoices_df = invoices_df.rename(columns=rename_dict)
         
         # Apply Rep Master override
-        if 'Rep Master' in invoices_df.columns:
+        if 'Rep Master' in invoices_df.columns and 'Sales Rep' in invoices_df.columns:
+            # Ensure both columns are string type
+            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
-            invalid_values = ['nan', '', 'None']
+            
+            invalid_values = ['nan', '', 'None', 'NaN']
             # Use numpy.where for simple conditional logic
             is_valid = ~invoices_df['Rep Master'].isin(invalid_values)
             invoices_df['Sales Rep'] = np.where(
                 is_valid,
-                invoices_df['Rep Master'],
-                invoices_df['Sales Rep']
+                invoices_df['Rep Master'].values,
+                invoices_df['Sales Rep'].values
             )
             invoices_df = invoices_df.drop(columns=['Rep Master'])
         
         # Apply customer name correction
-        if 'Corrected Customer Name' in invoices_df.columns:
+        if 'Corrected Customer Name' in invoices_df.columns and 'Customer' in invoices_df.columns:
+            # Ensure both columns are string type
+            invoices_df['Customer'] = invoices_df['Customer'].astype(str).str.strip()
             invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
-            invalid_values = ['nan', '', 'None']
+            
+            invalid_values = ['nan', '', 'None', 'NaN']
             # Use numpy.where for simple conditional logic
             is_valid = ~invoices_df['Corrected Customer Name'].isin(invalid_values)
             invoices_df['Customer'] = np.where(
                 is_valid,
-                invoices_df['Corrected Customer Name'],
-                invoices_df['Customer']
+                invoices_df['Corrected Customer Name'].values,
+                invoices_df['Customer'].values
             )
             invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
         
@@ -265,15 +271,18 @@ def load_all_data():
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
         # Apply Rep Master override
-        if 'Rep Master' in sales_orders_df.columns:
+        if 'Rep Master' in sales_orders_df.columns and 'Sales Rep' in sales_orders_df.columns:
+            # Ensure both columns are string type
+            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].astype(str).str.strip()
             sales_orders_df['Rep Master'] = sales_orders_df['Rep Master'].astype(str).str.strip()
-            invalid_values = ['nan', '', 'None']
+            
+            invalid_values = ['nan', '', 'None', 'NaN']
             # Use numpy.where for simple conditional logic
             is_valid = ~sales_orders_df['Rep Master'].isin(invalid_values)
             sales_orders_df['Sales Rep'] = np.where(
                 is_valid,
-                sales_orders_df['Rep Master'],
-                sales_orders_df['Sales Rep']
+                sales_orders_df['Rep Master'].values,
+                sales_orders_df['Sales Rep'].values
             )
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
         
