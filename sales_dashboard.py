@@ -1436,13 +1436,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             if not pf_with_date.empty:
                 pf_with_date['Amount_Numeric'] = pd.to_numeric(pf_with_date['Amount'], errors='coerce')
-                # External orders
+                # External orders: Calyx External Order = "Yes"
                 sources['Pending Fulfillment (with date) - External'] = pf_with_date[
-                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                 ]['Amount_Numeric'].sum()
-                # Internal orders (anything not marked as EXTERNAL)
+                # Internal orders: Calyx External Order = "No"
                 sources['Pending Fulfillment (with date) - Internal'] = pf_with_date[
-                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                    pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                 ]['Amount_Numeric'].sum()
             
             # Pending Fulfillment WITHOUT date - split by External/Internal
@@ -1454,13 +1454,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             if not pf_no_date.empty:
                 pf_no_date['Amount_Numeric'] = pd.to_numeric(pf_no_date['Amount'], errors='coerce')
-                # External orders
+                # External orders: Calyx External Order = "Yes"
                 sources['Pending Fulfillment (without date) - External'] = pf_no_date[
-                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                 ]['Amount_Numeric'].sum()
-                # Internal orders (anything not marked as EXTERNAL)
+                # Internal orders: Calyx External Order = "No"
                 sources['Pending Fulfillment (without date) - Internal'] = pf_no_date[
-                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                    pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                 ]['Amount_Numeric'].sum()
     
     # Track which categories allow individual selection
@@ -1567,11 +1567,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 # Apply External/Internal filter if specified
                 if 'External' in category and 'Calyx External Order' in base_filter.columns:
                     items_to_select = base_filter[
-                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                     ].copy()
                 elif 'Internal' in category and 'Calyx External Order' in base_filter.columns:
                     items_to_select = base_filter[
-                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                     ].copy()
                 else:
                     items_to_select = base_filter
@@ -1592,11 +1592,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 # Apply External/Internal filter if specified
                 if 'External' in category and 'Calyx External Order' in base_filter.columns:
                     items_to_select = base_filter[
-                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL'
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                     ].copy()
                 elif 'Internal' in category and 'Calyx External Order' in base_filter.columns:
                     items_to_select = base_filter[
-                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL'
+                        base_filter['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                     ].copy()
                 else:
                     items_to_select = base_filter
@@ -1860,7 +1860,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
                     ].copy()
                     if 'Calyx External Order' in pf_data.columns:
-                        pf_external = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL']
+                        pf_external = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES']
                         for _, row in pf_external.iterrows():
                             export_data.append({
                                 'Type': 'Sales Order - PF (External)',
@@ -1895,7 +1895,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
                         ].copy()
                         if 'Calyx External Order' in pf_data.columns:
-                            pf_internal = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL']
+                            pf_internal = pf_data[pf_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO']
                             for _, row in pf_internal.iterrows():
                                 export_data.append({
                                     'Type': 'Sales Order - PF (Internal)',
@@ -1946,7 +1946,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             (so_data['Projected Date'].isna())
                         ].copy()
                         if 'Calyx External Order' in pf_no_date.columns:
-                            pf_external = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'EXTERNAL']
+                            pf_external = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES']
                             for _, row in pf_external.iterrows():
                                 export_data.append({
                                     'Type': 'Sales Order - PF No Date (External)',
@@ -1982,7 +1982,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             (so_data['Projected Date'].isna())
                         ].copy()
                         if 'Calyx External Order' in pf_no_date.columns:
-                            pf_internal = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() != 'EXTERNAL']
+                            pf_internal = pf_no_date[pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO']
                             for _, row in pf_internal.iterrows():
                                 export_data.append({
                                     'Type': 'Sales Order - PF No Date (Internal)',
