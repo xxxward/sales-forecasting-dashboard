@@ -527,17 +527,22 @@ def load_all_planning_data():
         # Add category
         combined_df['Category'] = combined_df.apply(categorize_records, axis=1)
         
-        # Initialize planning columns
-        combined_df['Override_Amount'] = None
-        combined_df['Override_Ship_Date'] = None
-        combined_df['Include_Flag'] = False
+        # Initialize planning columns with explicit data types
+        combined_df['Override_Amount'] = pd.Series(dtype='float64')
+        combined_df['Override_Ship_Date'] = pd.Series(dtype='datetime64[ns]')
+        combined_df['Include_Flag'] = False  # Boolean
         combined_df['Planning_Notes'] = ''
         combined_df['Confidence_Level'] = 'Medium'
         combined_df['Assigned_To'] = 'Unassigned'
         combined_df['Live_Last_Updated'] = datetime.now()
         
-        # AUTO-INCLUDE baseline items (Invoiced & Shipped)
-        combined_df.loc[combined_df['Category'] == 'Invoiced_Shipped', 'Include_Flag'] = True
+        # AUTO-INCLUDE baseline items (Invoiced & Shipped) - use .loc to ensure boolean
+        mask = combined_df['Category'] == 'Invoiced_Shipped'
+        combined_df.loc[mask, 'Include_Flag'] = True
+        
+        # Debug: verify baseline is included
+        baseline_included = combined_df[combined_df['Include_Flag'] == True]
+        print(f"DEBUG: After auto-include, {len(baseline_included)} items marked as included")
         
         return combined_df
 
@@ -739,6 +744,12 @@ def display_planning_section(category_name, category_df, key_suffix):
 
 def calculate_plan_summary(planning_df):
     """Calculate summary metrics for the current plan"""
+    
+    # Debug: check Include_Flag data type
+    if not planning_df.empty and 'Include_Flag' in planning_df.columns:
+        flag_type = planning_df['Include_Flag'].dtype
+        true_count = (planning_df['Include_Flag'] == True).sum()
+        print(f"DEBUG: Include_Flag dtype={flag_type}, True count={true_count}, total rows={len(planning_df)}")
     
     # Filter to included items
     included_df = planning_df[planning_df['Include_Flag'] == True].copy()
