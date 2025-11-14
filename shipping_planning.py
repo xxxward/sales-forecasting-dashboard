@@ -536,6 +536,9 @@ def load_all_planning_data():
         combined_df['Assigned_To'] = 'Unassigned'
         combined_df['Live_Last_Updated'] = datetime.now()
         
+        # AUTO-INCLUDE baseline items (Invoiced & Shipped)
+        combined_df.loc[combined_df['Category'] == 'Invoiced_Shipped', 'Include_Flag'] = True
+        
         return combined_df
 
 # ============================================================================
@@ -899,7 +902,9 @@ def main():
     
     # Display summary metrics
     st.markdown("### 📊 Current Plan Summary")
-    summary = calculate_plan_summary(planning_df)
+    
+    # Recalculate summary from session state
+    summary = calculate_plan_summary(st.session_state.planning_data)
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -944,7 +949,9 @@ def main():
             # Always included
             st.markdown("**✅ Always Included:**")
             baseline_amount = category_totals.get('Invoiced_Shipped', 0)
-            st.info(f"Invoiced & Shipped: ${baseline_amount:,.0f}")
+            baseline_count = len(planning_df[planning_df['Category'] == 'Invoiced_Shipped'])
+            baseline_included = (planning_df[(planning_df['Category'] == 'Invoiced_Shipped') & (planning_df['Include_Flag'] == True)]['Live_Amount'].sum())
+            st.info(f"Invoiced & Shipped: ${baseline_amount:,.0f} ({baseline_count} items, ${baseline_included:,.0f} included)")
             
             st.markdown("**🔧 Sales Orders:**")
             category_selections['PF_With_Date'] = st.checkbox(
