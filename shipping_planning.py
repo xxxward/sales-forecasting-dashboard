@@ -178,38 +178,28 @@ def load_all_data():
         
         invoices_df = invoices_df.rename(columns=rename_dict)
         
-        # Apply Rep Master override
-        if 'Rep Master' in invoices_df.columns and 'Sales Rep' in invoices_df.columns:
-            # Convert to string and fill NaN
-            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].fillna('').astype(str).str.strip()
-            invoices_df['Rep Master'] = invoices_df['Rep Master'].fillna('').astype(str).str.strip()
+        # Apply Rep Master override - EXACT PATTERN FROM SALES_DASHBOARD.PY
+        if 'Rep Master' in invoices_df.columns:
+            # Rep Master takes priority - replace Sales Rep with Rep Master values
+            # But first, clean up Rep Master to handle any formula errors or blanks
+            invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
+            # Replace empty strings, 'nan', 'None', '#N/A', '#REF!' with original Sales Rep
+            invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+            mask = invoices_df['Rep Master'].isin(invalid_values)
             
-            invalid_values = ['nan', '', 'None', 'NaN']
-            # Use mask to update only valid values
-            is_valid = ~invoices_df['Rep Master'].isin(invalid_values)
-            
-            # Create new column values
-            new_sales_rep = invoices_df['Rep Master'].copy()
-            new_sales_rep[~is_valid] = invoices_df.loc[~is_valid, 'Sales Rep']
-            invoices_df['Sales Rep'] = new_sales_rep
-            
+            # Only replace Sales Rep where Rep Master has a valid value
+            invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
+            # Drop the Rep Master column since we've copied it to Sales Rep
             invoices_df = invoices_df.drop(columns=['Rep Master'])
         
-        # Apply customer name correction
-        if 'Corrected Customer Name' in invoices_df.columns and 'Customer' in invoices_df.columns:
-            # Convert to string and fill NaN
-            invoices_df['Customer'] = invoices_df['Customer'].fillna('').astype(str).str.strip()
-            invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].fillna('').astype(str).str.strip()
-            
-            invalid_values = ['nan', '', 'None', 'NaN']
-            # Use mask to update only valid values
-            is_valid = ~invoices_df['Corrected Customer Name'].isin(invalid_values)
-            
-            # Create new column values
-            new_customer = invoices_df['Corrected Customer Name'].copy()
-            new_customer[~is_valid] = invoices_df.loc[~is_valid, 'Customer']
-            invoices_df['Customer'] = new_customer
-            
+        # Apply customer name correction - EXACT PATTERN FROM SALES_DASHBOARD.PY
+        if 'Corrected Customer Name' in invoices_df.columns:
+            # Corrected Customer Name takes priority - replace Customer with corrected values
+            invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
+            invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+            mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
+            invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
+            # Drop the Corrected Customer Name column since we've copied it to Customer
             invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
         
         def clean_numeric(value):
@@ -272,21 +262,11 @@ def load_all_data():
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
         
-        # Apply Rep Master override
-        if 'Rep Master' in sales_orders_df.columns and 'Sales Rep' in sales_orders_df.columns:
-            # Convert to string and fill NaN
-            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].fillna('').astype(str).str.strip()
-            sales_orders_df['Rep Master'] = sales_orders_df['Rep Master'].fillna('').astype(str).str.strip()
-            
-            invalid_values = ['nan', '', 'None', 'NaN']
-            # Use numpy.where for simple conditional logic
-            is_valid = ~sales_orders_df['Rep Master'].isin(invalid_values)
-            
-            # Create new column values
-            new_sales_rep = sales_orders_df['Rep Master'].copy()
-            new_sales_rep[~is_valid] = sales_orders_df.loc[~is_valid, 'Sales Rep']
-            sales_orders_df['Sales Rep'] = new_sales_rep
-            
+        # Apply Rep Master override - EXACT PATTERN FROM SALES_DASHBOARD.PY (DIRECT REPLACEMENT)
+        if 'Rep Master' in sales_orders_df.columns:
+            # Rep Master takes priority - replace Sales Rep with Rep Master values
+            sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
+            # Drop the Rep Master column since we've copied it to Sales Rep
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
         
         def clean_numeric(value):
