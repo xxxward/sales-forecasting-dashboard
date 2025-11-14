@@ -181,18 +181,24 @@ def load_all_data():
         if 'Rep Master' in invoices_df.columns:
             invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
             invalid_values = ['nan', '', 'None']
-            # Use a safer approach to avoid indexing errors
-            valid_rep_master = ~invoices_df['Rep Master'].isin(invalid_values)
-            invoices_df.loc[valid_rep_master, 'Sales Rep'] = invoices_df.loc[valid_rep_master, 'Rep Master'].values
+            # Use where() to avoid indexing issues
+            rep_master_override = invoices_df['Rep Master'].where(
+                ~invoices_df['Rep Master'].isin(invalid_values),
+                invoices_df['Sales Rep']
+            )
+            invoices_df['Sales Rep'] = rep_master_override
             invoices_df = invoices_df.drop(columns=['Rep Master'])
         
         # Apply customer name correction
         if 'Corrected Customer Name' in invoices_df.columns:
             invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
             invalid_values = ['nan', '', 'None']
-            # Use a safer approach to avoid indexing errors
-            valid_customer_name = ~invoices_df['Corrected Customer Name'].isin(invalid_values)
-            invoices_df.loc[valid_customer_name, 'Customer'] = invoices_df.loc[valid_customer_name, 'Corrected Customer Name'].values
+            # Use where() to avoid indexing issues
+            customer_name_override = invoices_df['Corrected Customer Name'].where(
+                ~invoices_df['Corrected Customer Name'].isin(invalid_values),
+                invoices_df['Customer']
+            )
+            invoices_df['Customer'] = customer_name_override
             invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
         
         def clean_numeric(value):
@@ -259,9 +265,12 @@ def load_all_data():
         if 'Rep Master' in sales_orders_df.columns:
             sales_orders_df['Rep Master'] = sales_orders_df['Rep Master'].astype(str).str.strip()
             invalid_values = ['nan', '', 'None']
-            # Use a safer approach to avoid indexing errors
-            valid_rep_master = ~sales_orders_df['Rep Master'].isin(invalid_values)
-            sales_orders_df.loc[valid_rep_master, 'Sales Rep'] = sales_orders_df.loc[valid_rep_master, 'Rep Master'].values
+            # Create a copy and use where() to avoid indexing issues
+            rep_master_override = sales_orders_df['Rep Master'].where(
+                ~sales_orders_df['Rep Master'].isin(invalid_values),
+                sales_orders_df['Sales Rep']
+            )
+            sales_orders_df['Sales Rep'] = rep_master_override
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
         
         def clean_numeric(value):
