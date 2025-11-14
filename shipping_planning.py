@@ -927,6 +927,126 @@ def main():
         st.markdown("### 🎯 Build Your Shipping Plan")
         st.caption("Select items to include, add dates, and assign ownership")
         
+        # Calculate totals by category for the checkboxes
+        category_totals = {}
+        if not planning_df.empty:
+            for category in planning_df['Category'].unique():
+                cat_df = planning_df[planning_df['Category'] == category]
+                category_totals[category] = cat_df['Live_Amount'].sum()
+        
+        # Create checkbox interface like "Build Your Own Forecast"
+        st.markdown("#### 📦 Select Components to Include")
+        col1, col2, col3 = st.columns(3)
+        
+        category_selections = {}
+        
+        with col1:
+            # Always included
+            st.markdown("**✅ Always Included:**")
+            baseline_amount = category_totals.get('Invoiced_Shipped', 0)
+            st.info(f"Invoiced & Shipped: ${baseline_amount:,.0f}")
+            
+            st.markdown("**🔧 Sales Orders:**")
+            category_selections['PF_With_Date'] = st.checkbox(
+                f"Pending Fulfillment (with date): ${category_totals.get('PF_With_Date', 0):,.0f}",
+                value=False,
+                key="select_pf_date"
+            )
+            category_selections['PF_No_Date'] = st.checkbox(
+                f"Pending Fulfillment (NO date): ${category_totals.get('PF_No_Date', 0):,.0f}",
+                value=False,
+                key="select_pf_nodate",
+                help="CX team needs to add dates"
+            )
+            category_selections['PA_With_Date'] = st.checkbox(
+                f"Pending Approval (with date): ${category_totals.get('PA_With_Date', 0):,.0f}",
+                value=False,
+                key="select_pa_date"
+            )
+        
+        with col2:
+            st.markdown("**📋 Pending Approval:**")
+            category_selections['PA_No_Date'] = st.checkbox(
+                f"Pending Approval (NO date): ${category_totals.get('PA_No_Date', 0):,.0f}",
+                value=False,
+                key="select_pa_nodate"
+            )
+            category_selections['PA_Old_Date'] = st.checkbox(
+                f"Pending Approval (>2 weeks): ${category_totals.get('PA_Old_Date', 0):,.0f}",
+                value=False,
+                key="select_pa_old"
+            )
+            
+            st.markdown("**🎯 HubSpot Deals:**")
+            category_selections['HubSpot_Expect'] = st.checkbox(
+                f"HubSpot Expect/Commit: ${category_totals.get('HubSpot_Expect', 0):,.0f}",
+                value=False,
+                key="select_hs_expect"
+            )
+        
+        with col3:
+            st.markdown("**🎯 HubSpot (cont):**")
+            category_selections['HubSpot_Best_Case'] = st.checkbox(
+                f"HubSpot Best Case: ${category_totals.get('HubSpot_Best_Case', 0):,.0f}",
+                value=False,
+                key="select_hs_bc"
+            )
+            category_selections['HubSpot_Opportunity'] = st.checkbox(
+                f"HubSpot Opportunity: ${category_totals.get('HubSpot_Opportunity', 0):,.0f}",
+                value=False,
+                key="select_hs_opp"
+            )
+            
+            st.markdown("**📅 Q1 Spillover:**")
+            category_selections['Q1_Spillover_Expect'] = st.checkbox(
+                f"Q1 Spillover - Expect: ${category_totals.get('Q1_Spillover_Expect', 0):,.0f}",
+                value=False,
+                key="select_q1_expect"
+            )
+            category_selections['Q1_Spillover_Best_Case'] = st.checkbox(
+                f"Q1 Spillover - Best Case: ${category_totals.get('Q1_Spillover_Best_Case', 0):,.0f}",
+                value=False,
+                key="select_q1_bc"
+            )
+        
+        # Apply selections button
+        st.markdown("---")
+        if st.button("✅ Apply Selections", type="primary", use_container_width=True):
+            # Update Include_Flag based on category selections
+            for category, is_selected in category_selections.items():
+                if is_selected:
+                    planning_df.loc[planning_df['Category'] == category, 'Include_Flag'] = True
+                else:
+                    planning_df.loc[planning_df['Category'] == category, 'Include_Flag'] = False
+            
+            # Always include invoiced/shipped
+            planning_df.loc[planning_df['Category'] == 'Invoiced_Shipped', 'Include_Flag'] = True
+            
+            st.session_state.planning_data = planning_df
+            st.success("✅ Selections applied! Scroll down to see detailed breakdown.")
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Show current summary after selections
+        current_included = planning_df[planning_df['Include_Flag'] == True]
+        if not current_included.empty:
+            st.markdown("#### 📊 Currently Included:")
+            summary_col1, summary_col2, summary_col3 = st.columns(3)
+            with summary_col1:
+                st.metric("Items Included", len(current_included))
+            with summary_col2:
+                st.metric("Total Amount", f"${current_included['Live_Amount'].sum():,.0f}")
+            with summary_col3:
+                categories_included = current_included['Category'].nunique()
+                st.metric("Categories", categories_included)
+        
+        st.markdown("---")
+        
+        # Detailed editing sections (only show if items are included)
+        st.markdown("### ✏️ Edit Individual Items")
+        st.caption("Fine-tune your selections, add dates, notes, and assignments")
+        
         # Baseline - Always Included
         with st.expander("✅ BASELINE (Always Included)", expanded=False):
             baseline_df = planning_df[planning_df['Category'] == 'Invoiced_Shipped']
