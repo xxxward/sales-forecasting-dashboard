@@ -269,6 +269,10 @@ def load_all_data():
             # Drop the Rep Master column since we've copied it to Sales Rep
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
         
+        # CRITICAL: Remove any duplicate columns that may have been created
+        if sales_orders_df.columns.duplicated().any():
+            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
+        
         def clean_numeric(value):
             if pd.isna(value) or str(value).strip() == '':
                 return 0
