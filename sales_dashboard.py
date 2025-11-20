@@ -1435,15 +1435,17 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # Available data sources with their values
     sources = {
         'Invoiced & Shipped': metrics.get('orders', 0),
-        'Pending Fulfillment (with date) - Internal': 0,  # Will calculate below
-        'Pending Fulfillment (with date) - External': 0,  # Will calculate below
+        'Pending Fulfillment (with date)': 0,  # Parent - sum of children
+        '  ↳ Internal (with date)': 0,  # Child - will calculate below
+        '  ↳ External (with date)': 0,  # Child - will calculate below
         'Pending Approval (with date)': metrics.get('pending_approval', 0),
         'HubSpot Expect': metrics.get('expect_commit', 0) if 'expect_commit' in metrics else 0,
         'HubSpot Commit': 0,  # Will calculate separately
         'HubSpot Best Case': 0,  # Will calculate separately
         'HubSpot Opportunity': 0,  # Will calculate separately
-        'Pending Fulfillment (without date) - Internal': 0,  # Will calculate below
-        'Pending Fulfillment (without date) - External': 0,  # Will calculate below
+        'Pending Fulfillment (without date)': 0,  # Parent - sum of children
+        '  ↳ Internal (no date)': 0,  # Child - will calculate below
+        '  ↳ External (no date)': 0,  # Child - will calculate below
         'Pending Approval (without date)': metrics.get('pending_approval_no_date', 0),
         'Pending Approval (>2 weeks old)': metrics.get('pending_approval_old', 0),
         'Q1 Spillover - Expect/Commit': metrics.get('q1_spillover_expect_commit', 0),
@@ -1467,13 +1469,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             if not pf_with_date.empty:
                 pf_with_date['Amount_Numeric'] = pd.to_numeric(pf_with_date['Amount'], errors='coerce')
                 # External orders: Calyx External Order = "Yes"
-                sources['Pending Fulfillment (with date) - External'] = pf_with_date[
+                sources['  ↳ External (with date)'] = pf_with_date[
                     pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                 ]['Amount_Numeric'].sum()
                 # Internal orders: Calyx External Order = "No"
-                sources['Pending Fulfillment (with date) - Internal'] = pf_with_date[
+                sources['  ↳ Internal (with date)'] = pf_with_date[
                     pf_with_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                 ]['Amount_Numeric'].sum()
+                # Parent total
+                sources['Pending Fulfillment (with date)'] = sources['  ↳ Internal (with date)'] + sources['  ↳ External (with date)']
             
             # Pending Fulfillment WITHOUT date - split by External/Internal
             pf_no_date = so_data[
@@ -1485,22 +1489,30 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             if not pf_no_date.empty:
                 pf_no_date['Amount_Numeric'] = pd.to_numeric(pf_no_date['Amount'], errors='coerce')
                 # External orders: Calyx External Order = "Yes"
-                sources['Pending Fulfillment (without date) - External'] = pf_no_date[
+                sources['  ↳ External (no date)'] = pf_no_date[
                     pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
                 ]['Amount_Numeric'].sum()
                 # Internal orders: Calyx External Order = "No"
-                sources['Pending Fulfillment (without date) - Internal'] = pf_no_date[
+                sources['  ↳ Internal (no date)'] = pf_no_date[
                     pf_no_date['Calyx External Order'].astype(str).str.strip().str.upper() == 'NO'
                 ]['Amount_Numeric'].sum()
+                # Parent total
+                sources['Pending Fulfillment (without date)'] = sources['  ↳ Internal (no date)'] + sources['  ↳ External (no date)']
     
     # Track which categories allow individual selection
     individual_select_categories = [
         'HubSpot Expect', 'HubSpot Commit', 'HubSpot Best Case', 'HubSpot Opportunity',
-        'Pending Fulfillment (with date) - Internal', 'Pending Fulfillment (with date) - External',
-        'Pending Fulfillment (without date) - Internal', 'Pending Fulfillment (without date) - External',
+        '  ↳ Internal (with date)', '  ↳ External (with date)',
+        '  ↳ Internal (no date)', '  ↳ External (no date)',
         'Pending Approval (without date)', 
         'Pending Approval (>2 weeks old)', 'Q1 Spillover - Expect/Commit', 'Q1 Spillover - Best Case'
     ]
+    
+    # Define parent-child relationships for checkbox logic
+    parent_child_map = {
+        'Pending Fulfillment (with date)': ['  ↳ Internal (with date)', '  ↳ External (with date)'],
+        'Pending Fulfillment (without date)': ['  ↳ Internal (no date)', '  ↳ External (no date)']
+    }
     
     # Calculate individual HubSpot categories
     if deals_df is not None and not deals_df.empty:
@@ -1535,44 +1547,140 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # Build source list excluding 'Invoiced & Shipped'
     source_list = [s for s in sources.keys() if s != 'Invoiced & Shipped']
     
+    # Helper function to check if a source is a child
+    def is_child(source_name):
+        return source_name.startswith('  ↳')
+    
+    # Helper function to get parent of a child
+    def get_parent(child_name):
+        for parent, children in parent_child_map.items():
+            if child_name in children:
+                return parent
+        return None
+    
     with col1:
-        for source in source_list[0:4]:
-            selected_sources[source] = st.checkbox(
-                f"{source}: ${sources[source]:,.0f}",
-                value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
-            )
-            
-            # Add "Select Individual" option for applicable categories
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
+        for source in source_list[0:5]:
+            # Check if this is a parent category
+            if source in parent_child_map:
+                # Parent checkbox
+                selected_sources[source] = st.checkbox(
+                    f"**{source}**: ${sources[source]:,.0f}",
                     value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
                 )
+                
+                # If parent is checked, show children as indented options
+                if selected_sources[source]:
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = st.checkbox(
+                            f"{child}: ${sources[child]:,.0f}",
+                            value=True,  # Default to checked when parent is checked
+                            key=f"{'team' if rep_name is None else rep_name}_{child}"
+                        )
+                        # Add individual selection option for child
+                        if child in individual_select_categories and selected_sources[child]:
+                            individual_selection_mode[child] = st.checkbox(
+                                f"      ↳ Select individual items",
+                                value=False,
+                                key=f"{'team' if rep_name is None else rep_name}_{child}_individual"
+                            )
+                else:
+                    # Parent not checked, initialize children as unchecked
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = False
+            # Skip children when iterating at top level (they're handled by parent)
+            elif not is_child(source):
+                selected_sources[source] = st.checkbox(
+                    f"{source}: ${sources[source]:,.0f}",
+                    value=False,
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
+                )
+                
+                # Add "Select Individual" option for applicable categories
+                if source in individual_select_categories and selected_sources[source]:
+                    individual_selection_mode[source] = st.checkbox(
+                        f"   ↳ Select individual items",
+                        value=False,
+                        key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
+                    )
     
     with col2:
-        for source in source_list[4:8]:
-            selected_sources[source] = st.checkbox(
-                f"{source}: ${sources[source]:,.0f}",
-                value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
-            )
-            
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
+        for source in source_list[5:10]:
+            if source in parent_child_map:
+                selected_sources[source] = st.checkbox(
+                    f"**{source}**: ${sources[source]:,.0f}",
                     value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
                 )
+                
+                if selected_sources[source]:
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = st.checkbox(
+                            f"{child}: ${sources[child]:,.0f}",
+                            value=True,
+                            key=f"{'team' if rep_name is None else rep_name}_{child}"
+                        )
+                        if child in individual_select_categories and selected_sources[child]:
+                            individual_selection_mode[child] = st.checkbox(
+                                f"      ↳ Select individual items",
+                                value=False,
+                                key=f"{'team' if rep_name is None else rep_name}_{child}_individual"
+                            )
+                else:
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = False
+            elif not is_child(source):
+                selected_sources[source] = st.checkbox(
+                    f"{source}: ${sources[source]:,.0f}",
+                    value=False,
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
+                )
+                
+                if source in individual_select_categories and selected_sources[source]:
+                    individual_selection_mode[source] = st.checkbox(
+                        f"   ↳ Select individual items",
+                        value=False,
+                        key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
+                    )
     
     with col3:
-        for source in source_list[8:]:
-            selected_sources[source] = st.checkbox(
-                f"{source}: ${sources[source]:,.0f}",
-                value=False,
-                key=f"{'team' if rep_name is None else rep_name}_{source}"
-            )
+        for source in source_list[10:]:
+            if source in parent_child_map:
+                selected_sources[source] = st.checkbox(
+                    f"**{source}**: ${sources[source]:,.0f}",
+                    value=False,
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
+                )
+                
+                if selected_sources[source]:
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = st.checkbox(
+                            f"{child}: ${sources[child]:,.0f}",
+                            value=True,
+                            key=f"{'team' if rep_name is None else rep_name}_{child}"
+                        )
+                        if child in individual_select_categories and selected_sources[child]:
+                            individual_selection_mode[child] = st.checkbox(
+                                f"      ↳ Select individual items",
+                                value=False,
+                                key=f"{'team' if rep_name is None else rep_name}_{child}_individual"
+                            )
+                else:
+                    for child in parent_child_map[source]:
+                        selected_sources[child] = False
+            elif not is_child(source):
+                selected_sources[source] = st.checkbox(
+                    f"{source}: ${sources[source]:,.0f}",
+                    value=False,
+                    key=f"{'team' if rep_name is None else rep_name}_{source}"
+                )
+                
+                if source in individual_select_categories and selected_sources[source]:
+                    individual_selection_mode[source] = st.checkbox(
+                        f"   ↳ Select individual items",
+                        value=False,
+                        key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
+                    )
             
             if source in individual_select_categories and selected_sources[source]:
                 individual_selection_mode[source] = st.checkbox(
@@ -1733,22 +1841,45 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 for idx, row in items_to_select.iterrows():
                     # Determine display info based on type
                     if 'Deal Name' in row:
+                        # HubSpot Deal
                         item_id = row.get('Record ID', idx)
                         item_name = row.get('Deal Name', 'Unknown')
                         item_customer = row.get('Account Name', '')
                         item_amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
+                        
+                        # Checkbox for HubSpot deals
+                        is_selected = st.checkbox(
+                            f"{item_name} - {item_customer} - ${item_amount:,.0f}",
+                            value=False,
+                            key=f"{'team' if rep_name is None else rep_name}_{category}_{item_id}"
+                        )
                     else:
+                        # NetSuite Sales Order
                         item_id = row.get('Document Number', idx)
-                        item_name = f"SO #{item_id}"
+                        internal_id = row.get('Internal ID', '')
                         item_customer = row.get('Customer', '')
                         item_amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    
-                    # Checkbox for each item
-                    is_selected = st.checkbox(
-                        f"{item_name} - {item_customer} - ${item_amount:,.0f}",
-                        value=False,
-                        key=f"{'team' if rep_name is None else rep_name}_{category}_{item_id}"
-                    )
+                        
+                        # Create NetSuite link if we have Internal ID
+                        if pd.notna(internal_id) and internal_id != '':
+                            so_link = f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={internal_id}&whence="
+                            # Display checkbox with link
+                            col1, col2 = st.columns([0.9, 0.1])
+                            with col1:
+                                is_selected = st.checkbox(
+                                    f"SO# {item_id} - {item_customer} - ${item_amount:,.0f}",
+                                    value=False,
+                                    key=f"{'team' if rep_name is None else rep_name}_{category}_{item_id}"
+                                )
+                            with col2:
+                                st.markdown(f"[🔗]({so_link})", unsafe_allow_html=True)
+                        else:
+                            # No link available
+                            is_selected = st.checkbox(
+                                f"SO# {item_id} - {item_customer} - ${item_amount:,.0f}",
+                                value=False,
+                                key=f"{'team' if rep_name is None else rep_name}_{category}_{item_id}"
+                            )
                     
                     if is_selected:
                         selected_items.append({
@@ -1769,10 +1900,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # Box 2: Pending Orders (sum of selected Pending Fulfillment + Pending Approval items)
     pending_orders = 0
     pending_categories = [
-        'Pending Fulfillment (with date) - Internal',
-        'Pending Fulfillment (with date) - External',
-        'Pending Fulfillment (without date) - Internal',
-        'Pending Fulfillment (without date) - External',
+        '  ↳ Internal (with date)',
+        '  ↳ External (with date)',
+        '  ↳ Internal (no date)',
+        '  ↳ External (no date)',
         'Pending Approval (with date)',
         'Pending Approval (without date)',
         'Pending Approval (>2 weeks old)'
@@ -1819,6 +1950,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     business_days_remaining = calculate_business_days_remaining()
     daily_ship_rate = total_selected / business_days_remaining if business_days_remaining > 0 else 0
     
+    # Box 7: Total Forecast (includes Invoices)
+    total_forecast_with_invoices = invoiced_shipped + pending_orders + hubspot_pipeline
+    
     # Display results
     st.markdown("---")
     st.markdown("#### 📊 Your Custom Forecast")
@@ -1847,17 +1981,22 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                  delta=f"{gap_pct:.1f}% remaining",
                  delta_color="inverse" if gap_to_quota > 0 else "normal")
     
-    # Row 2: Centered summary boxes
+    # Row 2: Three summary boxes
     st.markdown("")  # Add spacing
-    _, center_col1, center_col2, _ = st.columns([1, 2, 2, 1])
+    row2_col1, row2_col2, row2_col3 = st.columns(3)
     
-    with center_col1:
+    with row2_col1:
         st.metric("📊 Total Selected", f"${total_selected:,.0f}",
                  delta="Pending + HubSpot")
     
-    with center_col2:
+    with row2_col2:
         st.metric("🚢 Daily Ship Rate", f"${daily_ship_rate:,.0f}/day",
                  delta=f"Over {business_days_remaining} business days")
+    
+    with row2_col3:
+        total_forecast_pct = (total_forecast_with_invoices / quota * 100) if quota > 0 else 0
+        st.metric("💰 Total Forecast (with Invoices)", f"${total_forecast_with_invoices:,.0f}",
+                 delta=f"{total_forecast_pct:.1f}% of quota")
     
     # Export functionality
     if any(selected_sources.values()) or invoiced_shipped > 0:
@@ -1970,8 +2109,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 so_data = sales_orders_df.copy()
             
             if not so_data.empty:
-                # Pending Fulfillment WITH date - External (always bulk, not selectable)
-                if selected_sources.get('Pending Fulfillment (with date) - External', False):
+                # Pending Fulfillment WITH date - External
+                if selected_sources.get('  ↳ External (with date)', False):
                     pf_data = so_data[
                         (so_data['Status'] == 'Pending Fulfillment') &
                         ((so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna()))
@@ -1990,8 +2129,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             })
                 
                 # Pending Fulfillment WITH date - Internal (can be individual selection)
-                if selected_sources.get('Pending Fulfillment (with date) - Internal', False):
-                    category = 'Pending Fulfillment (with date) - Internal'
+                if selected_sources.get('  ↳ Internal (with date)', False):
+                    category = '  ↳ Internal (with date)'
                     if individual_selection_mode.get(category, False) and category in individual_selections:
                         # Use individual selections
                         for item in individual_selections[category]:
@@ -2040,8 +2179,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                             })
                 
                 # Pending Fulfillment WITHOUT date - External
-                if selected_sources.get('Pending Fulfillment (without date) - External', False):
-                    category = 'Pending Fulfillment (without date) - External'
+                if selected_sources.get('  ↳ External (no date)', False):
+                    category = '  ↳ External (no date)'
                     if individual_selection_mode.get(category, False) and category in individual_selections:
                         # Use individual selections
                         for item in individual_selections[category]:
@@ -2076,8 +2215,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 })
                 
                 # Pending Fulfillment WITHOUT date - Internal
-                if selected_sources.get('Pending Fulfillment (without date) - Internal', False):
-                    category = 'Pending Fulfillment (without date) - Internal'
+                if selected_sources.get('  ↳ Internal (no date)', False):
+                    category = '  ↳ Internal (no date)'
                     if individual_selection_mode.get(category, False) and category in individual_selections:
                         # Use individual selections
                         for item in individual_selections[category]:
