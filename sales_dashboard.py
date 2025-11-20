@@ -682,31 +682,35 @@ def load_all_data():
             
             invoices_df = invoices_df.rename(columns=rename_dict)
             
-            # --- SURGICAL FIX: Rep Master Logic ---
+            # --- NEW: ROBUST REP MASTER LOGIC ---
             if 'Rep Master' in invoices_df.columns:
-                # 1. Clean the Rep Master column for checking
-                # Convert to string, strip whitespace, make UPPERCASE for comparison
-                rep_master_clean = invoices_df['Rep Master'].astype(str).str.strip().str.upper()
+                # 1. Create a clean, uppercase version for checking
+                # We use 'astype(str)' to force everything to text so #N/A isn't treated as a float/error
+                clean_master = invoices_df['Rep Master'].astype(str).str.strip().str.upper()
                 
-                # 2. Define Invalid Values (UPPERCASE)
-                invalid_values = ['', 'NAN', 'NONE', '#N/A', '#REF!', '#VALUE!', '#ERROR!', '#NAME?']
+                # 2. Define ALL things that should be treated as "Empty"
+                # This includes explicit Google Sheets errors and text strings
+                bad_values = ['#N/A', 'NAN', 'NONE', '', '0', '0.0', 'FALSE', '#REF!', '#VALUE!', '#NAME?', 'None']
                 
-                # 3. Determine which rows have a VALID Rep Master
-                # valid = NOT in the invalid list
-                valid_mask = ~rep_master_clean.isin(invalid_values)
+                # 3. Wipe out the bad values in Rep Master (Set them to None)
+                # This forces the #N/A to disappear completely
+                invoices_df.loc[clean_master.isin(bad_values), 'Rep Master'] = None
                 
-                # 4. Only overwrite Sales Rep where Rep Master is VALID
-                invoices_df.loc[valid_mask, 'Sales Rep'] = invoices_df.loc[valid_mask, 'Rep Master']
+                # 4. The "Coalesce": Fill Rep Master into Sales Rep
+                # Logic: "Use Rep Master if it exists. If it was wiped out in step 3, keep the original Sales Rep."
+                invoices_df['Sales Rep'] = invoices_df['Rep Master'].fillna(invoices_df['Sales Rep'])
                 
-                # 5. Drop the helper column
+                # 5. Clean up
                 invoices_df = invoices_df.drop(columns=['Rep Master'])
-            # --------------------------------------
+            # ------------------------------------
             
             if 'Corrected Customer Name' in invoices_df.columns:
-                invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
-                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
-                mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
-                invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
+                # Same logic for Customer Name
+                clean_cust = invoices_df['Corrected Customer Name'].astype(str).str.strip().str.upper()
+                bad_cust = ['#N/A', 'NAN', 'NONE', '', '0', '#REF!', '#VALUE!', 'None']
+                
+                invoices_df.loc[clean_cust.isin(bad_cust), 'Corrected Customer Name'] = None
+                invoices_df['Customer'] = invoices_df['Corrected Customer Name'].fillna(invoices_df['Customer'])
                 invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
             
             def clean_numeric(value):
@@ -729,18 +733,17 @@ def load_all_data():
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            # --- SURGICAL FIX: Final Rep Cleanup ---
+            # Final cleaning of the Resulting Sales Rep column
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             
-            # Define values that should NEVER be a Rep Name
-            garbage_reps = ['#N/A', '#REF!', 'nan', 'None', '', '0', '0.0']
+            # Dump rows where the result is STILL garbage (meaning both Master and Original were bad)
+            garbage_reps = ['#N/A', 'nan', 'None', '', '0', '0.0', '#REF!']
             
             invoices_df = invoices_df[
                 (invoices_df['Sales Rep'].notna()) & 
-                (~invoices_df['Sales Rep'].isin(garbage_reps)) & # Filter out garbage
+                (~invoices_df['Sales Rep'].isin(garbage_reps)) &
                 (invoices_df['Sales Rep'].str.lower() != 'house')
             ]
-            # ---------------------------------------
             
             if 'Invoice Number' in invoices_df.columns:
                 invoices_df = invoices_df.drop_duplicates(subset=['Invoice Number'], keep='first')
@@ -749,7 +752,6 @@ def load_all_data():
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
             
             dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
-            
             dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
             dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
             
