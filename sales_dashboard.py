@@ -663,9 +663,10 @@ def load_all_data():
             dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
             dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
     
-   # Process invoice data
+    # Process invoice data
     if not invoices_df.empty:
         if len(invoices_df.columns) >= 15:
+            # Map additional columns for Shopify identification
             rename_dict = {
                 invoices_df.columns[0]: 'Invoice Number',
                 invoices_df.columns[1]: 'Status',
@@ -675,42 +676,49 @@ def load_all_data():
                 invoices_df.columns[14]: 'Sales Rep'
             }
             
+            # NEW: Map Corrected Customer Name (Column T - index 19) and Rep Master (Column U - index 20)
             if len(invoices_df.columns) > 19:
-                rename_dict[invoices_df.columns[19]] = 'Corrected Customer Name'
+                rename_dict[invoices_df.columns[19]] = 'Corrected Customer Name'  # Column T
             if len(invoices_df.columns) > 20:
-                rename_dict[invoices_df.columns[20]] = 'Rep Master'
+                rename_dict[invoices_df.columns[20]] = 'Rep Master'  # Column U
+            
+            # Try to find HubSpot Pipeline and CSM columns
+            for idx, col in enumerate(invoices_df.columns):
+                col_str = str(col).lower()
+                if 'hubspot' in col_str and 'pipeline' in col_str:
+                    rename_dict[col] = 'HubSpot_Pipeline'
+                elif col_str == 'csm' or 'csm' in col_str:
+                    rename_dict[col] = 'CSM'
             
             invoices_df = invoices_df.rename(columns=rename_dict)
             
-            # --- NEW: ROBUST REP MASTER LOGIC ---
+            # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
+            # This fixes the Shopify eCommerce invoices that weren't being applied to reps correctly
             if 'Rep Master' in invoices_df.columns:
-                # 1. Create a clean, uppercase version for checking
-                # We use 'astype(str)' to force everything to text so #N/A isn't treated as a float/error
-                clean_master = invoices_df['Rep Master'].astype(str).str.strip().str.upper()
+                # Rep Master takes priority - replace Sales Rep with Rep Master values
+                # But first, clean up Rep Master to handle any formula errors or blanks
+                invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
+                # Define invalid values that should be filtered out
+                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
                 
-                # 2. Define ALL things that should be treated as "Empty"
-                # This includes explicit Google Sheets errors and text strings
-                bad_values = ['#N/A', 'NAN', 'NONE', '', '0', '0.0', 'FALSE', '#REF!', '#VALUE!', '#NAME?', 'None']
+                # FILTER OUT rows where Rep Master is invalid (including #N/A)
+                # These rows won't count toward any revenue
+                invoices_df = invoices_df[~invoices_df['Rep Master'].isin(invalid_values)]
                 
-                # 3. Wipe out the bad values in Rep Master (Set them to None)
-                # This forces the #N/A to disappear completely
-                invoices_df.loc[clean_master.isin(bad_values), 'Rep Master'] = None
-                
-                # 4. The "Coalesce": Fill Rep Master into Sales Rep
-                # Logic: "Use Rep Master if it exists. If it was wiped out in step 3, keep the original Sales Rep."
-                invoices_df['Sales Rep'] = invoices_df['Rep Master'].fillna(invoices_df['Sales Rep'])
-                
-                # 5. Clean up
+                # Now replace Sales Rep with Rep Master for all remaining rows
+                invoices_df['Sales Rep'] = invoices_df['Rep Master']
+                # Drop the Rep Master column since we've copied it to Sales Rep
                 invoices_df = invoices_df.drop(columns=['Rep Master'])
-            # ------------------------------------
+            else:
+                st.sidebar.warning("⚠️ Rep Master column not found in invoices!")
             
             if 'Corrected Customer Name' in invoices_df.columns:
-                # Same logic for Customer Name
-                clean_cust = invoices_df['Corrected Customer Name'].astype(str).str.strip().str.upper()
-                bad_cust = ['#N/A', 'NAN', 'NONE', '', '0', '#REF!', '#VALUE!', 'None']
-                
-                invoices_df.loc[clean_cust.isin(bad_cust), 'Corrected Customer Name'] = None
-                invoices_df['Customer'] = invoices_df['Corrected Customer Name'].fillna(invoices_df['Customer'])
+                # Corrected Customer Name takes priority - replace Customer with corrected values
+                invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
+                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+                mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
+                invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
+                # Drop the Corrected Customer Name column since we've copied it to Customer
                 invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
             
             def clean_numeric(value):
@@ -725,39 +733,50 @@ def load_all_data():
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
             
+            # Filter to Q4 2025 only (10/1/2025 - 12/31/2025)
+            # This should match exactly what your boss filters in the sheet
             q4_start = pd.Timestamp('2025-10-01')
             q4_end = pd.Timestamp('2025-12-31')
             
+            # Apply date filter
             invoices_df = invoices_df[
                 (invoices_df['Date'] >= q4_start) & 
                 (invoices_df['Date'] <= q4_end)
             ]
             
-            # Final cleaning of the Resulting Sales Rep column
+            # Clean up Sales Rep field
             invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
             
-            # Dump rows where the result is STILL garbage (meaning both Master and Original were bad)
-            garbage_reps = ['#N/A', 'nan', 'None', '', '0', '0.0', '#REF!']
-            
+            # Filter out invalid Sales Reps BEFORE groupby
+            # NOTE: We DO NOT filter Amount > 0 because credit memos (negative amounts) should reduce totals
             invoices_df = invoices_df[
                 (invoices_df['Sales Rep'].notna()) & 
-                (~invoices_df['Sales Rep'].isin(garbage_reps)) &
+                (invoices_df['Sales Rep'] != '') &
+                (invoices_df['Sales Rep'].str.lower() != 'nan') &
                 (invoices_df['Sales Rep'].str.lower() != 'house')
             ]
             
+            # CRITICAL: Remove duplicate invoices if they exist (keep first occurrence)
             if 'Invoice Number' in invoices_df.columns:
+                before_dedupe = len(invoices_df)
                 invoices_df = invoices_df.drop_duplicates(subset=['Invoice Number'], keep='first')
+                after_dedupe = len(invoices_df)
+                if before_dedupe != after_dedupe:
+                    st.sidebar.warning(f"⚠️ Removed {before_dedupe - after_dedupe} duplicate invoices!")
             
+            # Calculate invoice totals by rep
             invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
             invoice_totals.columns = ['Rep Name', 'Invoice Total']
             
             dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
+            
             dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
             dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
             
             dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
             dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
             
+            # Add Shopify ECommerce to dashboard if it has invoices but isn't in dashboard yet
             if 'Shopify ECommerce' in invoice_totals['Rep Name'].values:
                 if 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
                     shopify_total = invoice_totals[invoice_totals['Rep Name'] == 'Shopify ECommerce']['Invoice Total'].iloc[0]
@@ -825,7 +844,16 @@ def load_all_data():
         # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
         # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
         if 'Rep Master' in sales_orders_df.columns:
-            # Rep Master takes priority - replace Sales Rep with Rep Master values
+            # Clean up Rep Master to handle any formula errors or blanks
+            sales_orders_df['Rep Master'] = sales_orders_df['Rep Master'].astype(str).str.strip()
+            # Define invalid values that should be filtered out
+            invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+            
+            # FILTER OUT rows where Rep Master is invalid (including #N/A)
+            # These rows won't count toward any revenue
+            sales_orders_df = sales_orders_df[~sales_orders_df['Rep Master'].isin(invalid_values)]
+            
+            # Now replace Sales Rep with Rep Master for all remaining rows
             sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
             # Drop the Rep Master column since we've copied it to Sales Rep
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
