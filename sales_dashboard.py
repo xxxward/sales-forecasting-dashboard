@@ -280,340 +280,79 @@ CACHE_TTL = 3600
 CACHE_VERSION = "v61_fix_dec31_timestamp"
 
 @st.cache_data(ttl=CACHE_TTL)
-def load_all_data():
-    """Load all necessary data from Google Sheets"""
-    
-    #st.sidebar.info("🔄 Loading data from Google Sheets...")
-    
-    # Load deals data - extend range to include Q1 2026 Spillover column
-    deals_df = load_google_sheets_data("All Reps All Pipelines", "A:Z", version=CACHE_VERSION)
-    
-    # Load dashboard info (rep quotas and orders)
-    dashboard_df = load_google_sheets_data("Dashboard Info", "A:C", version=CACHE_VERSION)
-    
-    # Load invoice data from NetSuite - EXTEND to include Columns T:U
-    invoices_df = load_google_sheets_data("NS Invoices", "A:U", version=CACHE_VERSION)
-    
-    # Load sales orders data from NetSuite - EXTEND to include Columns through AF
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
-    
-    # Clean and process deals data
-    if not deals_df.empty and len(deals_df.columns) >= 6:
-        # Get column names from first row
-        if len(deals_df) > 0:
-            col_names = deals_df.columns.tolist()
-            
-            rename_dict = {}
-            
-            # Map columns by actual names (case-sensitive)
-            for col in col_names:
-                if col == 'Record ID':
-                    rename_dict[col] = 'Record ID'
-                elif col == 'Deal Name':
-                    rename_dict[col] = 'Deal Name'
-                elif col == 'Deal Stage':
-                    rename_dict[col] = 'Deal Stage'
-                elif col == 'Close Date':
-                    rename_dict[col] = 'Close Date'
-                elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
-                    rename_dict[col] = 'Deal Owner'
-                elif col == 'Deal Owner First Name':
-                    rename_dict[col] = 'Deal Owner First Name'
-                elif col == 'Deal Owner Last Name':
-                    rename_dict[col] = 'Deal Owner Last Name'
-                elif col == 'Amount':
-                    rename_dict[col] = 'Amount'
-                elif col == 'Close Status':
-                    rename_dict[col] = 'Status'
-                elif col == 'Pipeline':
-                    rename_dict[col] = 'Pipeline'
-                elif col == 'Deal Type':
-                    rename_dict[col] = 'Product Type'  # KEEP THIS: Critical for logic!
-                elif col == 'Average Leadtime':
-                    rename_dict[col] = 'Average Leadtime'
-                elif col == 'Q1 2026 Spillover':
-                    rename_dict[col] = 'Q1 2026 Spillover'
-                
-                # --- NEW: Fuzzy match for PF Date ---
-                if 'pending fulfillment' in str(col).lower() and 'date' in str(col).lower():
-                    rename_dict[col] = 'Pending Fulfillment Date'
-            
-            deals_df = deals_df.rename(columns=rename_dict)
-            
-            # --- NEW: Create Deal Type alias for Display ---
-            # We keep 'Product Type' for logic, but copy it to 'Deal Type' for your display
-            if 'Product Type' in deals_df.columns:
-                deals_df['Deal Type'] = deals_df['Product Type']
-            
-            # Check if Deal Owner already exists
-            if 'Deal Owner' not in deals_df.columns:
-                if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
-                    deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
-                    deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-            else:
-                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-            
-            # Clean and convert amount to numeric
-            def clean_numeric(value):
-                if pd.isna(value) or str(value).strip() == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            if 'Amount' in deals_df.columns:
-                deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
-            
-            # Convert dates
-            if 'Close Date' in deals_df.columns:
-                deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
-            
-            if 'Pending Fulfillment Date' in deals_df.columns:
-                deals_df['Pending Fulfillment Date'] = pd.to_datetime(deals_df['Pending Fulfillment Date'], errors='coerce')
-
-            # FILTER: Only Q4 2025 deals
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2026-01-01')
-            
-            if 'Close Date' in deals_df.columns:
-                deals_df = deals_df[
-                    (deals_df['Close Date'] >= q4_start) & 
-                    (deals_df['Close Date'] < q4_end)
-                ]
-            
-            # FILTER OUT unwanted deal stages
-            excluded_stages = [
-                '', '(Blanks)', None, 'Cancelled', 'checkout abandoned', 
-                'closed lost', 'closed won', 'sales order created in NS', 
-                'NCR', 'Shipped'
-            ]
-            
-            if 'Deal Stage' in deals_df.columns:
-                deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
-                deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
-                deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
-            
-            # Apply Q4 fulfillment logic
-            deals_df = apply_q4_fulfillment_logic(deals_df)
-            
-    if not dashboard_df.empty:
-        # ... (Existing Dashboard DF logic) ...
-        if len(dashboard_df.columns) >= 3:
-            dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
-            dashboard_df = dashboard_df[dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')]
-            
-            def clean_numeric(value):
-                if pd.isna(value) or str(value).strip() == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            dashboard_df['Quota'] = dashboard_df['Quota'].apply(clean_numeric)
-            dashboard_df['NetSuite Orders'] = dashboard_df['NetSuite Orders'].apply(clean_numeric)
-    
-    # Process invoice data
-    if not invoices_df.empty:
-         # ... (Existing Invoice Logic) ...
-        if len(invoices_df.columns) >= 15:
-            rename_dict = {
-                invoices_df.columns[0]: 'Invoice Number',
-                invoices_df.columns[1]: 'Status',
-                invoices_df.columns[2]: 'Date',
-                invoices_df.columns[6]: 'Customer',
-                invoices_df.columns[10]: 'Amount',
-                invoices_df.columns[14]: 'Sales Rep'
-            }
-            if len(invoices_df.columns) > 19:
-                rename_dict[invoices_df.columns[19]] = 'Corrected Customer Name'
-            if len(invoices_df.columns) > 20:
-                rename_dict[invoices_df.columns[20]] = 'Rep Master'
-            
-            invoices_df = invoices_df.rename(columns=rename_dict)
-            
-            if 'Rep Master' in invoices_df.columns:
-                invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
-                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
-                mask = invoices_df['Rep Master'].isin(invalid_values)
-                invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
-                invoices_df = invoices_df.drop(columns=['Rep Master'])
-            
-            if 'Corrected Customer Name' in invoices_df.columns:
-                invoices_df['Corrected Customer Name'] = invoices_df['Corrected Customer Name'].astype(str).str.strip()
-                invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
-                mask = invoices_df['Corrected Customer Name'].isin(invalid_values)
-                invoices_df.loc[~mask, 'Customer'] = invoices_df.loc[~mask, 'Corrected Customer Name']
-                invoices_df = invoices_df.drop(columns=['Corrected Customer Name'])
-            
-            def clean_numeric(value):
-                if pd.isna(value) or str(value).strip() == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
-            invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
-            
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
-            invoices_df = invoices_df[
-                (invoices_df['Date'] >= q4_start) & 
-                (invoices_df['Date'] <= q4_end)
-            ]
-            
-            invoices_df['Sales Rep'] = invoices_df['Sales Rep'].astype(str).str.strip()
-            invoices_df = invoices_df[
-                (invoices_df['Sales Rep'].notna()) & 
-                (invoices_df['Sales Rep'] != '') &
-                (invoices_df['Sales Rep'].str.lower() != 'nan') &
-                (invoices_df['Sales Rep'].str.lower() != 'house')
-            ]
-            
-            if 'Invoice Number' in invoices_df.columns:
-                invoices_df = invoices_df.drop_duplicates(subset=['Invoice Number'], keep='first')
-            
-            invoice_totals = invoices_df.groupby('Sales Rep')['Amount'].sum().reset_index()
-            invoice_totals.columns = ['Rep Name', 'Invoice Total']
-            
-            dashboard_df['Rep Name'] = dashboard_df['Rep Name'].str.strip()
-            dashboard_df = dashboard_df.merge(invoice_totals, on='Rep Name', how='left')
-            dashboard_df['Invoice Total'] = dashboard_df['Invoice Total'].fillna(0)
-            
-            dashboard_df['NetSuite Orders'] = dashboard_df['Invoice Total']
-            dashboard_df = dashboard_df.drop('Invoice Total', axis=1)
-            
-            if 'Shopify ECommerce' in invoice_totals['Rep Name'].values:
-                if 'Shopify ECommerce' not in dashboard_df['Rep Name'].values:
-                    shopify_total = invoice_totals[invoice_totals['Rep Name'] == 'Shopify ECommerce']['Invoice Total'].iloc[0]
-                    new_shopify_row = pd.DataFrame([{
-                        'Rep Name': 'Shopify ECommerce',
-                        'Quota': 0,
-                        'NetSuite Orders': shopify_total
-                    }])
-                    dashboard_df = pd.concat([dashboard_df, new_shopify_row], ignore_index=True)
-    
-    # Process sales orders data
-    if not sales_orders_df.empty:
-        col_names = sales_orders_df.columns.tolist()
-        rename_dict = {}
+def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
+    """
+    Load data from Google Sheets with caching and enhanced error handling
+    """
+    try:
+        # Check if secrets exist
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Missing Google Cloud credentials in Streamlit secrets")
+            return pd.DataFrame()
         
-        if len(col_names) > 0:
-            col_a_lower = str(col_names[0]).lower()
-            if 'internal' in col_a_lower and 'id' in col_a_lower:
-                rename_dict[col_names[0]] = 'Internal ID'
+        # Load credentials from Streamlit secrets
+        creds_dict = dict(st.secrets["gcp_service_account"])
         
-        # Find standard columns
-        for idx, col in enumerate(col_names):
-            col_lower = str(col).lower()
-            if 'status' in col_lower and 'Status' not in rename_dict.values():
-                rename_dict[col] = 'Status'
-            elif ('amount' in col_lower or 'total' in col_lower) and 'Amount' not in rename_dict.values():
-                rename_dict[col] = 'Amount'
-            elif ('sales rep' in col_lower or 'salesrep' in col_lower) and 'Sales Rep' not in rename_dict.values():
-                rename_dict[col] = 'Sales Rep'
-            elif 'customer' in col_lower and 'customer promise' not in col_lower and 'Customer' not in rename_dict.values():
-                rename_dict[col] = 'Customer'
-            elif ('doc' in col_lower or 'document' in col_lower) and 'Document Number' not in rename_dict.values():
-                rename_dict[col] = 'Document Number'
-            
-            # --- SURGICAL INSERT: Explicit Indexes ---
-            if idx == 1:  rename_dict[col] = 'Document Number'          # Column B
-            if idx == 9:  rename_dict[col] = 'Pending Fulfillment Date' # Column J
-            if idx == 11: rename_dict[col] = 'Customer Promise Date'    # Column L
-            if idx == 12: rename_dict[col] = 'Projected Date'           # Column M
-            if idx == 17: rename_dict[col] = 'Order Type'               # Column R
-            if idx == 27: rename_dict[col] = 'Pending Approval Date'    # Column AB
-            # -----------------------------------------
-
-        # Additional mappings from original
-        if len(col_names) > 8 and 'Order Start Date' not in rename_dict.values():
-            rename_dict[col_names[8]] = 'Order Start Date'
-        if len(col_names) > 28:
-            rename_dict[col_names[28]] = 'Calyx External Order'
-        if len(col_names) > 30:
-            rename_dict[col_names[30]] = 'Corrected Customer Name'
-        if len(col_names) > 31:
-            rename_dict[col_names[31]] = 'Rep Master'
+        # Create credentials
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
         
-        sales_orders_df = sales_orders_df.rename(columns=rename_dict)
+        # Build service
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
         
-        # Replace Sales Rep with Rep Master
-        if 'Rep Master' in sales_orders_df.columns:
-            sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
-            sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
+        # Fetch data
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!{range_name}"
+        ).execute()
         
-        if 'Corrected Customer Name' in sales_orders_df.columns:
-            sales_orders_df['Customer'] = sales_orders_df['Corrected Customer Name']
-            sales_orders_df = sales_orders_df.drop(columns=['Corrected Customer Name'])
+        values = result.get('values', [])
         
-        if sales_orders_df.columns.duplicated().any():
-            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
+        if not values:
+            st.warning(f"⚠️ No data found in {sheet_name}!{range_name}")
+            return pd.DataFrame()
         
-        def clean_numeric_so(value):
-            value_str = str(value).strip()
-            if value_str == '' or value_str == 'nan' or value_str == 'None':
-                return 0
-            cleaned = value_str.replace(',', '').replace('$', '').replace(' ', '')
-            try:
-                return float(cleaned)
-            except:
-                return 0
+        # Handle mismatched column counts - pad shorter rows with empty strings
+        if len(values) > 1:
+            max_cols = max(len(row) for row in values)
+            for row in values:
+                while len(row) < max_cols:
+                    row.append('')
         
-        if 'Amount' in sales_orders_df.columns:
-            sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric_so)
+        # Convert to DataFrame
+        df = pd.DataFrame(values[1:], columns=values[0])
         
-        if 'Sales Rep' in sales_orders_df.columns:
-            sales_orders_df['Sales Rep'] = sales_orders_df['Sales Rep'].astype(str).str.strip()
+        return df
         
-        if 'Status' in sales_orders_df.columns:
-            sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
+    except Exception as e:
+        error_msg = str(e)
+        st.error(f"❌ Error loading data from {sheet_name}: {error_msg}")
         
-        # Convert date columns - Including the NEW ones
-        date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date', 'Pending Fulfillment Date']
-        for col in date_columns:
-            if col in sales_orders_df.columns:
-                sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
+        # Provide specific troubleshooting based on error type
+        if "403" in error_msg or "permission" in error_msg.lower():
+            st.warning("""
+            **Permission Error:**
+            - Make sure you've shared the Google Sheet with your service account email
+            - The service account email looks like: `your-service-account@project.iam.gserviceaccount.com`
+            - Share the sheet with 'Viewer' access
+            """)
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            st.warning("""
+            **Sheet Not Found:**
+            - Check that the spreadsheet ID is correct
+            - Check that the sheet name matches exactly (case-sensitive)
+            - Current spreadsheet ID: `12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk`
+            """)
+        elif "401" in error_msg or "authentication" in error_msg.lower():
+            st.warning("""
+            **Authentication Error:**
+            - Your service account credentials may be invalid
+            - Try regenerating the service account key in Google Cloud Console
+            """)
         
-        if 'Status' in sales_orders_df.columns:
-            sales_orders_df = sales_orders_df[
-                sales_orders_df['Status'].isin(['Pending Approval', 'Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
-            ]
-        
-        if 'Order Start Date' in sales_orders_df.columns:
-            today = pd.Timestamp.now()
-            def business_days_between(start_date, end_date):
-                if pd.isna(start_date):
-                    return 0
-                days = pd.bdate_range(start=start_date, end=end_date).size - 1
-                return max(0, days)
-            
-            sales_orders_df['Age_Business_Days'] = sales_orders_df['Order Start Date'].apply(
-                lambda x: business_days_between(x, today)
-            )
-        else:
-            sales_orders_df['Age_Business_Days'] = 0
-        
-        if 'Amount' in sales_orders_df.columns and 'Sales Rep' in sales_orders_df.columns:
-            sales_orders_df = sales_orders_df[
-                (sales_orders_df['Amount'] > 0) & 
-                (sales_orders_df['Sales Rep'].notna()) & 
-                (sales_orders_df['Sales Rep'] != '') &
-                (sales_orders_df['Sales Rep'] != 'nan') &
-                (~sales_orders_df['Sales Rep'].str.lower().isin(['house']))
-            ]
-    else:
-        # st.warning("Could not find required columns in NS Sales Orders")
-        sales_orders_df = pd.DataFrame()
-    
-    return deals_df, dashboard_df, invoices_df, sales_orders_df
+        return pd.DataFrame()
 
 def apply_q4_fulfillment_logic(deals_df):
     """
@@ -1681,10 +1420,10 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
 
 def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None):
     """
-    Refined Interactive Forecast Builder (v5)
-    - SO# from Column B
-    - Order Type (Col R) / Deal Type (Col N) sorting
-    - Specific Date Logic per Category
+    Refined Interactive Forecast Builder (v4 - Data Editor Edition)
+    - Allows selecting INDIVIDUAL orders using an interactive table (st.data_editor)
+    - Maintains SO# and Links
+    - Dynamic "7th Box" Total
     """
     st.markdown("### 🛠️ Forecast Laboratory")
     st.caption("Mix and match components. Expand sections to cherry-pick specific orders.")
@@ -1694,13 +1433,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     # Initialize Categories
     ns_categories = {
-        'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External', 'val': 0},
-        'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal', 'val': 0},
-        'PA_Date':       {'label': 'Pending Approval (With Date)',         'val': 0},
-        'PF_NoDate_Ext': {'label': 'PF (No Date) - External',             'val': 0},
-        'PF_NoDate_Int': {'label': 'PF (No Date) - Internal',             'val': 0},
-        'PA_NoDate':     {'label': 'Pending Approval (No Date)',           'val': 0},
-        'PA_Old':        {'label': 'Pending Approval (>2 Wks)',            'val': 0},
+        'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External', 'val': 0, 'ids': []},
+        'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal', 'val': 0, 'ids': []},
+        'PA_Date':       {'label': 'Pending Approval (With Date)',         'val': 0, 'ids': []},
+        'PF_NoDate_Ext': {'label': 'PF (No Date) - External',             'val': 0, 'ids': []},
+        'PF_NoDate_Int': {'label': 'PF (No Date) - Internal',             'val': 0, 'ids': []},
+        'PA_NoDate':     {'label': 'Pending Approval (No Date)',           'val': 0, 'ids': []},
+        'PA_Old':        {'label': 'Pending Approval (>2 Wks)',            'val': 0, 'ids': []},
     }
     
     hs_categories = {
@@ -1712,11 +1451,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'Q1_BC':    {'label': 'Q1 Spillover (BC)',  'val': metrics.get('q1_spillover_best_opp', 0)},
     }
 
-    # --- PREPARE NETSUITE DATA ---
-    ns_dfs = {}
+    # --- FILTER DATA HELPERS ---
+    # We create the subsets of data first so we can feed them into the editor
     
+    # Helper to prepare SO Data
     if sales_orders_df is not None and not sales_orders_df.empty:
-        # Filter for Rep
         if rep_name:
             so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
         else:
@@ -1726,85 +1465,44 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             if 'Amount' in so_data.columns:
                 so_data['Amount_Numeric'] = pd.to_numeric(so_data['Amount'], errors='coerce').fillna(0)
             
-            # --- LOGIC MASKS ---
-            # Date Mask (Promise OR Projected)
+            # Logic Masks
             has_date_mask = (so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna())
             
-            # External Mask
-            is_external = pd.Series(False, index=so_data.index)
             if 'Calyx External Order' in so_data.columns:
                 is_external = so_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
-            
-            # Old PA Mask (>= 13 days)
-            is_old_pa = pd.Series(False, index=so_data.index)
+            else:
+                is_external = pd.Series(False, index=so_data.index)
+                
             if 'Age_Business_Days' in so_data.columns:
                 is_old_pa = so_data['Age_Business_Days'] >= 13
+            else:
+                is_old_pa = pd.Series(False, index=so_data.index)
             
-            # PA Has Date Mask (Column AB)
+            # Assign masks to keys for easy retrieval
+            mask_pf = so_data['Status'] == 'Pending Fulfillment'
+            mask_pa = so_data['Status'] == 'Pending Approval'
+            
+            # Logic for PA Dates (specific column)
             pa_has_date = pd.Series(False, index=so_data.index)
             if 'Pending Approval Date' in so_data.columns:
                 pa_has_date = (so_data['Pending Approval Date'].notna()) & (so_data['Pending Approval Date'].astype(str) != 'No Date')
 
-            mask_pf = so_data['Status'] == 'Pending Fulfillment'
-            mask_pa = so_data['Status'] == 'Pending Approval'
+            # Define Dataframes for each category
+            ns_dfs = {
+                'PF_Date_Ext': so_data[mask_pf & has_date_mask & is_external].copy(),
+                'PF_Date_Int': so_data[mask_pf & has_date_mask & ~is_external].copy(),
+                'PF_NoDate_Ext': so_data[mask_pf & ~has_date_mask & is_external].copy(),
+                'PF_NoDate_Int': so_data[mask_pf & ~has_date_mask & ~is_external].copy(),
+                'PA_Old': so_data[mask_pa & is_old_pa].copy(),
+                'PA_Date': so_data[mask_pa & ~is_old_pa & pa_has_date].copy(),
+                'PA_NoDate': so_data[mask_pa & ~is_old_pa & ~pa_has_date].copy()
+            }
 
-            # --- CREATE SUB-DATAFRAMES ---
-            
-            # Helper to setup columns based on category
-            def prepare_ns_df(df, category_type):
-                if df.empty: return df
-                df = df.copy()
-                
-                # 1. Set "Key Date" based on request
-                if category_type == 'PF_Date':
-                    # Use Promise, fallback to Projected
-                    df['Key Date'] = df['Customer Promise Date'].combine_first(df['Projected Date'])
-                elif category_type == 'PF_NoDate':
-                    # Use Pending Fulfillment Date (Column J)
-                    if 'Pending Fulfillment Date' in df.columns:
-                        df['Key Date'] = df['Pending Fulfillment Date']
-                    else:
-                        df['Key Date'] = pd.NaT
-                elif category_type == 'PA_Date' or category_type == 'PA_Old':
-                    # Use Pending Approval Date (Column AB)
-                    if 'Pending Approval Date' in df.columns:
-                        df['Key Date'] = df['Pending Approval Date']
-                    else:
-                        df['Key Date'] = pd.NaT
-                elif category_type == 'PA_NoDate':
-                    # Hardcode "No Date"
-                    df['Key Date'] = "No Date"
-                
-                # 2. Ensure SO# (Column B / Document Number)
-                if 'Document Number' in df.columns:
-                    df['SO#'] = df['Document Number']
-                else:
-                    df['SO#'] = 'Missing'
-                    
-                # 3. Ensure Order Type (Column R)
-                if 'Order Type' not in df.columns:
-                    df['Order Type'] = 'Unknown'
-                    
-                # 4. Sort by Order Type (Grouping)
-                df = df.sort_values(by=['Order Type', 'Amount_Numeric'], ascending=[True, False])
-                
-                return df
-
-            # Assign Dataframes
-            ns_dfs['PF_Date_Ext'] = prepare_ns_df(so_data[mask_pf & has_date_mask & is_external], 'PF_Date')
-            ns_dfs['PF_Date_Int'] = prepare_ns_df(so_data[mask_pf & has_date_mask & ~is_external], 'PF_Date')
-            ns_dfs['PF_NoDate_Ext'] = prepare_ns_df(so_data[mask_pf & ~has_date_mask & is_external], 'PF_NoDate')
-            ns_dfs['PF_NoDate_Int'] = prepare_ns_df(so_data[mask_pf & ~has_date_mask & ~is_external], 'PF_NoDate')
-            
-            ns_dfs['PA_Date'] = prepare_ns_df(so_data[mask_pa & ~is_old_pa & pa_has_date], 'PA_Date')
-            ns_dfs['PA_NoDate'] = prepare_ns_df(so_data[mask_pa & ~is_old_pa & ~pa_has_date], 'PA_NoDate')
-            ns_dfs['PA_Old'] = prepare_ns_df(so_data[mask_pa & is_old_pa], 'PA_Old')
-
-            # Update Values
+            # Update initial values
             for k, df in ns_dfs.items():
                 ns_categories[k]['val'] = df['Amount_Numeric'].sum()
 
-    # --- PREPARE HUBSPOT DATA ---
+    # Helper for HubSpot Data
     hs_dfs = {}
     if deals_df is not None and not deals_df.empty:
         if rep_name:
@@ -1815,34 +1513,16 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if not hs_data.empty and 'Status' in hs_data.columns:
             hs_data['Amount_Numeric'] = pd.to_numeric(hs_data['Amount'], errors='coerce').fillna(0)
             
-            # Helper to setup columns
-            def prepare_hs_df(df):
-                if df.empty: return df
-                df = df.copy()
-                
-                # Ensure Deal Type (Column N)
-                if 'Deal Type' not in df.columns:
-                    df['Deal Type'] = 'Unknown'
-                
-                # Ensure PF Date
-                if 'Pending Fulfillment Date' not in df.columns:
-                    df['PF Date'] = pd.NaT
-                else:
-                    df['PF Date'] = df['Pending Fulfillment Date']
-
-                # Sort by Deal Type (Grouping)
-                df = df.sort_values(by=['Deal Type', 'Amount_Numeric'], ascending=[True, False])
-                return df
-
+            # Filters
             q4_mask = hs_data.get('Counts_In_Q4', True) == True
             q1_mask = hs_data.get('Q1 2026 Spillover') == 'Q1 2026'
             
-            hs_dfs['Expect'] = prepare_hs_df(hs_data[q4_mask & (hs_data['Status'] == 'Expect')])
-            hs_dfs['Commit'] = prepare_hs_df(hs_data[q4_mask & (hs_data['Status'] == 'Commit')])
-            hs_dfs['BestCase'] = prepare_hs_df(hs_data[q4_mask & (hs_data['Status'] == 'Best Case')])
-            hs_dfs['Opp'] = prepare_hs_df(hs_data[q4_mask & (hs_data['Status'] == 'Opportunity')])
-            hs_dfs['Q1_EC'] = prepare_hs_df(hs_data[q1_mask & hs_data['Status'].isin(['Expect', 'Commit'])])
-            hs_dfs['Q1_BC'] = prepare_hs_df(hs_data[q1_mask & hs_data['Status'].isin(['Best Case', 'Opportunity'])])
+            hs_dfs['Expect'] = hs_data[q4_mask & (hs_data['Status'] == 'Expect')].copy()
+            hs_dfs['Commit'] = hs_data[q4_mask & (hs_data['Status'] == 'Commit')].copy()
+            hs_dfs['BestCase'] = hs_data[q4_mask & (hs_data['Status'] == 'Best Case')].copy()
+            hs_dfs['Opp'] = hs_data[q4_mask & (hs_data['Status'] == 'Opportunity')].copy()
+            hs_dfs['Q1_EC'] = hs_data[q1_mask & hs_data['Status'].isin(['Expect', 'Commit'])].copy()
+            hs_dfs['Q1_BC'] = hs_data[q1_mask & hs_data['Status'].isin(['Best Case', 'Opportunity'])].copy()
 
             for k, df in hs_dfs.items():
                 hs_categories[k]['val'] = df['Amount_Numeric'].sum()
@@ -1851,6 +1531,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     with st.container():
         col_ns, col_hs = st.columns(2)
+        
         selected_breakdown = {}
         
         # === NETSUITE COLUMN ===
@@ -1860,66 +1541,73 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             for key, data in ns_categories.items():
                 if data['val'] > 0:
+                    # 1. Main Checkbox
                     is_checked = st.checkbox(f"{data['label']}: ${data['val']:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
                     
                     if is_checked:
                         category_total = data['val']
                         
-                        with st.expander(f"🔎 Select Orders ({data['label']})"):
+                        # 2. Expander for Drill Down
+                        with st.expander(f"🔎 Select Individual Orders ({data['label']})"):
+                            # Get the dataframe
                             df = ns_dfs.get(key, pd.DataFrame())
                             
                             if not df.empty:
-                                enable_edit = st.toggle("Customize", key=f"edit_{key}_{rep_name}")
+                                # Toggle for editing
+                                enable_edit = st.toggle("Customize Selection", key=f"edit_{key}_{rep_name}")
+                                
+                                # Prep Display Data
                                 df_display = df.copy()
                                 
-                                # Link Generation
+                                # Add Link
                                 if 'Internal ID' in df_display.columns:
                                     df_display['Link'] = df_display['Internal ID'].apply(
                                         lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
                                     )
                                 
-                                # Columns to display - Including Order Type and Dynamic Key Date
-                                cols = ['Link', 'Order Type', 'SO#', 'Customer', 'Key Date', 'Amount_Numeric']
+                                # Add SO#
+                                if 'Document Number' in df_display.columns:
+                                    df_display['SO#'] = df_display['Document Number']
+                                else:
+                                    df_display['SO#'] = 'N/A'
                                 
-                                # Format Key Date for display
-                                if 'Key Date' in df_display.columns:
-                                     # Convert to datetime string if valid
-                                     df_display['Key Date'] = df_display['Key Date'].apply(
-                                         lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) and x != "No Date" else str(x)
-                                     )
-
+                                # Select Columns
+                                cols = ['Link', 'SO#', 'Customer', 'Amount_Numeric']
+                                
                                 if enable_edit:
+                                    # Add "Include" column for checkboxes
                                     df_display.insert(0, "Include", True)
+                                    
+                                    # RENDER INTERACTIVE EDITOR
                                     edited_df = st.data_editor(
                                         df_display[['Include'] + cols],
                                         column_config={
-                                            "Include": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Order Type": st.column_config.TextColumn("Order Type", width="medium"),
-                                            "SO#": st.column_config.TextColumn("SO#", width="small"),
-                                            "Key Date": st.column_config.TextColumn("Date", width="medium"),
+                                            "Include": st.column_config.CheckboxColumn("Select", default=True),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=cols,
+                                        disabled=['Link', 'SO#', 'Customer', 'Amount_Numeric'], # Only allow editing 'Include'
                                         hide_index=True,
                                         key=f"editor_{key}_{rep_name}"
                                     )
+                                    
+                                    # Recalculate Total based on Checkboxes
                                     category_total = edited_df[edited_df['Include']]['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${category_total:,.0f}")
+                                    
                                 else:
+                                    # Read-only view
                                     st.dataframe(
                                         df_display[cols],
                                         column_config={
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Order Type": st.column_config.TextColumn("Order Type", width="medium"),
-                                            "SO#": st.column_config.TextColumn("SO#", width="small"),
-                                            "Key Date": st.column_config.TextColumn("Date", width="medium"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         hide_index=True,
                                         use_container_width=True
                                     )
                         
+                        # Add final calculated total to breakdown
                         selected_breakdown[key] = category_total
 
         # === HUBSPOT COLUMN ===
@@ -1933,40 +1621,30 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     if is_checked:
                         category_total = data['val']
                         
-                        with st.expander(f"🔎 Select Deals ({data['label']})"):
+                        with st.expander(f"🔎 Select Individual Deals ({data['label']})"):
                             df = hs_dfs.get(key, pd.DataFrame())
                             
                             if not df.empty:
-                                enable_edit = st.toggle("Customize", key=f"edit_{key}_{rep_name}")
+                                enable_edit = st.toggle("Customize Selection", key=f"edit_{key}_{rep_name}")
                                 df_display = df.copy()
                                 
-                                # Link
                                 if 'Record ID' in df_display.columns:
                                     df_display['Link'] = df_display['Record ID'].apply(
                                         lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else ""
                                     )
                                 
-                                # Format Dates
-                                if 'Close Date' in df_display.columns:
-                                    df_display['Close Date'] = df_display['Close Date'].dt.strftime('%Y-%m-%d')
-                                if 'PF Date' in df_display.columns:
-                                    df_display['PF Date'] = pd.to_datetime(df_display['PF Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-
-                                cols = ['Link', 'Deal Type', 'Deal Name', 'Close Date', 'PF Date', 'Amount_Numeric']
+                                cols = ['Link', 'Deal Name', 'Amount_Numeric']
                                 
                                 if enable_edit:
                                     df_display.insert(0, "Include", True)
                                     edited_df = st.data_editor(
                                         df_display[['Include'] + cols],
                                         column_config={
-                                            "Include": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Deal Type": st.column_config.TextColumn("Deal Type", width="medium"),
-                                            "Close Date": st.column_config.TextColumn("Close", width="small"),
-                                            "PF Date": st.column_config.TextColumn("PF Date", width="small"),
+                                            "Include": st.column_config.CheckboxColumn("Select", default=True),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=cols,
+                                        disabled=['Link', 'Deal Name', 'Amount_Numeric'],
                                         hide_index=True,
                                         key=f"editor_{key}_{rep_name}"
                                     )
@@ -1976,10 +1654,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     st.dataframe(
                                         df_display[cols],
                                         column_config={
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Deal Type": st.column_config.TextColumn("Deal Type", width="medium"),
-                                            "Close Date": st.column_config.TextColumn("Close", width="small"),
-                                            "PF Date": st.column_config.TextColumn("PF Date", width="small"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         hide_index=True,
@@ -1998,18 +1673,26 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("---")
     st.markdown("### 🔮 Forecast Scenario Results")
     
+    # Metrics
     m1, m2, m3, m4, m5 = st.columns(5)
     
+    # Split totals for display (Pending vs Pipeline)
+    # Note: keys in selected_breakdown match keys in ns_categories/hs_categories
     pending_keys = ns_categories.keys()
     pipeline_keys = hs_categories.keys()
     
     selected_pending = sum(val for k, val in selected_breakdown.items() if k in pending_keys)
     selected_pipeline = sum(val for k, val in selected_breakdown.items() if k in pipeline_keys)
     
-    with m1: st.metric("1. Invoiced", f"${invoiced_shipped:,.0f}")
-    with m2: st.metric("2. Selected Pending", f"${selected_pending:,.0f}")
-    with m3: st.metric("3. Selected Pipeline", f"${selected_pipeline:,.0f}")
-    with m4: st.metric("🏁 Total Forecast", f"${total_forecast_with_invoices:,.0f}", delta="1 + 2 + 3")
+    with m1:
+        st.metric("1. Invoiced", f"${invoiced_shipped:,.0f}")
+    with m2:
+        st.metric("2. Selected Pending", f"${selected_pending:,.0f}")
+    with m3:
+        st.metric("3. Selected Pipeline", f"${selected_pipeline:,.0f}")
+    with m4:
+        # THE 7th BOX
+        st.metric("🏁 Total Forecast", f"${total_forecast_with_invoices:,.0f}", delta="1 + 2 + 3")
     with m5:
         if gap_to_quota > 0:
             st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", delta="Behind", delta_color="inverse")
@@ -2035,21 +1718,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         st.plotly_chart(fig, use_container_width=True)
         
     with c2:
-        # Calculate daily ship rate
-        def calculate_business_days_remaining_local():
-             from datetime import date, timedelta
-             today = date.today()
-             q4_end = date(2025, 12, 31)
-             holidays = [date(2025, 11, 27), date(2025, 11, 28), date(2025, 12, 25), date(2025, 12, 26)]
-             business_days = 0
-             current_date = today
-             while current_date <= q4_end:
-                 if current_date.weekday() < 5 and current_date not in holidays:
-                     business_days += 1
-                 current_date += timedelta(days=1)
-             return business_days
-
-        business_days = calculate_business_days_remaining_local()
+        business_days = calculate_business_days_remaining()
         if gap_to_quota > 0 and business_days > 0:
             required_daily = gap_to_quota / business_days
             st.metric("Required Ship Rate", f"${required_daily:,.0f}/day", f"{business_days} days left")
