@@ -1963,9 +1963,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
              return days
 
         biz_days = calculate_biz_days()
-        if gap_to_quota > 0 and biz_days > 0:
-            required = gap_to_quota / biz_days
+        # Calculate based on what still needs to ship (pending orders + pipeline deals)
+        items_to_ship = selected_pending + selected_pipeline
+        if items_to_ship > 0 and biz_days > 0:
+            required = items_to_ship / biz_days
             st.metric("Required Ship Rate", f"${required:,.0f}/day", f"{biz_days} days left")
+        elif items_to_ship == 0:
+            st.info("✅ No pending items to ship")
         elif gap_to_quota <= 0:
             st.success("🎉 Scenario Hits Quota!")
 
