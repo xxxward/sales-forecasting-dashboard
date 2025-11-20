@@ -468,6 +468,124 @@ st.markdown("""
         background: rgba(59, 130, 246, 0.3);
         color: white;
     }
+    
+    /* ========== GLOWING CARD EFFECTS (GEMINI ENHANCEMENT) ========== */
+    .metric-card-glow {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 20px;
+        text-align: center;
+        position: relative;
+        overflow: hidden;
+        transition: all 0.3s ease;
+    }
+    
+    .metric-card-glow:hover {
+        transform: translateY(-4px);
+    }
+    
+    .glow-green {
+        box-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+        border: 1px solid rgba(16, 185, 129, 0.5);
+        animation: pulseGreen 2s infinite;
+    }
+    
+    .glow-red {
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.3);
+        border: 1px solid rgba(239, 68, 68, 0.5);
+        animation: pulseRed 2s infinite;
+    }
+    
+    .glow-blue {
+        box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+        border: 1px solid rgba(59, 130, 246, 0.5);
+        animation: pulseBlue 2s infinite;
+    }
+    
+    @keyframes pulseGreen {
+        0%, 100% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.3); }
+        50% { box-shadow: 0 0 30px rgba(16, 185, 129, 0.5); }
+    }
+    
+    @keyframes pulseRed {
+        0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); }
+        50% { box-shadow: 0 0 30px rgba(239, 68, 68, 0.5); }
+    }
+    
+    @keyframes pulseBlue {
+        0%, 100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.3); }
+        50% { box-shadow: 0 0 30px rgba(59, 130, 246, 0.5); }
+    }
+    
+    .metric-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.8;
+        font-weight: 600;
+    }
+    
+    .metric-value {
+        font-size: 2.2rem;
+        font-weight: 800;
+        background: linear-gradient(to right, #fff, #ccc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin: 10px 0;
+    }
+    
+    /* ========== LOCKED REVENUE BANNER ========== */
+    .locked-revenue-banner {
+        background: linear-gradient(90deg, #1e3a8a 0%, #172554 100%);
+        padding: 15px 25px;
+        border-radius: 12px;
+        border-left: 6px solid #3b82f6;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        transition: all 0.3s ease;
+    }
+    
+    .locked-revenue-banner:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 12px -1px rgba(0, 0, 0, 0.2);
+    }
+    
+    .banner-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    
+    .banner-icon {
+        font-size: 24px;
+    }
+    
+    .banner-label {
+        font-size: 12px;
+        text-transform: uppercase;
+        opacity: 0.8;
+        letter-spacing: 1px;
+    }
+    
+    .banner-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: white;
+    }
+    
+    .banner-right {
+        text-align: right;
+    }
+    
+    .banner-status {
+        color: #4ade80;
+        font-weight: 600;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -1628,7 +1746,40 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
                     lambda x: f"${x:,.0f}" if not pd.isna(x) else ""
                 )
             
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            # Enhanced dataframe with column config (Gemini enhancement)
+            column_config = {}
+            
+            if 'Amount' in display_df.columns and 'Amount_Numeric' in filtered_invoices.columns:
+                max_amount = filtered_invoices['Amount_Numeric'].max()
+                if max_amount > 0:
+                    column_config['Amount'] = st.column_config.ProgressColumn(
+                        "Invoice Value",
+                        format="$%.0f",
+                        min_value=0,
+                        max_value=max_amount,
+                        help="Size relative to largest invoice"
+                    )
+            
+            if 'Date' in display_df.columns:
+                column_config['Date'] = st.column_config.DateColumn(
+                    "Invoice Date",
+                    format="MMM DD, YYYY",
+                    help="Date invoice was created"
+                )
+            
+            if '🔗 NetSuite' in display_df.columns:
+                column_config['🔗 NetSuite'] = st.column_config.LinkColumn(
+                    "View",
+                    display_text="↗️ Open",
+                    help="Open in NetSuite"
+                )
+            
+            st.dataframe(
+                display_df, 
+                use_container_width=True, 
+                hide_index=True,
+                column_config=column_config if column_config else None
+            )
         else:
             st.dataframe(filtered_invoices, use_container_width=True, hide_index=True)
 
@@ -1915,6 +2066,23 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("---")
     st.markdown("### 🔮 Forecast Scenario Results")
     
+    # Add locked revenue banner
+    st.markdown(f"""
+    <div class="locked-revenue-banner">
+        <div class="banner-left">
+            <span class="banner-icon">🔒</span>
+            <div>
+                <div class="banner-label">Locked Revenue</div>
+                <div class="banner-value">${invoiced_shipped:,.0f}</div>
+            </div>
+        </div>
+        <div class="banner-right">
+            <div class="banner-label">Status</div>
+            <div class="banner-status">INVOICED & SECURED</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
     m1, m2, m3, m4, m5 = st.columns(5)
     with m1: st.metric("1. Invoiced", f"${invoiced_shipped:,.0f}")
     with m2: st.metric("2. Selected Pending", f"${selected_pending:,.0f}")
@@ -1928,24 +2096,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
 
     c1, c2 = st.columns([2, 1])
     with c1:
-        fig = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = total_forecast,
-            domain = {'x': [0, 1], 'y': [0, 1]},
-            title = {'text': "Progress to Quota", 'font': {'size': 20}},
-            gauge = {
-                'axis': {'range': [None, max(quota * 1.1, total_forecast * 1.1)]},
-                'bar': {'color': "#667eea"},
-                'steps': [{'range': [0, quota], 'color': "lightgray"}],
-                'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': quota}
-            }
-        ))
-        fig.update_layout(
-            height=250, 
-            margin=dict(l=40, r=40, t=50, b=40),
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)'
-        )
+        # Use the enhanced sexy gauge with color zones
+        fig = create_sexy_gauge(total_forecast, quota, "Progress to Quota")
         st.plotly_chart(fig, use_container_width=True)
         
     with c2:
@@ -2425,6 +2577,162 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'best_opp_q1_spillover_deals': best_opp_q1_deals,
         'all_q1_spillover_deals': rep_deals_ship_q1
     }
+
+# ========== ENHANCED CHART FUNCTIONS (GEMINI ENHANCEMENTS) ==========
+
+def create_sexy_gauge(current_val, target_val, title="Progress to Quota"):
+    """Enhanced gauge with color zones and delta reference"""
+    fig = go.Figure(go.Indicator(
+        mode = "gauge+number+delta",
+        value = current_val,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': title, 'font': {'size': 20, 'color': 'white'}},
+        delta = {
+            'reference': target_val, 
+            'increasing': {'color': "#10b981"},
+            'decreasing': {'color': "#ef4444"},
+            'font': {'size': 16}
+        },
+        number = {'font': {'size': 32, 'color': 'white'}},
+        gauge = {
+            'axis': {
+                'range': [None, target_val * 1.2], 
+                'tickwidth': 1, 
+                'tickcolor': "rgba(255,255,255,0.3)",
+                'tickfont': {'color': 'rgba(255,255,255,0.7)', 'size': 10}
+            },
+            'bar': {'color': "#3b82f6", 'thickness': 0.8},
+            'bgcolor': "rgba(0,0,0,0)",
+            'borderwidth': 2,
+            'bordercolor': "rgba(255,255,255,0.2)",
+            'steps': [
+                {'range': [0, target_val * 0.7], 'color': 'rgba(239, 68, 68, 0.2)'},  # Red zone
+                {'range': [target_val * 0.7, target_val], 'color': 'rgba(251, 191, 36, 0.2)'}  # Yellow zone
+            ],
+            'threshold': {
+                'line': {'color': "#10b981", 'width': 4},
+                'thickness': 0.75,
+                'value': target_val
+            }
+        }
+    ))
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white'},
+        height=280,
+        margin=dict(l=40, r=40, t=60, b=40)
+    )
+    return fig
+
+def create_pipeline_sankey(deals_df):
+    """Sankey diagram showing pipeline flow from Pipeline to Status"""
+    if deals_df.empty or 'Pipeline' not in deals_df.columns or 'Status' not in deals_df.columns:
+        # Return empty figure if data not available
+        return go.Figure()
+    
+    # Aggregate data: Pipeline -> Status
+    df_agg = deals_df.groupby(['Pipeline', 'Status'])['Amount'].sum().reset_index()
+    
+    if df_agg.empty:
+        return go.Figure()
+    
+    # Create source/target indices
+    pipelines = list(df_agg['Pipeline'].unique())
+    statuses = list(df_agg['Status'].unique())
+    all_labels = pipelines + statuses
+    
+    source_indices = [pipelines.index(p) for p in df_agg['Pipeline']]
+    target_indices = [len(pipelines) + statuses.index(s) for s in df_agg['Status']]
+    
+    # Create color map for statuses
+    status_colors = {
+        'Commit': 'rgba(16, 185, 129, 0.6)',
+        'Expect': 'rgba(59, 130, 246, 0.6)',
+        'Best Case': 'rgba(139, 92, 246, 0.6)',
+        'Opp': 'rgba(251, 191, 36, 0.6)'
+    }
+    
+    link_colors = []
+    for idx in target_indices:
+        status = statuses[idx - len(pipelines)]
+        link_colors.append(status_colors.get(status, 'rgba(100, 116, 139, 0.4)'))
+    
+    fig = go.Figure(data=[go.Sankey(
+        node = dict(
+            pad = 15,
+            thickness = 20,
+            line = dict(color = "rgba(255,255,255,0.2)", width = 0.5),
+            label = all_labels,
+            color = "rgba(59, 130, 246, 0.8)"
+        ),
+        link = dict(
+            source = source_indices,
+            target = target_indices,
+            value = df_agg['Amount'],
+            color = link_colors
+        )
+    )])
+    
+    fig.update_layout(
+        title_text="Pipeline Flow Analysis",
+        font=dict(size=12, color='white'),
+        height=500,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)'
+    )
+    return fig
+
+def create_team_sunburst(dashboard_df, deals_df):
+    """Sunburst chart showing team breakdown by rep and category"""
+    # Prepare data structure for sunburst
+    sunburst_data = []
+    
+    for _, rep_row in dashboard_df.iterrows():
+        rep_name = rep_row['Rep Name']
+        
+        # Add invoiced
+        if 'NetSuite Orders' in rep_row and rep_row['NetSuite Orders'] > 0:
+            sunburst_data.append({
+                'Rep Name': rep_name,
+                'Category': 'Invoiced',
+                'Amount': rep_row['NetSuite Orders']
+            })
+        
+        # Add pipeline data if available
+        rep_deals = deals_df[deals_df['Deal Owner'] == rep_name] if not deals_df.empty else pd.DataFrame()
+        if not rep_deals.empty:
+            pipeline_total = rep_deals['Amount'].sum()
+            if pipeline_total > 0:
+                sunburst_data.append({
+                    'Rep Name': rep_name,
+                    'Category': 'Pipeline',
+                    'Amount': pipeline_total
+                })
+    
+    if not sunburst_data:
+        return go.Figure()
+    
+    df_sunburst = pd.DataFrame(sunburst_data)
+    
+    fig = px.sunburst(
+        df_sunburst,
+        path=['Rep Name', 'Category'],
+        values='Amount',
+        color='Category',
+        color_discrete_map={
+            'Invoiced': '#10b981',  # Green
+            'Pending': '#f59e0b',   # Amber
+            'Pipeline': '#3b82f6'   # Blue
+        }
+    )
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font={'color': 'white'},
+        height=500
+    )
+    return fig
 
 def create_gap_chart(metrics, title):
     """Create a waterfall/combo chart showing progress to goal"""
@@ -3530,6 +3838,35 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         )
    
     # Invoices section and audit section
+    st.markdown("---")
+    
+    # ========== GEMINI ENHANCEMENTS: Advanced Visualizations ==========
+    st.markdown("### 📊 Advanced Team Analytics")
+    
+    viz_col1, viz_col2 = st.columns(2)
+    
+    with viz_col1:
+        st.markdown("#### Pipeline Flow (Sankey)")
+        try:
+            sankey_fig = create_pipeline_sankey(deals_df)
+            if sankey_fig.data:
+                st.plotly_chart(sankey_fig, use_container_width=True)
+            else:
+                st.info("📭 No pipeline data available for Sankey diagram")
+        except Exception as e:
+            st.warning(f"Could not generate Sankey diagram: {str(e)}")
+    
+    with viz_col2:
+        st.markdown("#### Team Breakdown (Sunburst)")
+        try:
+            sunburst_fig = create_team_sunburst(dashboard_df, deals_df)
+            if sunburst_fig.data:
+                st.plotly_chart(sunburst_fig, use_container_width=True)
+            else:
+                st.info("📭 No data available for Sunburst chart")
+        except Exception as e:
+            st.warning(f"Could not generate Sunburst chart: {str(e)}")
+    
     st.markdown("---")
     
     # Change detection and audit section
