@@ -1940,7 +1940,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': quota}
             }
         ))
-        fig.update_layout(height=220, margin=dict(l=20, r=20, t=30, b=20))
+        fig.update_layout(
+            height=250, 
+            margin=dict(l=40, r=40, t=50, b=40),
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)'
+        )
         st.plotly_chart(fig, use_container_width=True)
         
     with c2:
