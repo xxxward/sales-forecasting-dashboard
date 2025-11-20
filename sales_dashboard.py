@@ -40,6 +40,36 @@ except Exception as e:
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
 
+# Helper function for business days calculation
+def calculate_business_days_remaining():
+    """
+    Calculate business days from today through end of Q4 2025 (Dec 31)
+    Excludes weekends and major holidays
+    """
+    from datetime import date, timedelta
+    
+    today = date.today()
+    q4_end = date(2025, 12, 31)
+    
+    # Define holidays to exclude
+    holidays = [
+        date(2025, 11, 27),  # Thanksgiving
+        date(2025, 11, 28),  # Day after Thanksgiving
+        date(2025, 12, 25),  # Christmas
+        date(2025, 12, 26),  # Day after Christmas
+    ]
+    
+    business_days = 0
+    current_date = today
+    
+    while current_date <= q4_end:
+        # Check if it's a weekday (Monday=0, Sunday=6)
+        if current_date.weekday() < 5 and current_date not in holidays:
+            business_days += 1
+        current_date += timedelta(days=1)
+    
+    return business_days
+
 # Page configuration
 st.set_page_config(
     page_title="Sales Forecasting Dashboard",
@@ -1490,10 +1520,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             sources['HubSpot Best Case'] = q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
             sources['HubSpot Opportunity'] = q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
     
+    # Display Invoiced & Shipped as always included (not a checkbox)
+    st.markdown("#### ✅ Already Shipped (Always Included)")
+    st.info(f"📦 **Invoiced & Shipped:** ${sources['Invoiced & Shipped']:,.0f} - This is already shipped revenue and always counts toward your forecast.")
+    
+    st.markdown("---")
+    st.markdown("#### 📋 Select Components to Include")
+    
     # Create checkboxes in columns with individual selection option
+    # Remove 'Invoiced & Shipped' from selectable sources since it's always included
     selected_sources = {}
     individual_selection_mode = {}
-    source_list = list(sources.keys())
+    
+    # Build source list excluding 'Invoiced & Shipped'
+    source_list = [s for s in sources.keys() if s != 'Invoiced & Shipped']
     
     with col1:
         for source in source_list[0:4]:
@@ -1722,44 +1762,105 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             else:
                 st.info(f"No items found in this category")
     
-    # Calculate custom forecast
-    custom_forecast = 0
+    # Calculate custom forecast components
+    # Box 1: Invoiced & Shipped (always included)
+    invoiced_shipped = sources.get('Invoiced & Shipped', 0)
     
-    for source, selected in selected_sources.items():
-        if selected:
+    # Box 2: Pending Orders (sum of selected Pending Fulfillment + Pending Approval items)
+    pending_orders = 0
+    pending_categories = [
+        'Pending Fulfillment (with date) - Internal',
+        'Pending Fulfillment (with date) - External',
+        'Pending Fulfillment (without date) - Internal',
+        'Pending Fulfillment (without date) - External',
+        'Pending Approval (with date)',
+        'Pending Approval (without date)',
+        'Pending Approval (>2 weeks old)'
+    ]
+    
+    for source in pending_categories:
+        if selected_sources.get(source, False):
             if individual_selection_mode.get(source, False):
                 # Use individual selections
                 if source in individual_selections:
-                    custom_forecast += sum(item['amount'] for item in individual_selections[source])
+                    pending_orders += sum(item['amount'] for item in individual_selections[source])
             else:
                 # Use full category amount
-                custom_forecast += sources[source]
+                pending_orders += sources.get(source, 0)
     
-    gap_to_quota = quota - custom_forecast
-    attainment_pct = (custom_forecast / quota * 100) if quota > 0 else 0
+    # Box 3: HubSpot Pipeline (sum of selected HubSpot items)
+    hubspot_pipeline = 0
+    hubspot_categories = [
+        'HubSpot Expect',
+        'HubSpot Commit',
+        'HubSpot Best Case',
+        'HubSpot Opportunity',
+        'Q1 Spillover - Expect/Commit',
+        'Q1 Spillover - Best Case'
+    ]
+    
+    for source in hubspot_categories:
+        if selected_sources.get(source, False):
+            if individual_selection_mode.get(source, False):
+                # Use individual selections
+                if source in individual_selections:
+                    hubspot_pipeline += sum(item['amount'] for item in individual_selections[source])
+            else:
+                # Use full category amount
+                hubspot_pipeline += sources.get(source, 0)
+    
+    # Box 4: Gap to Quota (Quota - all three boxes)
+    gap_to_quota = quota - (invoiced_shipped + pending_orders + hubspot_pipeline)
+    
+    # Box 5: Total Selected (Pending + HubSpot)
+    total_selected = pending_orders + hubspot_pipeline
+    
+    # Box 6: Daily Ship Rate
+    business_days_remaining = calculate_business_days_remaining()
+    daily_ship_rate = total_selected / business_days_remaining if business_days_remaining > 0 else 0
     
     # Display results
     st.markdown("---")
     st.markdown("#### 📊 Your Custom Forecast")
     
+    # Row 1: Main 4 boxes
     result_col1, result_col2, result_col3, result_col4 = st.columns(4)
     
     with result_col1:
-        st.metric("Quota", f"${quota:,.0f}")
+        invoiced_pct = (invoiced_shipped / quota * 100) if quota > 0 else 0
+        st.metric("📦 Invoiced & Shipped", f"${invoiced_shipped:,.0f}", 
+                 delta=f"{invoiced_pct:.1f}% of quota")
     
     with result_col2:
-        st.metric("Custom Forecast", f"${custom_forecast:,.0f}")
+        pending_pct = (pending_orders / quota * 100) if quota > 0 else 0
+        st.metric("🔄 Pending Orders", f"${pending_orders:,.0f}",
+                 delta=f"{pending_pct:.1f}% of quota")
     
     with result_col3:
-        st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", 
-                 delta=f"${-gap_to_quota:,.0f}" if gap_to_quota < 0 else None,
-                 delta_color="inverse")
+        hubspot_pct = (hubspot_pipeline / quota * 100) if quota > 0 else 0
+        st.metric("🎯 HubSpot Pipeline", f"${hubspot_pipeline:,.0f}",
+                 delta=f"{hubspot_pct:.1f}% of quota")
     
     with result_col4:
-        st.metric("Attainment", f"{attainment_pct:.1f}%")
+        gap_pct = (gap_to_quota / quota * 100) if quota > 0 else 0
+        st.metric("💪 Gap to Quota", f"${gap_to_quota:,.0f}",
+                 delta=f"{gap_pct:.1f}% remaining",
+                 delta_color="inverse" if gap_to_quota > 0 else "normal")
+    
+    # Row 2: Centered summary boxes
+    st.markdown("")  # Add spacing
+    _, center_col1, center_col2, _ = st.columns([1, 2, 2, 1])
+    
+    with center_col1:
+        st.metric("📊 Total Selected", f"${total_selected:,.0f}",
+                 delta="Pending + HubSpot")
+    
+    with center_col2:
+        st.metric("🚢 Daily Ship Rate", f"${daily_ship_rate:,.0f}/day",
+                 delta=f"Over {business_days_remaining} business days")
     
     # Export functionality
-    if any(selected_sources.values()):
+    if any(selected_sources.values()) or invoiced_shipped > 0:
         st.markdown("---")
         
         # Collect data for export with summary
@@ -1776,16 +1877,32 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             'Amount': f"${quota:,.0f}"
         })
         export_summary.append({
-            'Category': 'Custom Forecast',
-            'Amount': f"${custom_forecast:,.0f}"
+            'Category': 'Invoiced & Shipped (Always Included)',
+            'Amount': f"${invoiced_shipped:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Pending Orders (Selected)',
+            'Amount': f"${pending_orders:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'HubSpot Pipeline (Selected)',
+            'Amount': f"${hubspot_pipeline:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Total Forecast',
+            'Amount': f"${invoiced_shipped + pending_orders + hubspot_pipeline:,.0f}"
         })
         export_summary.append({
             'Category': 'Gap to Quota',
             'Amount': f"${gap_to_quota:,.0f}"
         })
         export_summary.append({
-            'Category': 'Attainment %',
-            'Amount': f"{attainment_pct:.1f}%"
+            'Category': 'Total Selected (Pending + HubSpot)',
+            'Amount': f"${total_selected:,.0f}"
+        })
+        export_summary.append({
+            'Category': 'Daily Ship Rate',
+            'Amount': f"${daily_ship_rate:,.0f}/day ({business_days_remaining} biz days)"
         })
         export_summary.append({
             'Category': '',
