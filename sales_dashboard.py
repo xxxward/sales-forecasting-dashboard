@@ -1420,26 +1420,101 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
 
 def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None):
     """
-    Refined Interactive Forecast Builder (v4 - Data Editor Edition)
-    - Allows selecting INDIVIDUAL orders using an interactive table (st.data_editor)
-    - Maintains SO# and Links
-    - Dynamic "7th Box" Total
+    Refined Interactive Forecast Builder (Safe Mode v2)
+    - Pulls SO# directly from Column B (Index 1)
+    - Pulls Dates directly from Column J (Index 9), AB (Index 27), etc.
+    - No changes required to load_all_data
     """
-    st.markdown("### 🛠️ Forecast Laboratory")
-    st.caption("Mix and match components. Expand sections to cherry-pick specific orders.")
+    st.markdown("### 🎯 Build Your Own Forecast")
+    st.caption("Select components to include. Expand sections to see details.")
     
-    # --- 1. PREPARE DATA ---
+    # --- 1. PREPARE DATA LOCALLY ---
+    
+    # Helper to grab a column by Index (Safe Fallback)
+    def get_col_by_index(df, index):
+        if df is not None and len(df.columns) > index:
+            return df.iloc[:, index]
+        return pd.Series()
+
+    # Prepare Sales Order Data
+    if sales_orders_df is not None and not sales_orders_df.empty:
+        # Filter for Rep
+        if rep_name:
+            # Safe check for Sales Rep column
+            if 'Sales Rep' in sales_orders_df.columns:
+                so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+            else:
+                # Fallback: Try to find Rep column if renamed differently or use raw index
+                # Assuming Rep is usually mapped, but if not, use full list
+                so_data = sales_orders_df.copy() 
+        else:
+            so_data = sales_orders_df.copy()
+            
+        # --- GRAB RAW COLUMNS BY INDEX (The "Surgical" Part) ---
+        # We use .iloc because we know the column structure from your sheet
+        
+        # Column B (Index 1) = SO Number
+        so_data['Display_SO_Num'] = get_col_by_index(so_data, 1)
+        
+        # Column J (Index 9) = Pending Fulfillment Date
+        so_data['Display_PF_Date'] = pd.to_datetime(get_col_by_index(so_data, 9), errors='coerce')
+        
+        # Column L (Index 11) = Customer Promise Date
+        so_data['Display_Promise_Date'] = pd.to_datetime(get_col_by_index(so_data, 11), errors='coerce')
+        
+        # Column M (Index 12) = Projected Date
+        so_data['Display_Projected_Date'] = pd.to_datetime(get_col_by_index(so_data, 12), errors='coerce')
+        
+        # Column R (Index 17) = Order Type
+        so_data['Display_Type'] = get_col_by_index(so_data, 17).fillna('Standard')
+        
+        # Column AB (Index 27) = Pending Approval Date
+        so_data['Display_PA_Date'] = pd.to_datetime(get_col_by_index(so_data, 27), errors='coerce')
+
+        # Ensure Amount is numeric (using existing mapped column or finding it)
+        if 'Amount' in so_data.columns:
+            so_data['Amount_Numeric'] = pd.to_numeric(so_data['Amount'], errors='coerce').fillna(0)
+        else:
+            so_data['Amount_Numeric'] = 0
+
+    else:
+        so_data = pd.DataFrame()
+
+    # Prepare HubSpot Data
+    if deals_df is not None and not deals_df.empty:
+        if rep_name:
+            hs_data = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+        else:
+            hs_data = deals_df.copy()
+            
+        # Map Deal Type (Column N - Index 13)
+        hs_data['Display_Type'] = get_col_by_index(hs_data, 13).fillna('Standard')
+        
+        # Map Pending Fulfillment Date (fuzzy search if index unknown, or assume it's loaded)
+        # We'll check if 'Pending Fulfillment Date' exists, otherwise look for date columns
+        if 'Pending Fulfillment Date' in hs_data.columns:
+             hs_data['Display_PF_Date'] = pd.to_datetime(hs_data['Pending Fulfillment Date'], errors='coerce')
+        else:
+             hs_data['Display_PF_Date'] = pd.NaT
+
+        if 'Amount' in hs_data.columns:
+            hs_data['Amount_Numeric'] = pd.to_numeric(hs_data['Amount'], errors='coerce').fillna(0)
+    else:
+        hs_data = pd.DataFrame()
+
+    # --- 2. CATEGORY DEFINITIONS ---
+    
     invoiced_shipped = metrics.get('orders', 0)
     
-    # Initialize Categories
+    # Initialize categories
     ns_categories = {
-        'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External', 'val': 0, 'ids': []},
-        'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal', 'val': 0, 'ids': []},
-        'PA_Date':       {'label': 'Pending Approval (With Date)',         'val': 0, 'ids': []},
-        'PF_NoDate_Ext': {'label': 'PF (No Date) - External',             'val': 0, 'ids': []},
-        'PF_NoDate_Int': {'label': 'PF (No Date) - Internal',             'val': 0, 'ids': []},
-        'PA_NoDate':     {'label': 'Pending Approval (No Date)',           'val': 0, 'ids': []},
-        'PA_Old':        {'label': 'Pending Approval (>2 Wks)',            'val': 0, 'ids': []},
+        'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External', 'val': 0},
+        'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal', 'val': 0},
+        'PA_Date':       {'label': 'Pending Approval (With Date)',         'val': 0},
+        'PF_NoDate_Ext': {'label': 'PF (No Date) - External',             'val': 0},
+        'PF_NoDate_Int': {'label': 'PF (No Date) - Internal',             'val': 0},
+        'PA_NoDate':     {'label': 'Pending Approval (No Date)',           'val': 0},
+        'PA_Old':        {'label': 'Pending Approval (>2 Wks)',            'val': 0},
     }
     
     hs_categories = {
@@ -1451,87 +1526,106 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'Q1_BC':    {'label': 'Q1 Spillover (BC)',  'val': metrics.get('q1_spillover_best_opp', 0)},
     }
 
-    # --- FILTER DATA HELPERS ---
-    # We create the subsets of data first so we can feed them into the editor
+    # --- 3. CREATE DISPLAY DATAFRAMES ---
     
-    # Helper to prepare SO Data
-    if sales_orders_df is not None and not sales_orders_df.empty:
-        if rep_name:
-            so_data = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-        else:
-            so_data = sales_orders_df.copy()
+    ns_dfs = {}
+    if not so_data.empty:
+        # Logic Masks
+        # Use the DISPLAY columns we just created for dates
+        has_date_mask = (so_data['Display_Promise_Date'].notna()) | (so_data['Display_Projected_Date'].notna())
         
-        if not so_data.empty:
-            if 'Amount' in so_data.columns:
-                so_data['Amount_Numeric'] = pd.to_numeric(so_data['Amount'], errors='coerce').fillna(0)
-            
-            # Logic Masks
-            has_date_mask = (so_data['Customer Promise Date'].notna()) | (so_data['Projected Date'].notna())
-            
-            if 'Calyx External Order' in so_data.columns:
-                is_external = so_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
-            else:
-                is_external = pd.Series(False, index=so_data.index)
-                
-            if 'Age_Business_Days' in so_data.columns:
-                is_old_pa = so_data['Age_Business_Days'] >= 13
-            else:
-                is_old_pa = pd.Series(False, index=so_data.index)
-            
-            # Assign masks to keys for easy retrieval
-            mask_pf = so_data['Status'] == 'Pending Fulfillment'
-            mask_pa = so_data['Status'] == 'Pending Approval'
-            
-            # Logic for PA Dates (specific column)
-            pa_has_date = pd.Series(False, index=so_data.index)
-            if 'Pending Approval Date' in so_data.columns:
-                pa_has_date = (so_data['Pending Approval Date'].notna()) & (so_data['Pending Approval Date'].astype(str) != 'No Date')
-
-            # Define Dataframes for each category
-            ns_dfs = {
-                'PF_Date_Ext': so_data[mask_pf & has_date_mask & is_external].copy(),
-                'PF_Date_Int': so_data[mask_pf & has_date_mask & ~is_external].copy(),
-                'PF_NoDate_Ext': so_data[mask_pf & ~has_date_mask & is_external].copy(),
-                'PF_NoDate_Int': so_data[mask_pf & ~has_date_mask & ~is_external].copy(),
-                'PA_Old': so_data[mask_pa & is_old_pa].copy(),
-                'PA_Date': so_data[mask_pa & ~is_old_pa & pa_has_date].copy(),
-                'PA_NoDate': so_data[mask_pa & ~is_old_pa & ~pa_has_date].copy()
-            }
-
-            # Update initial values
-            for k, df in ns_dfs.items():
-                ns_categories[k]['val'] = df['Amount_Numeric'].sum()
-
-    # Helper for HubSpot Data
-    hs_dfs = {}
-    if deals_df is not None and not deals_df.empty:
-        if rep_name:
-            hs_data = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+        # External Logic
+        if 'Calyx External Order' in so_data.columns:
+            is_ext = so_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
         else:
-            hs_data = deals_df.copy()
+            is_ext = pd.Series(False, index=so_data.index)
             
-        if not hs_data.empty and 'Status' in hs_data.columns:
-            hs_data['Amount_Numeric'] = pd.to_numeric(hs_data['Amount'], errors='coerce').fillna(0)
+        # Old Logic
+        if 'Age_Business_Days' in so_data.columns:
+            is_old = so_data['Age_Business_Days'] >= 13
+        else:
+            is_old = pd.Series(False, index=so_data.index)
             
-            # Filters
-            q4_mask = hs_data.get('Counts_In_Q4', True) == True
-            q1_mask = hs_data.get('Q1 2026 Spillover') == 'Q1 2026'
-            
-            hs_dfs['Expect'] = hs_data[q4_mask & (hs_data['Status'] == 'Expect')].copy()
-            hs_dfs['Commit'] = hs_data[q4_mask & (hs_data['Status'] == 'Commit')].copy()
-            hs_dfs['BestCase'] = hs_data[q4_mask & (hs_data['Status'] == 'Best Case')].copy()
-            hs_dfs['Opp'] = hs_data[q4_mask & (hs_data['Status'] == 'Opportunity')].copy()
-            hs_dfs['Q1_EC'] = hs_data[q1_mask & hs_data['Status'].isin(['Expect', 'Commit'])].copy()
-            hs_dfs['Q1_BC'] = hs_data[q1_mask & hs_data['Status'].isin(['Best Case', 'Opportunity'])].copy()
+        # PA Date Logic (Column AB)
+        has_pa_date = so_data['Display_PA_Date'].notna()
 
-            for k, df in hs_dfs.items():
-                hs_categories[k]['val'] = df['Amount_Numeric'].sum()
+        status_pf = so_data['Status'] == 'Pending Fulfillment'
+        status_pa = so_data['Status'] == 'Pending Approval'
 
-    # --- 2. UI LAYOUT ---
+        # Formatter function
+        def format_ns_view(df, date_mode):
+            if df.empty: return df
+            d = df.copy()
+            
+            # Set the "Key Date" based on the category mode
+            if date_mode == 'Promise':
+                d['Key Date'] = d['Display_Promise_Date'].combine_first(d['Display_Projected_Date'])
+            elif date_mode == 'PF_Date':
+                d['Key Date'] = d['Display_PF_Date'] # Column J
+            elif date_mode == 'PA_Date':
+                d['Key Date'] = d['Display_PA_Date'] # Column AB
+            else:
+                d['Key Date'] = pd.NaT
+                
+            # Format Date String
+            d['Key Date'] = d['Key Date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else 'No Date')
+            
+            # Set SO# from Column B
+            d['SO#'] = d['Display_SO_Num'].fillna('N/A')
+            
+            # Set Type
+            d['Type'] = d['Display_Type']
+            
+            # Set Link
+            if 'Internal ID' in d.columns:
+                d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
+            
+            return d.sort_values(['Type', 'Amount_Numeric'], ascending=[True, False])
+
+        # Assign DFs
+        ns_dfs['PF_Date_Ext'] = format_ns_view(so_data[status_pf & has_date_mask & is_ext], 'Promise')
+        ns_dfs['PF_Date_Int'] = format_ns_view(so_data[status_pf & has_date_mask & ~is_ext], 'Promise')
+        ns_dfs['PF_NoDate_Ext'] = format_ns_view(so_data[status_pf & ~has_date_mask & is_ext], 'PF_Date') # Show Col J
+        ns_dfs['PF_NoDate_Int'] = format_ns_view(so_data[status_pf & ~has_date_mask & ~is_ext], 'PF_Date') # Show Col J
+        
+        ns_dfs['PA_Old'] = format_ns_view(so_data[status_pa & is_old], 'PA_Date') # Show Col AB
+        ns_dfs['PA_Date'] = format_ns_view(so_data[status_pa & ~is_old & has_pa_date], 'PA_Date') # Show Col AB
+        ns_dfs['PA_NoDate'] = format_ns_view(so_data[status_pa & ~is_old & ~has_pa_date], 'None')
+
+        # Calculate Totals
+        for k, d in ns_dfs.items():
+            ns_categories[k]['val'] = d['Amount_Numeric'].sum()
+
+    hs_dfs = {}
+    if not hs_data.empty:
+        q4 = hs_data.get('Counts_In_Q4', True) == True
+        q1 = hs_data.get('Q1 2026 Spillover') == 'Q1 2026'
+        
+        def format_hs_view(df):
+            if df.empty: return df
+            d = df.copy()
+            d['Type'] = d['Display_Type']
+            d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+            d['PF Date'] = pd.to_datetime(d['Display_PF_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+            
+            if 'Record ID' in d.columns:
+                d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
+            return d.sort_values(['Type', 'Amount_Numeric'], ascending=[True, False])
+
+        hs_dfs['Expect'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Expect')])
+        hs_dfs['Commit'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Commit')])
+        hs_dfs['BestCase'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Best Case')])
+        hs_dfs['Opp'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Opportunity')])
+        hs_dfs['Q1_EC'] = format_hs_view(hs_data[q1 & hs_data['Status'].isin(['Expect', 'Commit'])])
+        hs_dfs['Q1_BC'] = format_hs_view(hs_data[q1 & hs_data['Status'].isin(['Best Case', 'Opportunity'])])
+
+        for k, d in hs_dfs.items():
+            hs_categories[k]['val'] = d['Amount_Numeric'].sum()
+
+    # --- 4. RENDER UI ---
     
     with st.container():
         col_ns, col_hs = st.columns(2)
-        
         selected_breakdown = {}
         
         # === NETSUITE COLUMN ===
@@ -1541,131 +1635,92 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             for key, data in ns_categories.items():
                 if data['val'] > 0:
-                    # 1. Main Checkbox
                     is_checked = st.checkbox(f"{data['label']}: ${data['val']:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
                     
                     if is_checked:
-                        category_total = data['val']
-                        
-                        # 2. Expander for Drill Down
-                        with st.expander(f"🔎 Select Individual Orders ({data['label']})"):
-                            # Get the dataframe
+                        cat_total = data['val']
+                        with st.expander(f"🔎 View Orders ({data['label']})"):
                             df = ns_dfs.get(key, pd.DataFrame())
-                            
                             if not df.empty:
-                                # Toggle for editing
-                                enable_edit = st.toggle("Customize Selection", key=f"edit_{key}_{rep_name}")
+                                enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
                                 
-                                # Prep Display Data
-                                df_display = df.copy()
-                                
-                                # Add Link
-                                if 'Internal ID' in df_display.columns:
-                                    df_display['Link'] = df_display['Internal ID'].apply(
-                                        lambda x: f'https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}&whence=' if pd.notna(x) else ''
-                                    )
-                                
-                                # Add SO#
-                                if 'Document Number' in df_display.columns:
-                                    df_display['SO#'] = df_display['Document Number']
-                                else:
-                                    df_display['SO#'] = 'N/A'
-                                
-                                # Select Columns
-                                cols = ['Link', 'SO#', 'Customer', 'Amount_Numeric']
+                                # Display Columns
+                                cols = ['Link', 'SO#', 'Type', 'Customer', 'Key Date', 'Amount_Numeric']
                                 
                                 if enable_edit:
-                                    # Add "Include" column for checkboxes
-                                    df_display.insert(0, "Include", True)
-                                    
-                                    # RENDER INTERACTIVE EDITOR
-                                    edited_df = st.data_editor(
-                                        df_display[['Include'] + cols],
+                                    df_edit = df.copy()
+                                    df_edit.insert(0, "Select", True)
+                                    edited = st.data_editor(
+                                        df_edit[['Select'] + cols],
                                         column_config={
-                                            "Include": st.column_config.CheckboxColumn("Select", default=True),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
+                                            "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
+                                            "SO#": st.column_config.TextColumn("SO#", width="small"),
+                                            "Type": st.column_config.TextColumn("Type", width="small"),
+                                            "Key Date": st.column_config.TextColumn("Date", width="medium"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=['Link', 'SO#', 'Customer', 'Amount_Numeric'], # Only allow editing 'Include'
+                                        disabled=cols,
                                         hide_index=True,
-                                        key=f"editor_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}"
                                     )
-                                    
-                                    # Recalculate Total based on Checkboxes
-                                    category_total = edited_df[edited_df['Include']]['Amount_Numeric'].sum()
-                                    st.caption(f"Selected: ${category_total:,.0f}")
-                                    
+                                    cat_total = edited[edited['Select']]['Amount_Numeric'].sum()
+                                    st.caption(f"Selected: ${cat_total:,.0f}")
                                 else:
-                                    # Read-only view
                                     st.dataframe(
-                                        df_display[cols],
+                                        df[cols],
                                         column_config={
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         hide_index=True,
                                         use_container_width=True
                                     )
-                        
-                        # Add final calculated total to breakdown
-                        selected_breakdown[key] = category_total
+                        selected_breakdown[key] = cat_total
 
         # === HUBSPOT COLUMN ===
         with col_hs:
             st.markdown("#### 🎯 HubSpot Pipeline")
-            
             for key, data in hs_categories.items():
                 if data['val'] > 0:
                     is_checked = st.checkbox(f"{data['label']}: ${data['val']:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
-                    
                     if is_checked:
-                        category_total = data['val']
-                        
-                        with st.expander(f"🔎 Select Individual Deals ({data['label']})"):
+                        cat_total = data['val']
+                        with st.expander(f"🔎 View Deals ({data['label']})"):
                             df = hs_dfs.get(key, pd.DataFrame())
-                            
                             if not df.empty:
-                                enable_edit = st.toggle("Customize Selection", key=f"edit_{key}_{rep_name}")
-                                df_display = df.copy()
-                                
-                                if 'Record ID' in df_display.columns:
-                                    df_display['Link'] = df_display['Record ID'].apply(
-                                        lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else ""
-                                    )
-                                
-                                cols = ['Link', 'Deal Name', 'Amount_Numeric']
+                                enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
+                                cols = ['Link', 'Deal Name', 'Type', 'Close', 'PF Date', 'Amount_Numeric']
                                 
                                 if enable_edit:
-                                    df_display.insert(0, "Include", True)
-                                    edited_df = st.data_editor(
-                                        df_display[['Include'] + cols],
+                                    df_edit = df.copy()
+                                    df_edit.insert(0, "Select", True)
+                                    edited = st.data_editor(
+                                        df_edit[['Select'] + cols],
                                         column_config={
-                                            "Include": st.column_config.CheckboxColumn("Select", default=True),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
+                                            "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=['Link', 'Deal Name', 'Amount_Numeric'],
+                                        disabled=cols,
                                         hide_index=True,
-                                        key=f"editor_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}"
                                     )
-                                    category_total = edited_df[edited_df['Include']]['Amount_Numeric'].sum()
-                                    st.caption(f"Selected: ${category_total:,.0f}")
+                                    cat_total = edited[edited['Select']]['Amount_Numeric'].sum()
+                                    st.caption(f"Selected: ${cat_total:,.0f}")
                                 else:
                                     st.dataframe(
-                                        df_display[cols],
+                                        df[cols],
                                         column_config={
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open"),
+                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         hide_index=True,
                                         use_container_width=True
                                     )
+                        selected_breakdown[key] = cat_total
 
-                        selected_breakdown[key] = category_total
-
-    # --- 3. RESULTS & 7th BOX ---
-    
-    # Sum all selected items
+    # --- 5. RESULTS ---
     total_selected_additions = sum(selected_breakdown.values())
     total_forecast_with_invoices = invoiced_shipped + total_selected_additions
     gap_to_quota = quota - total_forecast_with_invoices
@@ -1673,33 +1728,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("---")
     st.markdown("### 🔮 Forecast Scenario Results")
     
-    # Metrics
     m1, m2, m3, m4, m5 = st.columns(5)
+    selected_pending = sum(val for k, val in selected_breakdown.items() if k in ns_categories)
+    selected_pipeline = sum(val for k, val in selected_breakdown.items() if k in hs_categories)
     
-    # Split totals for display (Pending vs Pipeline)
-    # Note: keys in selected_breakdown match keys in ns_categories/hs_categories
-    pending_keys = ns_categories.keys()
-    pipeline_keys = hs_categories.keys()
-    
-    selected_pending = sum(val for k, val in selected_breakdown.items() if k in pending_keys)
-    selected_pipeline = sum(val for k, val in selected_breakdown.items() if k in pipeline_keys)
-    
-    with m1:
-        st.metric("1. Invoiced", f"${invoiced_shipped:,.0f}")
-    with m2:
-        st.metric("2. Selected Pending", f"${selected_pending:,.0f}")
-    with m3:
-        st.metric("3. Selected Pipeline", f"${selected_pipeline:,.0f}")
-    with m4:
-        # THE 7th BOX
-        st.metric("🏁 Total Forecast", f"${total_forecast_with_invoices:,.0f}", delta="1 + 2 + 3")
+    with m1: st.metric("1. Invoiced", f"${invoiced_shipped:,.0f}")
+    with m2: st.metric("2. Selected Pending", f"${selected_pending:,.0f}")
+    with m3: st.metric("3. Selected Pipeline", f"${selected_pipeline:,.0f}")
+    with m4: st.metric("🏁 Total Forecast", f"${total_forecast_with_invoices:,.0f}", delta="Sum of 1+2+3")
     with m5:
         if gap_to_quota > 0:
             st.metric("Gap to Quota", f"${gap_to_quota:,.0f}", delta="Behind", delta_color="inverse")
         else:
             st.metric("Gap to Quota", f"${abs(gap_to_quota):,.0f}", delta="Ahead!", delta_color="normal")
 
-    # Visuals
     c1, c2 = st.columns([2, 1])
     with c1:
         fig = go.Figure(go.Indicator(
@@ -1725,18 +1767,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         elif gap_to_quota <= 0:
             st.success("🎉 Scenario Hits Quota!")
 
-    # Export
     if total_selected_additions > 0:
         csv_data = pd.DataFrame.from_dict(selected_breakdown, orient='index', columns=['Amount'])
-        csv_data.loc['Invoiced (Base)'] = invoiced_shipped
-        csv_data.loc['TOTAL FORECAST'] = total_forecast_with_invoices
-        
-        st.download_button(
-            "📥 Export Scenario CSV",
-            data=csv_data.to_csv(),
-            file_name=f"forecast_scenario_{rep_name if rep_name else 'team'}.csv",
-            mime="text/csv"
-        )
+        csv_data.loc['Invoiced'] = invoiced_shipped
+        csv_data.loc['TOTAL'] = total_forecast_with_invoices
+        st.download_button("📥 Export Scenario CSV", data=csv_data.to_csv(), file_name="forecast_scenario.csv")
 
 def display_hubspot_deals_audit(deals_df, rep_name=None):
     """
