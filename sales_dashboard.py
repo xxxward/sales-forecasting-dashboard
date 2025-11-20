@@ -1681,13 +1681,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         value=False,
                         key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
                     )
-            
-            if source in individual_select_categories and selected_sources[source]:
-                individual_selection_mode[source] = st.checkbox(
-                    f"   ↳ Select individual items",
-                    value=False,
-                    key=f"{'team' if rep_name is None else rep_name}_{source}_individual"
-                )
     
     # Show individual selection interfaces for each category
     individual_selections = {}
