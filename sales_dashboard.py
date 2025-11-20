@@ -81,190 +81,392 @@ st.set_page_config(
 # Custom CSS for styling - Dark Mode Compatible
 st.markdown("""
     <style>
-    /* Force light mode compatibility for embedded iframes */
+    /* ========================================
+       GOOGLE AI STUDIO INSPIRED STYLING
+       Modern glass-morphism with depth
+       ======================================== */
+    
+    /* App-wide theming */
     .stApp {
         color-scheme: light dark;
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(139, 92, 246, 0.05) 100%);
     }
     
-    /* Ensure text is always visible in both modes */
-    .stMarkdown, .stText, p, span, div {
-        color: inherit !important;
+    /* Smooth transitions for everything */
+    * {
+        transition: all 0.3s ease !important;
     }
     
-    /* Responsive metrics - prevent truncation on small screens */
-    [data-testid="stMetricValue"] {
-        font-size: 1.5rem !important;
+    /* ========== METRIC CARDS ========== */
+    [data-testid="stMetric"] {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.02) 100%);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        padding: 20px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
         overflow: visible !important;
-        text-overflow: clip !important;
-        white-space: nowrap !important;
+        min-width: 140px !important;
+    }
+    
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.25);
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+    
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        overflow: visible !important;
+        letter-spacing: -0.5px;
     }
     
     [data-testid="stMetricLabel"] {
-        font-size: 0.875rem !important;
+        font-size: 0.85rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        opacity: 0.7;
         overflow: visible !important;
-        text-overflow: clip !important;
         white-space: normal !important;
         line-height: 1.2 !important;
     }
     
     [data-testid="stMetricDelta"] {
         font-size: 0.875rem !important;
+        font-weight: 600 !important;
         white-space: normal !important;
     }
     
-    /* Make metric containers not overflow */
-    [data-testid="stMetric"] {
-        overflow: visible !important;
-        min-width: 140px !important;
+    /* ========== SIDEBAR STYLING ========== */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
     }
     
-    /* Ensure columns wrap on small screens */
-    [data-testid="column"] > div {
-        overflow: visible !important;
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: rgba(255, 255, 255, 0.9);
     }
     
-    /* For very small screens, stack metrics vertically */
-    @media (max-width: 768px) {
-        [data-testid="stMetricValue"] {
-            font-size: 1.2rem !important;
-        }
-        [data-testid="stMetric"] {
-            margin-bottom: 1rem !important;
-        }
+    /* ========== BUTTONS ========== */
+    .stButton > button {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 12px 24px;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        transition: all 0.3s ease;
     }
     
-    .big-font {
-        font-size: 28px !important;
-        font-weight: bold;
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(59, 130, 246, 0.4);
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
     }
     
-    /* Metric cards - adapt to theme */
-    .metric-card {
-        background-color: rgba(240, 242, 246, 0.5);
-        padding: 20px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+    /* ========== DATAFRAMES / TABLES ========== */
+    [data-testid="stDataFrame"], .stDataFrame {
+        background: rgba(255, 255, 255, 0.03);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        overflow: hidden;
     }
     
-    .stMetric {
-        background-color: rgba(255, 255, 255, 0.05);
-        padding: 15px;
-        border-radius: 8px;
-        box-shadow: 1px 1px 3px rgba(0,0,0,0.1);
-        border: 1px solid rgba(128, 128, 128, 0.2);
+    /* Table headers */
+    [data-testid="stDataFrame"] thead tr {
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+        backdrop-filter: blur(10px);
     }
     
-    /* Progress breakdown - high contrast gradient */
+    [data-testid="stDataFrame"] thead th {
+        font-weight: 700;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        letter-spacing: 0.5px;
+        padding: 16px 12px;
+        border-bottom: 2px solid rgba(59, 130, 246, 0.2);
+    }
+    
+    /* Table rows */
+    [data-testid="stDataFrame"] tbody tr:hover {
+        background: rgba(59, 130, 246, 0.05);
+        transform: scale(1.01);
+    }
+    
+    [data-testid="stDataFrame"] tbody td {
+        padding: 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    /* ========== EXPANDERS ========== */
+    [data-testid="stExpander"] {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+        margin: 12px 0;
+    }
+    
+    [data-testid="stExpander"]:hover {
+        border-color: rgba(59, 130, 246, 0.3);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    }
+    
+    /* ========== PROGRESS BREAKDOWN ========== */
     .progress-breakdown {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 25px;
-        border-radius: 15px;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        padding: 28px;
+        border-radius: 16px;
         color: white !important;
-        margin: 20px 0;
-        box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+        margin: 24px 0;
+        box-shadow: 0 12px 32px rgba(59, 130, 246, 0.3);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .progress-breakdown:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 16px 40px rgba(59, 130, 246, 0.4);
     }
     
     .progress-breakdown h3 {
         color: white !important;
-        margin-bottom: 15px;
+        margin-bottom: 20px;
         font-size: 24px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
     }
     
     .progress-item {
         display: flex;
         justify-content: space-between;
-        padding: 10px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.3);
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.15);
         color: white !important;
+        transition: all 0.3s ease;
+    }
+    
+    .progress-item:hover {
+        padding-left: 8px;
+        border-bottom-color: rgba(255, 255, 255, 0.3);
     }
     
     .progress-item:last-child {
         border-bottom: none;
-        font-weight: bold;
-        font-size: 18px;
-        padding-top: 15px;
-        border-top: 2px solid rgba(255,255,255,0.5);
+        font-weight: 700;
+        font-size: 20px;
+        padding-top: 18px;
+        margin-top: 8px;
+        border-top: 2px solid rgba(255, 255, 255, 0.3);
     }
     
     .progress-label {
         font-size: 16px;
-        color: white !important;
+        color: rgba(255, 255, 255, 0.95) !important;
+        font-weight: 500;
     }
     
     .progress-value {
         font-size: 16px;
-        font-weight: 600;
+        font-weight: 700;
         color: white !important;
+        font-family: 'SF Mono', 'Courier New', monospace;
     }
     
-    /* Tables and sections - theme adaptive */
-    .reconciliation-table {
-        background: rgba(248, 249, 250, 0.5);
-        padding: 15px;
-        border-radius: 10px;
-        margin: 10px 0;
-        border: 1px solid rgba(128, 128, 128, 0.2);
-    }
-    
+    /* ========== SECTION HEADERS ========== */
     .section-header {
-        background: rgba(240, 242, 246, 0.5);
-        padding: 10px 15px;
-        border-radius: 8px;
-        margin: 15px 0;
-        font-weight: bold;
-        border: 1px solid rgba(128, 128, 128, 0.2);
+        background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%);
+        backdrop-filter: blur(10px);
+        padding: 16px 20px;
+        border-radius: 12px;
+        margin: 20px 0;
+        font-weight: 700;
+        border: 1px solid rgba(59, 130, 246, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        letter-spacing: -0.3px;
     }
     
+    .section-header:hover {
+        border-color: rgba(59, 130, 246, 0.4);
+        transform: translateX(4px);
+    }
+    
+    /* ========== DRILL-DOWN SECTIONS ========== */
     .drill-down-section {
-        background: rgba(248, 249, 250, 0.5);
-        padding: 10px;
-        border-radius: 8px;
-        margin: 10px 0;
-        border: 1px solid rgba(128, 128, 128, 0.2);
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+        backdrop-filter: blur(10px);
+        padding: 16px;
+        border-radius: 12px;
+        margin: 12px 0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
     
-    /* Ensure dataframes are readable in dark mode */
-    .stDataFrame, [data-testid="stDataFrame"] {
-        border: 1px solid rgba(128, 128, 128, 0.3);
+    .drill-down-section:hover {
+        border-color: rgba(59, 130, 246, 0.2);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
     }
     
-    /* Force metric labels to be visible */
-    [data-testid="stMetricLabel"] {
-        color: inherit !important;
+    /* ========== AUDIT SECTIONS ========== */
+    .audit-section {
+        background: linear-gradient(135deg, rgba(34, 197, 94, 0.08) 0%, rgba(59, 130, 246, 0.08) 100%);
+        backdrop-filter: blur(10px);
+        padding: 24px;
+        border-radius: 12px;
+        margin: 20px 0;
+        border: 1px solid rgba(34, 197, 94, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
     
-    [data-testid="stMetricValue"] {
-        color: inherit !important;
-    }
-    
-    /* Captions should be visible in both modes */
-    .caption, [data-testid="caption"] {
-        opacity: 0.7;
-        color: inherit !important;
-    }
-    
-    /* Change tracking styles */
+    /* ========== CHANGE TRACKING ========== */
     .change-positive {
-        color: #28a745;
-        font-weight: bold;
+        color: #10b981;
+        font-weight: 700;
+        text-shadow: 0 0 8px rgba(16, 185, 129, 0.3);
     }
     
     .change-negative {
-        color: #dc3545;
-        font-weight: bold;
+        color: #ef4444;
+        font-weight: 700;
+        text-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
     }
     
     .change-neutral {
-        color: #6c757d;
-        font-weight: bold;
+        color: #6b7280;
+        font-weight: 600;
     }
     
-    .audit-section {
-        background: rgba(240, 242, 246, 0.5);
+    /* ========== RECONCILIATION TABLE ========== */
+    .reconciliation-table {
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+        backdrop-filter: blur(10px);
         padding: 20px;
+        border-radius: 12px;
+        margin: 16px 0;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* ========== TABS ========== */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        padding: 8px;
+        border-radius: 12px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        background: transparent;
+        border-radius: 8px;
+        padding: 12px 24px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stTabs [data-baseweb="tab"]:hover {
+        background: rgba(59, 130, 246, 0.1);
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+        color: white !important;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+    
+    /* ========== SELECT BOXES ========== */
+    .stSelectbox > div > div {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .stSelectbox > div > div:hover {
+        border-color: rgba(59, 130, 246, 0.3);
+    }
+    
+    /* ========== RESPONSIVE ========== */
+    @media (max-width: 768px) {
+        [data-testid="stMetricValue"] {
+            font-size: 1.4rem !important;
+        }
+        
+        [data-testid="stMetric"] {
+            margin-bottom: 12px !important;
+            padding: 16px;
+        }
+        
+        .progress-breakdown {
+            padding: 20px;
+        }
+    }
+    
+    /* ========== ANIMATIONS ========== */
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+    
+    @keyframes slideIn {
+        from {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+    
+    [data-testid="stMetric"],
+    [data-testid="stExpander"],
+    .drill-down-section {
+        animation: fadeIn 0.5s ease-out;
+    }
+    
+    /* ========== SCROLLBAR ========== */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+        background: rgba(15, 23, 42, 0.3);
         border-radius: 10px;
-        margin: 15px 0;
-        border: 1px solid rgba(128, 128, 128, 0.2);
+    }
+    
+    ::-webkit-scrollbar-thumb {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        border-radius: 10px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+        background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+    }
+    
+    /* ========== TEXT SELECTION ========== */
+    ::selection {
+        background: rgba(59, 130, 246, 0.3);
+        color: white;
     }
     </style>
     """, unsafe_allow_html=True)
