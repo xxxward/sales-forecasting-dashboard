@@ -1879,6 +1879,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     ns_dfs = {}
     if not so_data.empty:
+        # Define Q4 2025 date range
+        q4_start = pd.Timestamp('2025-10-01')
+        q4_end = pd.Timestamp('2025-12-31')
+        
         # Logic Masks
         has_date_mask = (so_data['Display_Promise_Date'].notna()) | (so_data['Display_Projected_Date'].notna())
         
@@ -1890,7 +1894,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if 'Age_Business_Days' in so_data.columns:
             is_old = so_data['Age_Business_Days'] >= 13
             
-        has_pa_date = so_data['Display_PA_Date'].notna()
+        # FIXED: has_pa_date should check if PA Date exists AND is in Q4 range
+        has_pa_date = (
+            so_data['Display_PA_Date'].notna() &
+            (so_data['Display_PA_Date'] >= q4_start) &
+            (so_data['Display_PA_Date'] <= q4_end)
+        )
         status_pf = so_data['Status'] == 'Pending Fulfillment'
         status_pa = so_data['Status'] == 'Pending Approval'
 
