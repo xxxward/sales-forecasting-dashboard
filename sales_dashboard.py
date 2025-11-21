@@ -1960,7 +1960,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 df = ns_dfs.get(key, pd.DataFrame())
                 val = df['Amount_Numeric'].sum() if not df.empty else 0
                 
-                if val > 0:
+                # Always show PA_Date even if 0 to debug
+                if val > 0 or key == 'PA_Date':
                     is_checked = st.checkbox(f"{data['label']}: ${val:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
                     
                     if is_checked:
@@ -2684,19 +2685,40 @@ def create_pipeline_sankey(deals_df):
     return fig
 
 def create_team_sunburst(dashboard_df, deals_df):
-    """Sunburst chart showing team breakdown by rep and category"""
+    """Enhanced sunburst chart with better colors and formatting"""
     # Prepare data structure for sunburst
     sunburst_data = []
+    
+    # Define distinct colors for each rep
+    rep_colors = {
+        'Brad Sherman': '#ef4444',      # Red
+        'Jake Lynch': '#3b82f6',        # Blue
+        'Dave Borkowski': '#10b981',    # Green
+        'Lance Mitton': '#f59e0b',      # Amber
+        'Alex Gonzalez': '#8b5cf6',     # Purple
+        'Shopify ECommerce': '#ec4899'  # Pink
+    }
     
     for _, rep_row in dashboard_df.iterrows():
         rep_name = rep_row['Rep Name']
         
-        # Add invoiced
+        # Add invoiced with better label
         if 'NetSuite Orders' in rep_row and rep_row['NetSuite Orders'] > 0:
             sunburst_data.append({
-                'Rep Name': rep_name,
-                'Category': 'Invoiced',
-                'Amount': rep_row['NetSuite Orders']
+                'labels': rep_name,
+                'parents': '',
+                'values': rep_row['NetSuite Orders'],
+                'text': f"${rep_row['NetSuite Orders']:,.0f}",
+                'type': 'Invoiced',
+                'rep': rep_name
+            })
+            sunburst_data.append({
+                'labels': f"{rep_name} - Invoiced",
+                'parents': rep_name,
+                'values': rep_row['NetSuite Orders'],
+                'text': f"Invoiced: ${rep_row['NetSuite Orders']:,.0f}",
+                'type': 'Invoiced',
+                'rep': rep_name
             })
         
         # Add pipeline data if available
@@ -2705,9 +2727,12 @@ def create_team_sunburst(dashboard_df, deals_df):
             pipeline_total = rep_deals['Amount'].sum()
             if pipeline_total > 0:
                 sunburst_data.append({
-                    'Rep Name': rep_name,
-                    'Category': 'Pipeline',
-                    'Amount': pipeline_total
+                    'labels': f"{rep_name} - Pipeline",
+                    'parents': rep_name,
+                    'values': pipeline_total,
+                    'text': f"Pipeline: ${pipeline_total:,.0f}",
+                    'type': 'Pipeline',
+                    'rep': rep_name
                 })
     
     if not sunburst_data:
@@ -2715,22 +2740,41 @@ def create_team_sunburst(dashboard_df, deals_df):
     
     df_sunburst = pd.DataFrame(sunburst_data)
     
-    fig = px.sunburst(
-        df_sunburst,
-        path=['Rep Name', 'Category'],
-        values='Amount',
-        color='Category',
-        color_discrete_map={
-            'Invoiced': '#10b981',  # Green
-            'Pending': '#f59e0b',   # Amber
-            'Pipeline': '#3b82f6'   # Blue
-        }
-    )
+    # Create custom colors based on rep and type
+    colors = []
+    for _, row in df_sunburst.iterrows():
+        rep = row['rep']
+        base_color = rep_colors.get(rep, '#64748b')
+        
+        if row['type'] == 'Invoiced':
+            # Darker shade for invoiced
+            if base_color.startswith('#'):
+                colors.append(base_color + 'dd')  # Add alpha
+        else:
+            # Lighter shade for pipeline
+            if base_color.startswith('#'):
+                colors.append(base_color + '88')  # More transparent
+    
+    fig = go.Figure(go.Sunburst(
+        labels=df_sunburst['labels'],
+        parents=df_sunburst['parents'],
+        values=df_sunburst['values'],
+        text=df_sunburst['text'],
+        marker=dict(
+            colors=colors,
+            line=dict(color='rgba(255,255,255,0.3)', width=2)
+        ),
+        textfont=dict(size=14, color='white', family='Arial Black'),
+        hovertemplate='<b>%{label}</b><br>%{text}<br>%{percentParent}<extra></extra>',
+        branchvalues="total"
+    ))
+    
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font={'color': 'white'},
-        height=500
+        font={'color': 'white', 'size': 12},
+        height=500,
+        margin=dict(l=0, r=0, t=30, b=0)
     )
     return fig
 
@@ -4374,26 +4418,112 @@ def main():
     
     # Sidebar
     with st.sidebar:
-        # Add Calyx logo
-        st.image("calyx_logo.png", width=200)
+        # Sexy header with gradient
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        ">
+            <h1 style="
+                color: white;
+                font-size: 28px;
+                margin: 0;
+                font-weight: 800;
+                text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            ">📊 Calyx Command</h1>
+            <p style="
+                color: rgba(255,255,255,0.9);
+                font-size: 14px;
+                margin: 8px 0 0 0;
+                font-weight: 500;
+            ">Q4 2025 Sales Intelligence</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.markdown("---")
+        # Custom navigation with icons and descriptions
+        st.markdown("### 🎯 Navigation")
         
-        st.markdown("### 🎯 Dashboard Navigation")
+        # Create beautiful radio buttons with custom HTML
+        nav_options = {
+            "Team Overview": {"icon": "👥", "desc": "Team performance & analytics"},
+            "Individual Rep": {"icon": "👤", "desc": "Detailed rep breakdown"},
+            "Reconciliation": {"icon": "🔍", "desc": "Data validation & audit"},
+            "AI Insights": {"icon": "🤖", "desc": "Claude-powered analysis"},
+            "💰 Commission": {"icon": "💰", "desc": "Commission calculator"},
+            "📦 Q4 Shipping Plan": {"icon": "📦", "desc": "Logistics planning"}
+        }
+        
         view_mode = st.radio(
             "Select View:",
-            ["Team Overview", "Individual Rep", "Reconciliation", "AI Insights", "💰 Commission", "📦 Q4 Shipping Plan"],
-            label_visibility="collapsed"
+            list(nav_options.keys()),
+            label_visibility="collapsed",
+            format_func=lambda x: f"{nav_options[x]['icon']} {x}"
         )
+        
+        # Show description of selected view
+        if view_mode in nav_options:
+            st.markdown(f"""
+            <div style="
+                background: rgba(59, 130, 246, 0.1);
+                border-left: 3px solid #3b82f6;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+            ">
+                <small style="color: rgba(255,255,255,0.7);">
+                    {nav_options[view_mode]['desc']}
+                </small>
+            </div>
+            """, unsafe_allow_html=True)
         
         st.markdown("---")
         
-        # Last updated and refresh button (always visible)
+        # Sexy metrics cards for quick stats
         current_time = datetime.now()
-        st.caption(f"Last updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        st.caption("Dashboard refreshes every hour")
+        biz_days = calculate_business_days_remaining()
         
-        if st.button("🔄 Refresh Data Now"):
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.2) 100%);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+        ">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">⏱️</span>
+                <div>
+                    <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Q4 Days Left</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #10b981;">""" + str(biz_days) + """</div>
+                </div>
+            </div>
+            <div style="font-size: 10px; opacity: 0.6;">Business days until Dec 31, 2025</div>
+        </div>
+        
+        <div style="
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(37, 99, 235, 0.2) 100%);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 15px;
+            margin-bottom: 15px;
+        ">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <span style="font-size: 24px;">🔄</span>
+                <div style="flex: 1;">
+                    <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Last Sync</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">""" + current_time.strftime('%I:%M %p') + """</div>
+                </div>
+            </div>
+            <div style="font-size: 10px; opacity: 0.6;">Auto-refresh every hour</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Refresh button with gradient
+        if st.button("🔄 Refresh Data Now", use_container_width=True):
             # Store snapshot before clearing cache
             if 'current_snapshot' in st.session_state:
                 st.session_state.previous_snapshot = st.session_state.current_snapshot
