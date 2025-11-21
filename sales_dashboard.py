@@ -2417,6 +2417,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
+    # CRITICAL: This logic must EXACTLY match the original working version
     pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
     
     if not pa_orders.empty:
@@ -2424,23 +2425,32 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         if 'Age_Business_Days' not in pa_orders.columns:
             pa_orders['Age_Business_Days'] = 0
         
-        # CATEGORY 1: Old PA (Age >= 13 business days) - TAKES PRIORITY
-        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
+        # CATEGORY 1: Old PA (Age >= 10 business days) - TAKES PRIORITY
+        # FIXED: Changed from 13 to 10 to match original working logic
+        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 10].copy()
         
-        # Only process young orders (Age < 13) for the other two categories
-        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
+        # Only process young orders (Age < 10) for the other two categories
+        # FIXED: Changed from 13 to 10 to match original working logic
+        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 10].copy()
         
         if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
-            # CATEGORY 2: PA with valid Q4 date
+            # CATEGORY 2: PA with valid Q4 date (and Age < 10 business days)
             pa_with_date_mask = (
                 (young_pa['Pending Approval Date'].notna()) &
+                (young_pa['Pending Approval Date'] != 'No Date') &
                 (young_pa['Pending Approval Date'] >= q4_start) &
                 (young_pa['Pending Approval Date'] <= q4_end)
             )
             pa_date = young_pa[pa_with_date_mask].copy()
             
-            # CATEGORY 3: PA with no date (truly missing)
-            pa_nodate = young_pa[young_pa['Pending Approval Date'].isna()].copy()
+            # CATEGORY 3: PA with "No Date" string (and Age < 10 business days)
+            # FIXED: Robust matching for various "No Date" formats from Google Sheets
+            pa_no_date_mask = (
+                (young_pa['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
+                (young_pa['Pending Approval Date'].astype(str).str.strip() == '') |
+                (young_pa['Pending Approval Date'].isna())
+            )
+            pa_nodate = young_pa[pa_no_date_mask].copy()
         else:
             pa_date = pa_nodate = pd.DataFrame()
     else:
