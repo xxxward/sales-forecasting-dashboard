@@ -4460,64 +4460,70 @@ def main():
         # Custom navigation with icons and descriptions
         st.markdown("### 🧭 Navigation")
         
-        # Initialize session state for selected view if not exists
-        if 'selected_view' not in st.session_state:
-            st.session_state.selected_view = "Team Overview"
+        # ERP-style navigation with CSS styling
+        st.markdown("""
+        <style>
+        div[data-testid="stRadio"] > div {
+            gap: 8px;
+        }
         
-        # Create ERP-style navigation buttons
-        nav_options = [
-            ("Team Overview", "👥", "Team performance & analytics"),
-            ("Individual Rep", "👤", "Detailed rep breakdown"),
-            ("Reconciliation", "🔍", "Data validation & audit"),
-            ("AI Insights", "🤖", "Claude-powered analysis"),
-            ("💰 Commission", "💰", "Commission calculator"),
-            ("📦 Q4 Shipping Plan", "📦", "Logistics planning")
-        ]
+        div[data-testid="stRadio"] > div > label {
+            background: rgba(30, 41, 59, 0.6) !important;
+            border: 1px solid rgba(71, 85, 105, 0.5) !important;
+            border-left: 4px solid transparent !important;
+            border-radius: 8px !important;
+            padding: 12px 16px !important;
+            cursor: pointer !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important;
+            width: 100% !important;
+            margin-bottom: 4px !important;
+        }
         
-        view_mode = None
-        for option, icon, desc in nav_options:
-            is_selected = (st.session_state.selected_view == option)
-            
-            # Create custom styled button
-            button_style = f"""
-            <div style="
-                background: {'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' if is_selected else 'rgba(30, 41, 59, 0.6)'};
-                border: {'2px solid #3b82f6' if is_selected else '1px solid rgba(71, 85, 105, 0.5)'};
-                border-left: {'4px solid #60a5fa' if is_selected else '4px solid transparent'};
-                border-radius: 8px;
-                padding: 12px 16px;
-                margin-bottom: 8px;
-                cursor: pointer;
-                transition: all 0.3s ease;
-                box-shadow: {'0 4px 12px rgba(59, 130, 246, 0.3)' if is_selected else '0 2px 4px rgba(0,0,0,0.1)'};
-            ">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                    <span style="font-size: 20px;">{icon}</span>
-                    <div style="flex: 1;">
-                        <div style="
-                            font-weight: {'700' if is_selected else '600'};
-                            font-size: 14px;
-                            color: {'white' if is_selected else 'rgba(226, 232, 240, 0.9)'};
-                            margin-bottom: 2px;
-                        ">{option}</div>
-                        <div style="
-                            font-size: 10px;
-                            color: {'rgba(255,255,255,0.7)' if is_selected else 'rgba(148, 163, 184, 0.7)'};
-                        ">{desc}</div>
-                    </div>
-                    {f'<div style="width: 8px; height: 8px; background: #60a5fa; border-radius: 50%; box-shadow: 0 0 8px #60a5fa;"></div>' if is_selected else ''}
-                </div>
-            </div>
-            """
-            
-            st.markdown(button_style, unsafe_allow_html=True)
-            
-            # Use invisible button for click detection
-            if st.button(f"nav_{option}", key=f"nav_btn_{option}", label_visibility="collapsed"):
-                st.session_state.selected_view = option
-                st.rerun()
-                
-        view_mode = st.session_state.selected_view
+        div[data-testid="stRadio"] > div > label:hover {
+            background: rgba(51, 65, 85, 0.8) !important;
+            border-color: rgba(100, 116, 139, 0.7) !important;
+            transform: translateX(4px);
+        }
+        
+        div[data-testid="stRadio"] > div > label[data-checked="true"] {
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+            border: 2px solid #3b82f6 !important;
+            border-left: 4px solid #60a5fa !important;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3) !important;
+        }
+        
+        div[data-testid="stRadio"] > div > label[data-checked="true"]:hover {
+            transform: translateX(0);
+        }
+        
+        div[data-testid="stRadio"] label p {
+            font-size: 14px !important;
+            font-weight: 600 !important;
+            margin: 0 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Create navigation options
+        view_mode = st.radio(
+            "Select View:",
+            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "📦 Q4 Shipping Plan"],
+            label_visibility="collapsed",
+            key="nav_selector"
+        )
+        
+        # Map display names back to internal names
+        view_mapping = {
+            "👥 Team Overview": "Team Overview",
+            "👤 Individual Rep": "Individual Rep",
+            "🔍 Reconciliation": "Reconciliation",
+            "🤖 AI Insights": "AI Insights",
+            "💰 Commission": "💰 Commission",
+            "📦 Q4 Shipping Plan": "📦 Q4 Shipping Plan"
+        }
+        
+        view_mode = view_mapping.get(view_mode, "Team Overview")
         
         st.markdown("---")
         
