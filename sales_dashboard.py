@@ -1877,80 +1877,31 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
 
     # --- 3. CREATE DISPLAY DATAFRAMES ---
     
-    ns_dfs = {}
-    if not so_data.empty:
-        # Define Q4 2025 date range
-        q4_start = pd.Timestamp('2025-10-01')
-        q4_end = pd.Timestamp('2025-12-31')
+    # === USE CENTRALIZED CATEGORIZATION FUNCTION ===
+    so_categories = categorize_sales_orders(sales_orders_df, rep_name)
+    
+    # Helper function to add display columns for UI
+    def format_ns_view(df, date_col_name):
+        if df.empty: 
+            return df
+        d = df.copy()
         
-        # Logic Masks
-        # has_date_mask: Orders that have Q4 dates (for "With Date" categories)
-        has_date_mask = (
-            ((so_data['Display_Promise_Date'].notna()) & 
-             (so_data['Display_Promise_Date'] >= q4_start) & 
-             (so_data['Display_Promise_Date'] <= q4_end)) |
-            ((so_data['Display_Projected_Date'].notna()) & 
-             (so_data['Display_Projected_Date'] >= q4_start) & 
-             (so_data['Display_Projected_Date'] <= q4_end))
-        )
+        # Add display columns
+        if 'Internal ID' in d.columns:
+            d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
         
-        # no_date_mask: Orders where BOTH Promise and Projected dates are null/missing
-        no_date_mask = (
-            (so_data['Display_Promise_Date'].isna()) &
-            (so_data['Display_Projected_Date'].isna())
-        )
-        
-        # no_pa_date_mask: Orders where PA Date is truly missing (not just outside Q4)
-        no_pa_date_mask = so_data['Display_PA_Date'].isna()
-        
-        is_ext = pd.Series(False, index=so_data.index)
-        if 'Calyx External Order' in so_data.columns:
-            is_ext = so_data['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
-            
-        is_old = pd.Series(False, index=so_data.index)
-        if 'Age_Business_Days' in so_data.columns:
-            is_old = so_data['Age_Business_Days'] >= 13
-            
-        # FIXED: has_pa_date should check if PA Date exists AND is in Q4 range
-        has_pa_date = (
-            so_data['Display_PA_Date'].notna() &
-            (so_data['Display_PA_Date'] >= q4_start) &
-            (so_data['Display_PA_Date'] <= q4_end)
-        )
-        status_pf = so_data['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
-        status_pa = so_data['Status'] == 'Pending Approval'
-
-        def format_ns_view(df, date_mode):
-            if df.empty: return df
-            d = df.copy()
-            
-            if date_mode == 'Promise':
-                d['Key Date'] = d['Display_Promise_Date'].combine_first(d['Display_Projected_Date'])
-            elif date_mode == 'PF_Date':
-                d['Key Date'] = d['Display_PF_Date']
-            elif date_mode == 'PA_Date':
-                d['Key Date'] = d['Display_PA_Date']
-            else:
-                d['Key Date'] = pd.NaT
-                
-            d['Key Date'] = d['Key Date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notna(x) else 'No Date')
-            d['SO#'] = d['Display_SO_Num'].fillna('N/A')
-            d['Type'] = d['Display_Type']
-            
-            if 'Internal ID' in d.columns:
-                d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
-            
-            return d.sort_values(['Type', 'Amount_Numeric'], ascending=[True, False])
-
-        # Split by External/Internal for granular visibility
-        ns_dfs['PF_Date_Ext'] = format_ns_view(so_data[status_pf & has_date_mask & is_ext], 'Promise')
-        ns_dfs['PF_Date_Int'] = format_ns_view(so_data[status_pf & has_date_mask & ~is_ext], 'Promise')
-        ns_dfs['PF_NoDate_Ext'] = format_ns_view(so_data[status_pf & no_date_mask & is_ext], 'PF_Date')
-        ns_dfs['PF_NoDate_Int'] = format_ns_view(so_data[status_pf & no_date_mask & ~is_ext], 'PF_Date')
-        ns_dfs['PA_Old'] = format_ns_view(so_data[status_pa & is_old], 'PA_Date')
-        ns_dfs['PA_Date'] = format_ns_view(so_data[status_pa & ~is_old & has_pa_date], 'PA_Date')
-        ns_dfs['PA_NoDate'] = format_ns_view(so_data[status_pa & ~is_old & no_pa_date_mask], 'None')
-
+        return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
+    
+    # Map centralized categories to display dataframes
+    ns_dfs = {
+        'PF_Date_Ext': format_ns_view(so_categories['pf_date_ext'], 'Promise'),
+        'PF_Date_Int': format_ns_view(so_categories['pf_date_int'], 'Promise'),
+        'PF_NoDate_Ext': format_ns_view(so_categories['pf_nodate_ext'], 'PF_Date'),
+        'PF_NoDate_Int': format_ns_view(so_categories['pf_nodate_int'], 'PF_Date'),
+        'PA_Old': format_ns_view(so_categories['pa_old'], 'PA_Date'),
+        'PA_Date': format_ns_view(so_categories['pa_date'], 'PA_Date'),
+        'PA_NoDate': format_ns_view(so_categories['pa_nodate'], 'None')
+    }
 
     hs_dfs = {}
     if not hs_data.empty:
@@ -1991,7 +1942,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             for key, data in ns_categories.items():
                 # Get value for label
                 df = ns_dfs.get(key, pd.DataFrame())
-                val = df['Amount_Numeric'].sum() if not df.empty else 0
+                val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
                 
                 # Always show PA_Date even if 0 to debug
                 if val > 0 or key == 'PA_Date':
@@ -2003,22 +1954,24 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
                                 
                                 # Display Columns
-                                cols = ['Link', 'SO#', 'Type', 'Customer', 'Key Date', 'Amount_Numeric']
+                                display_cols = []
+                                if 'Link' in df.columns: display_cols.append('Link')
+                                if 'SO#' in df.columns: display_cols.append('SO#')
+                                if 'Type' in df.columns: display_cols.append('Type')
+                                if 'Customer' in df.columns: display_cols.append('Customer')
+                                if 'Amount' in df.columns: display_cols.append('Amount')
                                 
-                                if enable_edit:
+                                if enable_edit and display_cols:
                                     df_edit = df.copy()
                                     df_edit.insert(0, "Select", True)
                                     edited = st.data_editor(
-                                        df_edit[['Select'] + cols],
+                                        df_edit[['Select'] + display_cols],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "SO#": st.column_config.TextColumn("SO#", width="small"),
-                                            "Type": st.column_config.TextColumn("Type", width="small"),
-                                            "Key Date": st.column_config.TextColumn("Date", width="medium"),
-                                            "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
+                                            "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=cols,
+                                        disabled=display_cols,
                                         hide_index=True,
                                         key=f"edit_{key}_{rep_name}"
                                     )
@@ -2026,19 +1979,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     selected_rows = edited[edited['Select']].copy()
                                     export_buckets[key] = selected_rows
                                     
-                                    current_total = selected_rows['Amount_Numeric'].sum()
+                                    current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
                                     # Read-only
-                                    st.dataframe(
-                                        df[cols],
-                                        column_config={
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
-                                        },
-                                        hide_index=True,
-                                        use_container_width=True
-                                    )
+                                    if display_cols:
+                                        st.dataframe(
+                                            df[display_cols],
+                                            column_config={
+                                                "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
+                                                "Amount": st.column_config.NumberColumn("Amount", format="$%d")
+                                            },
+                                            hide_index=True,
+                                            use_container_width=True
+                                        )
                                     # Capture all rows for export
                                     export_buckets[key] = df
 
@@ -2091,8 +2045,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # --- 5. CALCULATE RESULTS ---
     
     # Calculate totals from export buckets (which reflect custom selections)
-    selected_pending = sum(df['Amount_Numeric'].sum() for k, df in export_buckets.items() if k in ns_categories)
-    selected_pipeline = sum(df['Amount_Numeric'].sum() for k, df in export_buckets.items() if k in hs_categories)
+    def safe_sum(df):
+        return df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+    
+    selected_pending = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
+    selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
     
     total_forecast = invoiced_shipped + selected_pending + selected_pipeline
     gap_to_quota = quota - total_forecast
@@ -2376,6 +2333,140 @@ def calculate_team_metrics(deals_df, dashboard_df):
         'current_forecast': current_forecast
     }
 
+# ========== CENTRALIZED SALES ORDER CATEGORIZATION ==========
+def categorize_sales_orders(sales_orders_df, rep_name=None):
+    """
+    SINGLE SOURCE OF TRUTH for categorizing sales orders into forecast buckets.
+    
+    This function ensures consistent categorization across:
+    - Team Dashboard bar charts
+    - Individual Rep views
+    - Build Your Own Forecast section
+    
+    Returns a dictionary with categorized DataFrames and their amounts.
+    """
+    if sales_orders_df is None or sales_orders_df.empty:
+        return {
+            'pf_date_ext': pd.DataFrame(), 'pf_date_ext_amount': 0,
+            'pf_date_int': pd.DataFrame(), 'pf_date_int_amount': 0,
+            'pf_nodate_ext': pd.DataFrame(), 'pf_nodate_ext_amount': 0,
+            'pf_nodate_int': pd.DataFrame(), 'pf_nodate_int_amount': 0,
+            'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
+            'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
+            'pa_old': pd.DataFrame(), 'pa_old_amount': 0
+        }
+    
+    # Filter by rep if specified
+    if rep_name and 'Sales Rep' in sales_orders_df.columns:
+        orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
+    else:
+        orders = sales_orders_df.copy()
+    
+    if orders.empty:
+        return {
+            'pf_date_ext': pd.DataFrame(), 'pf_date_ext_amount': 0,
+            'pf_date_int': pd.DataFrame(), 'pf_date_int_amount': 0,
+            'pf_nodate_ext': pd.DataFrame(), 'pf_nodate_ext_amount': 0,
+            'pf_nodate_int': pd.DataFrame(), 'pf_nodate_int_amount': 0,
+            'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
+            'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
+            'pa_old': pd.DataFrame(), 'pa_old_amount': 0
+        }
+    
+    # Remove duplicate columns
+    if orders.columns.duplicated().any():
+        orders = orders.loc[:, ~orders.columns.duplicated()]
+    
+    # Define Q4 2025 date range
+    q4_start = pd.Timestamp('2025-10-01')
+    q4_end = pd.Timestamp('2025-12-31')
+    
+    # === PENDING FULFILLMENT CATEGORIZATION ===
+    pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
+    
+    if not pf_orders.empty:
+        # Check if dates are in Q4 range
+        def has_q4_date(row):
+            if pd.notna(row.get('Customer Promise Date')):
+                if q4_start <= row['Customer Promise Date'] <= q4_end:
+                    return True
+            if pd.notna(row.get('Projected Date')):
+                if q4_start <= row['Projected Date'] <= q4_end:
+                    return True
+            return False
+        
+        pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
+        
+        # Check External/Internal flag
+        is_ext = pd.Series(False, index=pf_orders.index)
+        if 'Calyx External Order' in pf_orders.columns:
+            is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
+        
+        # Categorize PF orders
+        pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
+        pf_date_int = pf_orders[(pf_orders['Has_Q4_Date'] == True) & ~is_ext].copy()
+        
+        # No date means BOTH dates are missing
+        no_date_mask = (
+            (pf_orders['Customer Promise Date'].isna()) &
+            (pf_orders['Projected Date'].isna())
+        )
+        pf_nodate_ext = pf_orders[no_date_mask & is_ext].copy()
+        pf_nodate_int = pf_orders[no_date_mask & ~is_ext].copy()
+    else:
+        pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
+    
+    # === PENDING APPROVAL CATEGORIZATION ===
+    pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
+    
+    if not pa_orders.empty:
+        # Check if Age_Business_Days column exists
+        if 'Age_Business_Days' not in pa_orders.columns:
+            pa_orders['Age_Business_Days'] = 0
+        
+        # CATEGORY 1: Old PA (Age >= 13 business days) - TAKES PRIORITY
+        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
+        
+        # Only process young orders (Age < 13) for the other two categories
+        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
+        
+        if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
+            # CATEGORY 2: PA with valid Q4 date
+            pa_with_date_mask = (
+                (young_pa['Pending Approval Date'].notna()) &
+                (young_pa['Pending Approval Date'] >= q4_start) &
+                (young_pa['Pending Approval Date'] <= q4_end)
+            )
+            pa_date = young_pa[pa_with_date_mask].copy()
+            
+            # CATEGORY 3: PA with no date (truly missing)
+            pa_nodate = young_pa[young_pa['Pending Approval Date'].isna()].copy()
+        else:
+            pa_date = pa_nodate = pd.DataFrame()
+    else:
+        pa_old = pa_date = pa_nodate = pd.DataFrame()
+    
+    # Calculate amounts
+    def get_amount(df):
+        return df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+    
+    return {
+        'pf_date_ext': pf_date_ext,
+        'pf_date_ext_amount': get_amount(pf_date_ext),
+        'pf_date_int': pf_date_int,
+        'pf_date_int_amount': get_amount(pf_date_int),
+        'pf_nodate_ext': pf_nodate_ext,
+        'pf_nodate_ext_amount': get_amount(pf_nodate_ext),
+        'pf_nodate_int': pf_nodate_int,
+        'pf_nodate_int_amount': get_amount(pf_nodate_int),
+        'pa_date': pa_date,
+        'pa_date_amount': get_amount(pa_date),
+        'pa_nodate': pa_nodate,
+        'pa_nodate_amount': get_amount(pa_nodate),
+        'pa_old': pa_old,
+        'pa_old_amount': get_amount(pa_old)
+    }
+
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
     """Calculate metrics for a specific rep with detailed order lists for drill-down"""
     
@@ -2434,134 +2525,22 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     # Total Q1 spillover
     q1_spillover_total = expect_commit_q1_spillover + best_opp_q1_spillover
     
-    # Initialize detail dataframes for sales orders
-    pending_approval_details = pd.DataFrame()
-    pending_approval_no_date_details = pd.DataFrame()
-    pending_approval_old_details = pd.DataFrame()
-    pending_fulfillment_details = pd.DataFrame()
-    pending_fulfillment_no_date_details = pd.DataFrame()
+    # === USE CENTRALIZED CATEGORIZATION FUNCTION ===
+    so_categories = categorize_sales_orders(sales_orders_df, rep_name)
     
-    # Calculate sales order metrics
-    pending_approval = 0
-    pending_approval_no_date = 0
-    pending_approval_old = 0
-    pending_fulfillment = 0
-    pending_fulfillment_no_date = 0
+    # Extract amounts
+    pending_fulfillment = so_categories['pf_date_ext_amount'] + so_categories['pf_date_int_amount']
+    pending_fulfillment_no_date = so_categories['pf_nodate_ext_amount'] + so_categories['pf_nodate_int_amount']
+    pending_approval = so_categories['pa_date_amount']
+    pending_approval_no_date = so_categories['pa_nodate_amount']
+    pending_approval_old = so_categories['pa_old_amount']
     
-    if sales_orders_df is not None and not sales_orders_df.empty:
-        # Make a clean copy and ensure no duplicate columns
-        rep_orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-        
-        # Remove duplicate columns if any exist
-        if rep_orders.columns.duplicated().any():
-            rep_orders = rep_orders.loc[:, ~rep_orders.columns.duplicated()]
-        
-        # PENDING APPROVAL LOGIC - FIXED TO PREVENT DOUBLE COUNTING
-        # Priority: Age >= 13 business days takes precedence over date field status
-        pending_approval_orders = rep_orders[rep_orders['Status'] == 'Pending Approval'].copy()
-        
-        if not pending_approval_orders.empty:
-            # Define Q4 2025 date range
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
-            # Check if we have the Age_Business_Days column
-            if 'Age_Business_Days' not in pending_approval_orders.columns:
-                st.warning("⚠️ Age_Business_Days column missing from Sales Orders. Cannot calculate Old PA correctly.")
-            
-            # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 13 business days)
-            # Based on actual reconciliation: orders 13+ business days old are excluded
-            # This takes priority and removes orders from other categories
-            if 'Age_Business_Days' in pending_approval_orders.columns:
-                old_mask = pending_approval_orders['Age_Business_Days'] >= 13
-                pending_approval_old_details = pending_approval_orders[old_mask].copy()
-                # Remove duplicate columns
-                if pending_approval_old_details.columns.duplicated().any():
-                    pending_approval_old_details = pending_approval_old_details.loc[:, ~pending_approval_old_details.columns.duplicated()]
-                pending_approval_old = pending_approval_old_details['Amount'].sum() if not pending_approval_old_details.empty else 0
-                
-                # Create a mask for orders that are NOT old (Age < 13 days)
-                # These are the only ones eligible for Categories 1 and 2
-                young_orders_mask = pending_approval_orders['Age_Business_Days'] < 13
-                young_orders = pending_approval_orders[young_orders_mask].copy()
-            else:
-                pending_approval_old = 0
-                pending_approval_old_details = pd.DataFrame()
-                young_orders = pending_approval_orders.copy()
-            
-            # Now process only the "young" orders (Age < 13 business days) for Categories 1 and 2
-            if not young_orders.empty and 'Pending Approval Date' in young_orders.columns:
-                
-                # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age < 13 business days)
-                pa_with_date_mask = (
-                    (young_orders['Pending Approval Date'].notna()) &
-                    (young_orders['Pending Approval Date'] != 'No Date') &
-                    (young_orders['Pending Approval Date'] >= q4_start) &
-                    (young_orders['Pending Approval Date'] <= q4_end)
-                )
-                pending_approval_details = young_orders[pa_with_date_mask].copy()
-                # Remove duplicate columns
-                if pending_approval_details.columns.duplicated().any():
-                    pending_approval_details = pending_approval_details.loc[:, ~pending_approval_details.columns.duplicated()]
-                pending_approval = pending_approval_details['Amount'].sum() if not pending_approval_details.empty else 0
-                
-                # CATEGORY 2: Pending Approval with "No Date" string (and Age < 13 business days)
-                # Robust matching for various "No Date" formats from Google Sheets
-                pa_no_date_mask = (
-                    (young_orders['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
-                    (young_orders['Pending Approval Date'].astype(str).str.strip() == '') |
-                    (young_orders['Pending Approval Date'].isna())
-                )
-                pending_approval_no_date_details = young_orders[pa_no_date_mask].copy()
-                # Remove duplicate columns
-                if pending_approval_no_date_details.columns.duplicated().any():
-                    pending_approval_no_date_details = pending_approval_no_date_details.loc[:, ~pending_approval_no_date_details.columns.duplicated()]
-                pending_approval_no_date = pending_approval_no_date_details['Amount'].sum() if not pending_approval_no_date_details.empty else 0
-            else:
-                # No young orders or missing date column
-                pending_approval = 0
-                pending_approval_details = pd.DataFrame()
-                pending_approval_no_date = 0
-                pending_approval_no_date_details = pd.DataFrame()
-        
-        # PENDING FULFILLMENT LOGIC
-        fulfillment_orders = rep_orders[
-            rep_orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
-        ].copy()
-        
-        if not fulfillment_orders.empty:
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
-            # Check if Customer Promise Date OR Projected Date is in Q4
-            def has_q4_date(row):
-                if pd.notna(row.get('Customer Promise Date')):
-                    if q4_start <= row['Customer Promise Date'] <= q4_end:
-                        return True
-                if pd.notna(row.get('Projected Date')):
-                    if q4_start <= row['Projected Date'] <= q4_end:
-                        return True
-                return False
-            
-            fulfillment_orders['Has_Q4_Date'] = fulfillment_orders.apply(has_q4_date, axis=1)
-            
-            # Pending Fulfillment WITH Q4 dates
-            pending_fulfillment_details = fulfillment_orders[fulfillment_orders['Has_Q4_Date'] == True].copy()
-            # Remove duplicate columns
-            if pending_fulfillment_details.columns.duplicated().any():
-                pending_fulfillment_details = pending_fulfillment_details.loc[:, ~pending_fulfillment_details.columns.duplicated()]
-            pending_fulfillment = pending_fulfillment_details['Amount'].sum() if not pending_fulfillment_details.empty else 0
-            
-            # Pending Fulfillment WITHOUT dates
-            no_date_mask = (
-                (fulfillment_orders['Customer Promise Date'].isna()) &
-                (fulfillment_orders['Projected Date'].isna())
-            )
-            pending_fulfillment_no_date_details = fulfillment_orders[no_date_mask].copy()
-            # Remove duplicate columns
-            if pending_fulfillment_no_date_details.columns.duplicated().any():
-                pending_fulfillment_no_date_details = pending_fulfillment_no_date_details.loc[:, ~pending_fulfillment_no_date_details.columns.duplicated()]
-            pending_fulfillment_no_date = pending_fulfillment_no_date_details['Amount'].sum() if not pending_fulfillment_no_date_details.empty else 0
+    # Extract detail dataframes
+    pending_approval_details = so_categories['pa_date']
+    pending_approval_no_date_details = so_categories['pa_nodate']
+    pending_approval_old_details = so_categories['pa_old']
+    pending_fulfillment_details = pd.concat([so_categories['pf_date_ext'], so_categories['pf_date_int']])
+    pending_fulfillment_no_date_details = pd.concat([so_categories['pf_nodate_ext'], so_categories['pf_nodate_int']])
     
     # Total calculations - ONLY Q4 SHIPPING DEALS COUNT TOWARD QUOTA
     total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
