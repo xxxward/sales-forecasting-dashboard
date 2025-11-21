@@ -3897,24 +3897,32 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with viz_col1:
         st.markdown("#### Pipeline Flow (Sankey)")
         try:
-            sankey_fig = create_pipeline_sankey(deals_df)
-            if sankey_fig.data:
-                st.plotly_chart(sankey_fig, use_container_width=True)
+            if not deals_df.empty and 'Pipeline' in deals_df.columns and 'Status' in deals_df.columns:
+                sankey_fig = create_pipeline_sankey(deals_df)
+                if sankey_fig and hasattr(sankey_fig, 'data') and len(sankey_fig.data) > 0:
+                    st.plotly_chart(sankey_fig, use_container_width=True, key="sankey_chart")
+                else:
+                    st.info("📭 No pipeline data available for Sankey diagram")
             else:
-                st.info("📭 No pipeline data available for Sankey diagram")
+                st.info("📭 Missing required columns for Sankey diagram")
         except Exception as e:
-            st.warning(f"Could not generate Sankey diagram: {str(e)}")
+            st.error(f"Error generating Sankey: {str(e)}")
+            st.caption("Debug: Check that Pipeline and Status columns exist in deals data")
     
     with viz_col2:
         st.markdown("#### Team Breakdown (Sunburst)")
         try:
-            sunburst_fig = create_team_sunburst(dashboard_df, deals_df)
-            if sunburst_fig.data:
-                st.plotly_chart(sunburst_fig, use_container_width=True)
+            if not dashboard_df.empty:
+                sunburst_fig = create_team_sunburst(dashboard_df, deals_df)
+                if sunburst_fig and hasattr(sunburst_fig, 'data') and len(sunburst_fig.data) > 0:
+                    st.plotly_chart(sunburst_fig, use_container_width=True, key="sunburst_chart")
+                else:
+                    st.info("📭 No data available for Sunburst chart")
             else:
-                st.info("📭 No data available for Sunburst chart")
+                st.info("📭 No team data available")
         except Exception as e:
-            st.warning(f"Could not generate Sunburst chart: {str(e)}")
+            st.error(f"Error generating Sunburst: {str(e)}")
+            st.caption("Debug: Check dashboard and deals data structure")
     
     st.markdown("---")
     
@@ -4450,40 +4458,66 @@ def main():
         """, unsafe_allow_html=True)
         
         # Custom navigation with icons and descriptions
-        st.markdown("### 🎯 Navigation")
+        st.markdown("### 🧭 Navigation")
         
-        # Create beautiful radio buttons with custom HTML
-        nav_options = {
-            "Team Overview": {"icon": "👥", "desc": "Team performance & analytics"},
-            "Individual Rep": {"icon": "👤", "desc": "Detailed rep breakdown"},
-            "Reconciliation": {"icon": "🔍", "desc": "Data validation & audit"},
-            "AI Insights": {"icon": "🤖", "desc": "Claude-powered analysis"},
-            "💰 Commission": {"icon": "💰", "desc": "Commission calculator"},
-            "📦 Q4 Shipping Plan": {"icon": "📦", "desc": "Logistics planning"}
-        }
+        # Initialize session state for selected view if not exists
+        if 'selected_view' not in st.session_state:
+            st.session_state.selected_view = "Team Overview"
         
-        view_mode = st.radio(
-            "Select View:",
-            list(nav_options.keys()),
-            label_visibility="collapsed",
-            format_func=lambda x: f"{nav_options[x]['icon']} {x}"
-        )
+        # Create ERP-style navigation buttons
+        nav_options = [
+            ("Team Overview", "👥", "Team performance & analytics"),
+            ("Individual Rep", "👤", "Detailed rep breakdown"),
+            ("Reconciliation", "🔍", "Data validation & audit"),
+            ("AI Insights", "🤖", "Claude-powered analysis"),
+            ("💰 Commission", "💰", "Commission calculator"),
+            ("📦 Q4 Shipping Plan", "📦", "Logistics planning")
+        ]
         
-        # Show description of selected view
-        if view_mode in nav_options:
-            st.markdown(f"""
+        view_mode = None
+        for option, icon, desc in nav_options:
+            is_selected = (st.session_state.selected_view == option)
+            
+            # Create custom styled button
+            button_style = f"""
             <div style="
-                background: rgba(59, 130, 246, 0.1);
-                border-left: 3px solid #3b82f6;
-                padding: 10px;
-                border-radius: 5px;
-                margin: 10px 0;
+                background: {'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)' if is_selected else 'rgba(30, 41, 59, 0.6)'};
+                border: {'2px solid #3b82f6' if is_selected else '1px solid rgba(71, 85, 105, 0.5)'};
+                border-left: {'4px solid #60a5fa' if is_selected else '4px solid transparent'};
+                border-radius: 8px;
+                padding: 12px 16px;
+                margin-bottom: 8px;
+                cursor: pointer;
+                transition: all 0.3s ease;
+                box-shadow: {'0 4px 12px rgba(59, 130, 246, 0.3)' if is_selected else '0 2px 4px rgba(0,0,0,0.1)'};
             ">
-                <small style="color: rgba(255,255,255,0.7);">
-                    {nav_options[view_mode]['desc']}
-                </small>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 20px;">{icon}</span>
+                    <div style="flex: 1;">
+                        <div style="
+                            font-weight: {'700' if is_selected else '600'};
+                            font-size: 14px;
+                            color: {'white' if is_selected else 'rgba(226, 232, 240, 0.9)'};
+                            margin-bottom: 2px;
+                        ">{option}</div>
+                        <div style="
+                            font-size: 10px;
+                            color: {'rgba(255,255,255,0.7)' if is_selected else 'rgba(148, 163, 184, 0.7)'};
+                        ">{desc}</div>
+                    </div>
+                    {f'<div style="width: 8px; height: 8px; background: #60a5fa; border-radius: 50%; box-shadow: 0 0 8px #60a5fa;"></div>' if is_selected else ''}
+                </div>
             </div>
-            """, unsafe_allow_html=True)
+            """
+            
+            st.markdown(button_style, unsafe_allow_html=True)
+            
+            # Use invisible button for click detection
+            if st.button(f"nav_{option}", key=f"nav_btn_{option}", label_visibility="collapsed"):
+                st.session_state.selected_view = option
+                st.rerun()
+                
+        view_mode = st.session_state.selected_view
         
         st.markdown("---")
         
