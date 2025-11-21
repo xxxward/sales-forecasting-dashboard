@@ -1884,7 +1884,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         q4_end = pd.Timestamp('2025-12-31')
         
         # Logic Masks
-        # FIXED: has_date_mask should check if Promise OR Projected date is in Q4 range
+        # has_date_mask: Orders that have Q4 dates (for "With Date" categories)
         has_date_mask = (
             ((so_data['Display_Promise_Date'].notna()) & 
              (so_data['Display_Promise_Date'] >= q4_start) & 
@@ -1892,6 +1892,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             ((so_data['Display_Projected_Date'].notna()) & 
              (so_data['Display_Projected_Date'] >= q4_start) & 
              (so_data['Display_Projected_Date'] <= q4_end))
+        )
+        
+        # no_date_mask: Orders where BOTH Promise and Projected dates are null/missing
+        no_date_mask = (
+            (so_data['Display_Promise_Date'].isna()) &
+            (so_data['Display_Projected_Date'].isna())
         )
         
         is_ext = pd.Series(False, index=so_data.index)
@@ -1936,8 +1942,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # Split by External/Internal for granular visibility
         ns_dfs['PF_Date_Ext'] = format_ns_view(so_data[status_pf & has_date_mask & is_ext], 'Promise')
         ns_dfs['PF_Date_Int'] = format_ns_view(so_data[status_pf & has_date_mask & ~is_ext], 'Promise')
-        ns_dfs['PF_NoDate_Ext'] = format_ns_view(so_data[status_pf & ~has_date_mask & is_ext], 'PF_Date')
-        ns_dfs['PF_NoDate_Int'] = format_ns_view(so_data[status_pf & ~has_date_mask & ~is_ext], 'PF_Date')
+        ns_dfs['PF_NoDate_Ext'] = format_ns_view(so_data[status_pf & no_date_mask & is_ext], 'PF_Date')
+        ns_dfs['PF_NoDate_Int'] = format_ns_view(so_data[status_pf & no_date_mask & ~is_ext], 'PF_Date')
         ns_dfs['PA_Old'] = format_ns_view(so_data[status_pa & is_old], 'PA_Date')
         ns_dfs['PA_Date'] = format_ns_view(so_data[status_pa & ~is_old & has_pa_date], 'PA_Date')
         ns_dfs['PA_NoDate'] = format_ns_view(so_data[status_pa & ~is_old & ~has_pa_date], 'None')
