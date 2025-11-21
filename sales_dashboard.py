@@ -1859,9 +1859,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     ns_categories = {
         'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External'},
         'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal'},
-        'PA_Date':       {'label': 'Pending Approval (With Date)'},
         'PF_NoDate_Ext': {'label': 'PF (No Date) - External'},
         'PF_NoDate_Int': {'label': 'PF (No Date) - Internal'},
+        'PA_Date':       {'label': 'Pending Approval (With Date)'},
         'PA_NoDate':     {'label': 'Pending Approval (No Date)'},
         'PA_Old':        {'label': 'Pending Approval (>2 Wks)'},
     }
@@ -1908,7 +1908,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             (so_data['Display_PA_Date'] >= q4_start) &
             (so_data['Display_PA_Date'] <= q4_end)
         )
-        status_pf = so_data['Status'] == 'Pending Fulfillment'
+        status_pf = so_data['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])
         status_pa = so_data['Status'] == 'Pending Approval'
 
         def format_ns_view(df, date_mode):
@@ -1933,6 +1933,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             
             return d.sort_values(['Type', 'Amount_Numeric'], ascending=[True, False])
 
+        # Split by External/Internal for granular visibility
         ns_dfs['PF_Date_Ext'] = format_ns_view(so_data[status_pf & has_date_mask & is_ext], 'Promise')
         ns_dfs['PF_Date_Int'] = format_ns_view(so_data[status_pf & has_date_mask & ~is_ext], 'Promise')
         ns_dfs['PF_NoDate_Ext'] = format_ns_view(so_data[status_pf & ~has_date_mask & is_ext], 'PF_Date')
@@ -1940,6 +1941,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         ns_dfs['PA_Old'] = format_ns_view(so_data[status_pa & is_old], 'PA_Date')
         ns_dfs['PA_Date'] = format_ns_view(so_data[status_pa & ~is_old & has_pa_date], 'PA_Date')
         ns_dfs['PA_NoDate'] = format_ns_view(so_data[status_pa & ~is_old & ~has_pa_date], 'None')
+
 
     hs_dfs = {}
     if not hs_data.empty:
