@@ -1818,7 +1818,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         so_data['Display_Promise_Date'] = pd.to_datetime(get_col_by_index(so_data, 11), errors='coerce') # Col L
         so_data['Display_Projected_Date'] = pd.to_datetime(get_col_by_index(so_data, 12), errors='coerce') # Col M
         so_data['Display_Type'] = get_col_by_index(so_data, 17).fillna('Standard') # Col R: Order Type
-        so_data['Display_PA_Date'] = pd.to_datetime(get_col_by_index(so_data, 27), errors='coerce') # Col AB: PA Date
+        
+        # Use renamed column if available, otherwise try by index
+        if 'Pending Approval Date' in so_data.columns:
+            so_data['Display_PA_Date'] = pd.to_datetime(so_data['Pending Approval Date'], errors='coerce')
+        else:
+            so_data['Display_PA_Date'] = pd.to_datetime(get_col_by_index(so_data, 29), errors='coerce') # Col AD: PA Date
 
         if 'Amount' in so_data.columns:
             so_data['Amount_Numeric'] = pd.to_numeric(so_data['Amount'], errors='coerce').fillna(0)
