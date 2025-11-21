@@ -2137,7 +2137,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         
         # Add Component Totals
         for key, df in export_buckets.items():
-            cat_val = df['Amount_Numeric'].sum()
+            # Handle both Amount and Amount_Numeric columns (NS uses Amount, HS uses Amount_Numeric)
+            if 'Amount_Numeric' in df.columns:
+                cat_val = df['Amount_Numeric'].sum()
+            elif 'Amount' in df.columns:
+                cat_val = df['Amount'].sum()
+            else:
+                cat_val = 0
+                
             if cat_val > 0:
                 label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
                 count = len(df)
@@ -2417,7 +2424,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
-    # CRITICAL: This logic must EXACTLY match the original working version
+    # CRITICAL: Match the original calculate_rep_metrics logic exactly
     pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
     
     if not pa_orders.empty:
@@ -2425,16 +2432,17 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         if 'Age_Business_Days' not in pa_orders.columns:
             pa_orders['Age_Business_Days'] = 0
         
-        # CATEGORY 1: Old PA (Age >= 10 business days) - TAKES PRIORITY
-        # FIXED: Changed from 13 to 10 to match original working logic
-        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 10].copy()
+        # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 13 business days)
+        # Based on actual reconciliation: orders 13+ business days old are excluded
+        # This takes priority and removes orders from other categories
+        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
         
-        # Only process young orders (Age < 10) for the other two categories
-        # FIXED: Changed from 13 to 10 to match original working logic
-        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 10].copy()
+        # Create a mask for orders that are NOT old (Age < 13 days)
+        # These are the only ones eligible for Categories 1 and 2
+        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
         
         if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
-            # CATEGORY 2: PA with valid Q4 date (and Age < 10 business days)
+            # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age < 13 business days)
             pa_with_date_mask = (
                 (young_pa['Pending Approval Date'].notna()) &
                 (young_pa['Pending Approval Date'] != 'No Date') &
@@ -2443,8 +2451,8 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             )
             pa_date = young_pa[pa_with_date_mask].copy()
             
-            # CATEGORY 3: PA with "No Date" string (and Age < 10 business days)
-            # FIXED: Robust matching for various "No Date" formats from Google Sheets
+            # CATEGORY 2: Pending Approval with "No Date" string (and Age < 13 business days)
+            # Robust matching for various "No Date" formats from Google Sheets
             pa_no_date_mask = (
                 (young_pa['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
                 (young_pa['Pending Approval Date'].astype(str).str.strip() == '') |
