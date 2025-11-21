@@ -3885,6 +3885,61 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             delta=f"+{potential_attainment - base_attainment_pct:.1f}% upside",
             help="(High Confidence + HS Best Case/Opp) ÷ Quota"
         )
+    
+    # Add expandable breakdown details
+    with st.expander("🔍 View Calculation Breakdowns", expanded=False):
+        st.markdown("#### Detailed Component Breakdown")
+        
+        breakdown_col1, breakdown_col2, breakdown_col3 = st.columns(3)
+        
+        with breakdown_col1:
+            st.markdown("##### 💪 High Confidence Forecast")
+            st.markdown(f"""
+            - **Invoiced:** ${team_invoiced:,.0f}
+            - **Pending Fulfillment (with date):** ${team_pf:,.0f}
+            - **Pending Approval (with date):** ${team_pa:,.0f}
+            - **HubSpot Expect/Commit:** ${team_hs:,.0f}
+            - **Total:** ${base_forecast:,.0f}
+            - **% of Quota:** {base_attainment_pct:.1f}%
+            """)
+        
+        with breakdown_col2:
+            st.markdown("##### 📊 Full Forecast (All Sources)")
+            st.markdown(f"""
+            **High Confidence Components:**
+            - Invoiced: ${team_invoiced:,.0f}
+            - PF (with date): ${team_pf:,.0f}
+            - PA (with date): ${team_pa:,.0f}
+            - HS Expect/Commit: ${team_hs:,.0f}
+            
+            **Additional Sources:**
+            - PF (no date): ${team_pf_no_date:,.0f}
+            - PA (no date): ${team_pa_no_date:,.0f}
+            - PA (>2 weeks): ${team_old_pa:,.0f}
+            
+            **Total:** ${full_forecast:,.0f}
+            - **% of Quota:** {full_attainment_pct:.1f}%
+            """)
+        
+        with breakdown_col3:
+            st.markdown("##### 🎯 Q4 Adjusted Forecast")
+            st.markdown(f"""
+            - **Full Forecast:** ${full_forecast:,.0f}
+            - **Less: Q1 Spillover:** -${team_q1_spillover_total:,.0f}
+            - **Q4 Adjusted Total:** ${adjusted_forecast:,.0f}
+            - **% of Quota:** {adjusted_attainment:.1f}%
+            
+            ---
+            
+            ##### 📈 Optimistic Scenario
+            - **High Confidence:** ${base_forecast:,.0f}
+            - **Plus: HS Best Case:** ${team_best_case:,.0f}
+            - **Plus: PF (no date):** ${team_pf_no_date:,.0f}
+            - **Plus: PA (no date):** ${team_pa_no_date:,.0f}
+            - **Plus: PA (>2 weeks):** ${team_old_pa:,.0f}
+            - **Optimistic Total:** ${optimistic_forecast:,.0f}
+            - **Gap to Quota:** ${optimistic_gap:,.0f}
+            """)
    
     # Invoices section and audit section
     st.markdown("---")
