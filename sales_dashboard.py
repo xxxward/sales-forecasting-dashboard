@@ -1018,15 +1018,12 @@ def load_all_data():
                 # Rep Master takes priority - replace Sales Rep with Rep Master values
                 # But first, clean up Rep Master to handle any formula errors or blanks
                 invoices_df['Rep Master'] = invoices_df['Rep Master'].astype(str).str.strip()
-                # Define invalid values that should be filtered out
+                # Replace empty strings, 'nan', 'None', '#N/A', '#REF!' with original Sales Rep
                 invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+                mask = invoices_df['Rep Master'].isin(invalid_values)
                 
-                # FILTER OUT rows where Rep Master is invalid (including #N/A)
-                # These rows won't count toward any revenue
-                invoices_df = invoices_df[~invoices_df['Rep Master'].isin(invalid_values)]
-                
-                # Now replace Sales Rep with Rep Master for all remaining rows
-                invoices_df['Sales Rep'] = invoices_df['Rep Master']
+                # Only replace Sales Rep where Rep Master has a valid value
+                invoices_df.loc[~mask, 'Sales Rep'] = invoices_df.loc[~mask, 'Rep Master']
                 # Drop the Rep Master column since we've copied it to Sales Rep
                 invoices_df = invoices_df.drop(columns=['Rep Master'])
             else:
@@ -1164,16 +1161,7 @@ def load_all_data():
         # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
         # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
         if 'Rep Master' in sales_orders_df.columns:
-            # Clean up Rep Master to handle any formula errors or blanks
-            sales_orders_df['Rep Master'] = sales_orders_df['Rep Master'].astype(str).str.strip()
-            # Define invalid values that should be filtered out
-            invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
-            
-            # FILTER OUT rows where Rep Master is invalid (including #N/A)
-            # These rows won't count toward any revenue
-            sales_orders_df = sales_orders_df[~sales_orders_df['Rep Master'].isin(invalid_values)]
-            
-            # Now replace Sales Rep with Rep Master for all remaining rows
+            # Rep Master takes priority - replace Sales Rep with Rep Master values
             sales_orders_df['Sales Rep'] = sales_orders_df['Rep Master']
             # Drop the Rep Master column since we've copied it to Sales Rep
             sales_orders_df = sales_orders_df.drop(columns=['Rep Master'])
