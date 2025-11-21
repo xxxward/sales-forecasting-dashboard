@@ -1884,7 +1884,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         q4_end = pd.Timestamp('2025-12-31')
         
         # Logic Masks
-        has_date_mask = (so_data['Display_Promise_Date'].notna()) | (so_data['Display_Projected_Date'].notna())
+        # FIXED: has_date_mask should check if Promise OR Projected date is in Q4 range
+        has_date_mask = (
+            ((so_data['Display_Promise_Date'].notna()) & 
+             (so_data['Display_Promise_Date'] >= q4_start) & 
+             (so_data['Display_Promise_Date'] <= q4_end)) |
+            ((so_data['Display_Projected_Date'].notna()) & 
+             (so_data['Display_Projected_Date'] >= q4_start) & 
+             (so_data['Display_Projected_Date'] <= q4_end))
+        )
         
         is_ext = pd.Series(False, index=so_data.index)
         if 'Calyx External Order' in so_data.columns:
