@@ -4634,7 +4634,7 @@ def main():
         # Create navigation options
         view_mode = st.radio(
             "Select View:",
-            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "📦 Q4 Shipping Plan"],
+            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast"],
             label_visibility="collapsed",
             key="nav_selector"
         )
@@ -4646,7 +4646,7 @@ def main():
             "🔍 Reconciliation": "Reconciliation",
             "🤖 AI Insights": "AI Insights",
             "💰 Commission": "💰 Commission",
-            "📦 Q4 Shipping Plan": "📦 Q4 Shipping Plan"
+            "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast"
         }
         
         view_mode = view_mapping.get(view_mode, "Team Overview")
@@ -4790,12 +4790,12 @@ def main():
     elif view_mode == "💰 Commission":
         # Commission calculator view (password protected)
         commission_calculator.display_commission_section(invoices_df, sales_orders_df)
-    elif view_mode == "📦 Q4 Shipping Plan":
-        # Shipping planning view
+    elif view_mode == "🧪 Concentrate Jar Forecast":
+        # Concentrate Jar Forecasting view
         if SHIPPING_PLANNING_AVAILABLE:
             shipping_planning.main()
         else:
-            st.error("❌ Shipping Planning module not found.")
+            st.error("❌ Concentrate Jar Forecasting module not found.")
             if 'SHIPPING_PLANNING_ERROR' in globals():
                 st.error(f"Error details: {SHIPPING_PLANNING_ERROR}")
             st.info("Make sure shipping_planning.py is in your repository at the same level as this dashboard file.")
