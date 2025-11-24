@@ -2495,15 +2495,18 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             (pa_orders['Pending Approval Date'].astype(str).str.strip() == '')
         )
         
-        # CATEGORY 3: PA Old (>= 13 business days) - ONLY for orders WITHOUT a valid Q4 PA date
-        # Orders WITH a valid Q4 PA date should NOT go to PA Old, regardless of age
-        pa_old = pa_orders[(pa_orders['Age_Business_Days'] >= 13) & ~has_q4_pa_date].copy()
+        # CATEGORY 3: PA Old (>= 13 business days) - ANY PA order that is old, regardless of PA date
+        # This takes priority - old orders go here first
+        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
+        
+        # Only "young" orders (< 13 days) are eligible for PA with Date or PA No Date
+        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
         
         # CATEGORY 1: PA with Date - has Q4 PA date AND is NOT old (< 13 days)
-        pa_date = pa_orders[has_q4_pa_date & (pa_orders['Age_Business_Days'] < 13)].copy()
+        pa_date = young_pa[has_q4_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
         
         # CATEGORY 2: PA No Date - no PA date AND is NOT old (< 13 days)
-        pa_nodate = pa_orders[has_no_pa_date & (pa_orders['Age_Business_Days'] < 13)].copy()
+        pa_nodate = young_pa[has_no_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
     else:
         pa_old = pa_date = pa_nodate = pd.DataFrame()
     
