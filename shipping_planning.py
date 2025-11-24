@@ -743,6 +743,11 @@ def identify_sticky_customers(df):
     - High: 3+ orders AND ordered in 2025
     - Medium: 2 orders OR (1 order in last 6 months)
     - Low: 1 order more than 6 months ago
+    
+    Also calculates projected 2026 revenue based on:
+    - High: Average of their 2024/2025 annual spend
+    - Medium: 50% of their average annual spend (less certain)
+    - Low: 25% of their average annual spend (unlikely to return)
     """
     customer_analysis = analyze_customers(df)
     
@@ -762,6 +767,30 @@ def identify_sticky_customers(df):
         (today - customer_analysis['Last_Order_Date']).dt.days / 30
     ).round(1)
     
+    # Get annual revenue by customer for 2024 and 2025
+    annual_revenue = df_customers.groupby(['Company Name', 'Year'])['Amount'].sum().reset_index()
+    annual_2024 = annual_revenue[annual_revenue['Year'] == 2024].set_index('Company Name')['Amount']
+    annual_2025 = annual_revenue[annual_revenue['Year'] == 2025].set_index('Company Name')['Amount']
+    
+    # Calculate average annual spend
+    def calc_avg_annual(row):
+        name = row['Company Name']
+        rev_2024 = annual_2024.get(name, 0)
+        rev_2025 = annual_2025.get(name, 0)
+        
+        if rev_2024 > 0 and rev_2025 > 0:
+            return (rev_2024 + rev_2025) / 2
+        elif rev_2024 > 0:
+            return rev_2024
+        elif rev_2025 > 0:
+            return rev_2025
+        else:
+            # Fallback: use total amount / years active
+            years = len(row['Years_Active']) if isinstance(row['Years_Active'], list) else 1
+            return row['Total_Amount'] / max(years, 1)
+    
+    customer_analysis['Avg_Annual_Revenue'] = customer_analysis.apply(calc_avg_annual, axis=1)
+    
     # Assign stickiness
     def calc_stickiness(row):
         if row['Order_Count'] >= 3 and row['Is_2025_Customer']:
@@ -774,6 +803,18 @@ def identify_sticky_customers(df):
             return 'Low'
     
     customer_analysis['Stickiness'] = customer_analysis.apply(calc_stickiness, axis=1)
+    
+    # Calculate projected 2026 revenue based on stickiness
+    def calc_projected_2026(row):
+        avg_annual = row['Avg_Annual_Revenue']
+        if row['Stickiness'] == 'High':
+            return avg_annual * 1.0  # 100% of average (likely to repeat)
+        elif row['Stickiness'] == 'Medium':
+            return avg_annual * 0.5  # 50% probability adjustment
+        else:  # Low
+            return avg_annual * 0.25  # 25% probability adjustment
+    
+    customer_analysis['Projected_2026_Revenue'] = customer_analysis.apply(calc_projected_2026, axis=1)
     
     return customer_analysis
 
@@ -1336,10 +1377,10 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
-            high_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'High'].head(10)
+            high_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'High'].sort_values('Projected_2026_Revenue', ascending=False).head(10)
             if not high_likelihood.empty:
                 for _, row in high_likelihood.iterrows():
-                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Total_Amount']:,.0f}")
+                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Projected_2026_Revenue']:,.0f} projected")
             else:
                 st.info("No high-likelihood customers found")
         
@@ -1359,22 +1400,22 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
-            medium_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'Medium'].head(10)
+            medium_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'Medium'].sort_values('Projected_2026_Revenue', ascending=False).head(10)
             if not medium_likelihood.empty:
                 for _, row in medium_likelihood.iterrows():
-                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Total_Amount']:,.0f}")
+                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Projected_2026_Revenue']:,.0f} projected")
             else:
                 st.info("No medium-likelihood customers found")
         
-        # Stickiness summary
+        # Stickiness summary with PROJECTED 2026 revenue
         stickiness_summary = sticky_customers.groupby('Stickiness').agg({
             'Company Name': 'count',
-            'Total_Amount': 'sum',
+            'Projected_2026_Revenue': 'sum',
             'Total_Quantity': 'sum'
         }).reset_index()
-        stickiness_summary.columns = ['Likelihood', 'Customer Count', 'Total Revenue', 'Total Quantity']
+        stickiness_summary.columns = ['Likelihood', 'Customer Count', 'Projected 2026 Revenue', 'Total Quantity']
         
-        st.markdown("#### Stickiness Summary")
+        st.markdown("#### Stickiness Summary - Projected 2026 Revenue")
         summary_col1, summary_col2, summary_col3 = st.columns(3)
         
         for i, likelihood in enumerate(['High', 'Medium', 'Low']):
@@ -1382,13 +1423,32 @@ def main():
             if not row.empty:
                 with [summary_col1, summary_col2, summary_col3][i]:
                     color = {'High': '#10b981', 'Medium': '#fbbf24', 'Low': '#ef4444'}[likelihood]
+                    projected_rev = row['Projected 2026 Revenue'].values[0]
                     st.markdown(f"""
                     <div style="text-align: center; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
                         <div style="font-size: 12px; opacity: 0.7;">{likelihood} Likelihood</div>
                         <div style="font-size: 24px; font-weight: 700; color: {color};">{int(row['Customer Count'].values[0])}</div>
-                        <div style="font-size: 11px; opacity: 0.6;">${row['Total Revenue'].values[0]:,.0f} revenue</div>
+                        <div style="font-size: 13px; opacity: 0.9; color: {color};">${projected_rev:,.0f}</div>
+                        <div style="font-size: 10px; opacity: 0.5;">projected 2026</div>
                     </div>
                     """, unsafe_allow_html=True)
+        
+        # Show total projected revenue
+        total_projected = stickiness_summary['Projected 2026 Revenue'].sum()
+        st.markdown(f"""
+        <div style="
+            text-align: center; 
+            padding: 16px; 
+            margin-top: 16px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.15) 100%);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+        ">
+            <div style="font-size: 14px; opacity: 0.7;">Total Projected 2026 Revenue (All Customers)</div>
+            <div style="font-size: 28px; font-weight: 700; color: #10b981;">${total_projected:,.0f}</div>
+            <div style="font-size: 11px; opacity: 0.5;">Based on average annual spend adjusted by likelihood</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     # =========================
     # METHODOLOGY NOTES
