@@ -1531,6 +1531,86 @@ def main():
     
     quarterly_adjustments = {1: q1_adj/100, 2: q2_adj/100, 3: q3_adj/100, 4: q4_adj/100}
     
+    # Churning customer exclusions
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🚫 Exclude Churning Customers")
+    
+    # Get unique customers sorted by total amount (biggest first)
+    if 'Company Name' in df.columns:
+        customer_totals = df.groupby('Company Name').agg({
+            'Amount': 'sum',
+            'Quantity': 'sum'
+        }).reset_index().sort_values('Amount', ascending=False)
+        
+        # Filter out empty names
+        customer_totals = customer_totals[
+            customer_totals['Company Name'].notna() & 
+            (customer_totals['Company Name'] != '')
+        ]
+        
+        # Create display labels with revenue
+        customer_options = []
+        customer_revenue_map = {}
+        customer_qty_map = {}
+        for _, row in customer_totals.iterrows():
+            name = row['Company Name']
+            amt = row['Amount']
+            qty = row['Quantity']
+            label = f"{name} (${amt:,.0f})"
+            customer_options.append(name)
+            customer_revenue_map[name] = amt
+            customer_qty_map[name] = qty
+        
+        # Initialize session state for excluded customers if not exists
+        if 'excluded_customers' not in st.session_state:
+            st.session_state['excluded_customers'] = []
+        
+        # Multiselect for excluding customers
+        excluded_customers = st.sidebar.multiselect(
+            "Select customers to exclude:",
+            options=customer_options,
+            default=st.session_state.get('excluded_customers', []),
+            help="These customers will be removed from the forecast",
+            key="customer_exclusion_select"
+        )
+        
+        # Store in session state
+        st.session_state['excluded_customers'] = excluded_customers
+        
+        # Show impact of exclusions
+        if excluded_customers:
+            excluded_revenue = sum(customer_revenue_map.get(c, 0) for c in excluded_customers)
+            excluded_qty = sum(customer_qty_map.get(c, 0) for c in excluded_customers)
+            total_revenue = df['Amount'].sum()
+            total_qty = df['Quantity'].sum()
+            pct_excluded = (excluded_revenue / total_revenue * 100) if total_revenue > 0 else 0
+            
+            st.sidebar.markdown(f"""
+            <div style="
+                background: rgba(239, 68, 68, 0.15);
+                border: 1px solid rgba(239, 68, 68, 0.3);
+                border-radius: 8px;
+                padding: 10px;
+                margin-top: 8px;
+            ">
+                <div style="font-size: 11px; opacity: 0.7;">Excluding from forecast:</div>
+                <div style="font-size: 14px; font-weight: 600; color: #ef4444;">{len(excluded_customers)} customers</div>
+                <div style="font-size: 12px; margin-top: 4px;">
+                    -{excluded_qty:,.0f} units ({excluded_qty/total_qty*100:.1f}%)<br>
+                    -${excluded_revenue:,.0f} ({pct_excluded:.1f}%)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Quick actions
+            if st.sidebar.button("🔄 Clear Exclusions", use_container_width=True):
+                st.session_state['excluded_customers'] = []
+                st.rerun()
+    else:
+        excluded_customers = []
+        customer_revenue_map = {}
+        customer_qty_map = {}
+    
     # Scenario presets
     st.sidebar.markdown("**Quick Scenarios:**")
     scenario_col1, scenario_col2 = st.sidebar.columns(2)
@@ -1555,8 +1635,13 @@ def main():
             st.rerun()
     
     # Generate forecasts
+    # First, filter out excluded customers
+    df_for_forecast = df.copy()
+    if excluded_customers:
+        df_for_forecast = df_for_forecast[~df_for_forecast['Company Name'].isin(excluded_customers)]
+    
     monthly_forecast, quarterly_forecast, monthly_baselines = generate_2026_forecast(
-        df, weight_2024=weight_2024, weight_2025=weight_2025
+        df_for_forecast, weight_2024=weight_2024, weight_2025=weight_2025
     )
     
     # Store base forecast for comparison before adjustments
@@ -1619,6 +1704,52 @@ def main():
             </div>
         </div>
         """, unsafe_allow_html=True)
+    
+    # Show customer exclusion banner if any customers are excluded
+    if excluded_customers:
+        excluded_revenue = sum(customer_revenue_map.get(c, 0) for c in excluded_customers)
+        excluded_qty = sum(customer_qty_map.get(c, 0) for c in excluded_customers)
+        
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.15) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        ">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 24px;">🚫</span>
+                    <div>
+                        <div style="font-weight: 600; color: #ef4444;">Customers Excluded from Forecast</div>
+                        <div style="font-size: 12px; opacity: 0.8;">{len(excluded_customers)} churning customers removed</div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 24px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; opacity: 0.7;">Excluded Qty</div>
+                        <div style="font-size: 16px; font-weight: 700; color: #ef4444;">-{excluded_qty:,.0f}</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; opacity: 0.7;">Excluded Revenue</div>
+                        <div style="font-size: 16px; font-weight: 700; color: #ef4444;">-${excluded_revenue:,.0f}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Show excluded customers in expandable section
+        with st.expander("👀 View Excluded Customers", expanded=False):
+            excl_data = []
+            for cust in excluded_customers:
+                excl_data.append({
+                    'Customer': cust,
+                    'Historical Qty': f"{customer_qty_map.get(cust, 0):,.0f}",
+                    'Historical Revenue': f"${customer_revenue_map.get(cust, 0):,.0f}"
+                })
+            st.dataframe(pd.DataFrame(excl_data), use_container_width=True, hide_index=True)
     
     # =========================
     # TOP METRICS ROW
@@ -1790,8 +1921,12 @@ def main():
     st.markdown("---")
     st.markdown("### 👥 Customer Breakdown")
     
-    # Generate customer analysis
-    customer_analysis = analyze_customers(df)
+    # Note about exclusions
+    if excluded_customers:
+        st.caption(f"⚠️ {len(excluded_customers)} churning customers excluded from this analysis")
+    
+    # Generate customer analysis (using filtered df)
+    customer_analysis = analyze_customers(df_for_forecast)
     
     if not customer_analysis.empty:
         # Top metrics row
@@ -1842,13 +1977,13 @@ def main():
         
         with cust_tab2:
             # Customer ordering patterns over time
-            customer_trends_chart = create_customer_trends_chart(df)
+            customer_trends_chart = create_customer_trends_chart(df_for_forecast)
             if customer_trends_chart:
                 st.plotly_chart(customer_trends_chart, use_container_width=True)
             
             # Cohort analysis - customers by first order date
             st.markdown("#### Customer Cohort Analysis")
-            cohort_data = analyze_customer_cohorts(df)
+            cohort_data = analyze_customer_cohorts(df_for_forecast)
             if not cohort_data.empty:
                 cohort_chart = create_cohort_chart(cohort_data)
                 if cohort_chart:
@@ -1906,7 +2041,8 @@ def main():
     # Get the 2026 forecast total to scale customer projections
     forecast_2026_total = monthly_forecast['Forecasted_Amount'].sum() if not monthly_forecast.empty else None
     
-    sticky_customers = identify_sticky_customers(df, forecast_total_revenue=forecast_2026_total)
+    # Use filtered df (excludes churning customers)
+    sticky_customers = identify_sticky_customers(df_for_forecast, forecast_total_revenue=forecast_2026_total)
     
     if not sticky_customers.empty:
         col1, col2 = st.columns(2)
