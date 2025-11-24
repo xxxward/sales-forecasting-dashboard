@@ -673,6 +673,146 @@ def create_revenue_forecast_chart(monthly_forecast):
     return fig
 
 
+def apply_forecast_adjustments(monthly_forecast, quarterly_forecast, overall_multiplier=1.0, growth_trend=0.0, quarterly_adjustments=None):
+    """
+    Apply dynamic adjustments to the forecast.
+    
+    Args:
+        monthly_forecast: Base monthly forecast DataFrame
+        quarterly_forecast: Base quarterly forecast DataFrame
+        overall_multiplier: Multiply all values by this factor (1.0 = no change)
+        growth_trend: Monthly compound growth rate (0.0 = no trend)
+        quarterly_adjustments: Dict of {quarter: adjustment_pct} for quarterly tweaks
+    """
+    if monthly_forecast.empty:
+        return monthly_forecast, quarterly_forecast
+    
+    adjusted_monthly = monthly_forecast.copy()
+    
+    # Apply overall multiplier
+    qty_cols = ['Forecasted_Quantity', 'Qty_Low', 'Qty_High']
+    amt_cols = ['Forecasted_Amount', 'Amt_Low', 'Amt_High']
+    
+    for col in qty_cols + amt_cols:
+        if col in adjusted_monthly.columns:
+            adjusted_monthly[col] = adjusted_monthly[col] * overall_multiplier
+    
+    # Apply monthly growth trend (compound)
+    if growth_trend != 0:
+        for i in range(len(adjusted_monthly)):
+            growth_factor = (1 + growth_trend/100) ** i
+            for col in qty_cols + amt_cols:
+                if col in adjusted_monthly.columns:
+                    adjusted_monthly.loc[adjusted_monthly.index[i], col] *= growth_factor
+    
+    # Apply quarterly adjustments
+    if quarterly_adjustments:
+        for quarter, adj in quarterly_adjustments.items():
+            if adj != 0:
+                mask = adjusted_monthly['QuarterNum'] == quarter
+                for col in qty_cols + amt_cols:
+                    if col in adjusted_monthly.columns:
+                        adjusted_monthly.loc[mask, col] *= (1 + adj)
+    
+    # Round quantity columns to integers
+    for col in qty_cols:
+        if col in adjusted_monthly.columns:
+            adjusted_monthly[col] = adjusted_monthly[col].astype(int)
+    
+    # Round amount columns to 2 decimals
+    for col in amt_cols:
+        if col in adjusted_monthly.columns:
+            adjusted_monthly[col] = adjusted_monthly[col].round(2)
+    
+    # Regenerate quarterly summary from adjusted monthly
+    if not adjusted_monthly.empty:
+        adjusted_quarterly = adjusted_monthly.groupby(['QuarterNum', 'Quarter']).agg({
+            'Forecasted_Quantity': 'sum',
+            'Forecasted_Amount': 'sum',
+            'Qty_Low': 'sum',
+            'Qty_High': 'sum',
+            'Amt_Low': 'sum',
+            'Amt_High': 'sum',
+            'Pipeline_Qty': 'sum',
+            'Pipeline_Amt': 'sum'
+        }).reset_index()
+        adjusted_quarterly = adjusted_quarterly.sort_values('QuarterNum')
+    else:
+        adjusted_quarterly = quarterly_forecast.copy()
+    
+    return adjusted_monthly, adjusted_quarterly
+
+
+def create_base_vs_adjusted_chart(base_forecast, adjusted_forecast):
+    """
+    Create a comparison chart showing base forecast vs adjusted forecast.
+    """
+    if base_forecast.empty or adjusted_forecast.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    # Base forecast (dotted line)
+    fig.add_trace(go.Scatter(
+        x=base_forecast['MonthShort'],
+        y=base_forecast['Forecasted_Quantity'],
+        name='Base Forecast',
+        mode='lines+markers',
+        line=dict(color='rgba(156, 163, 175, 0.7)', width=2, dash='dot'),
+        marker=dict(size=6, color='rgba(156, 163, 175, 0.7)'),
+        hovertemplate='<b>%{x} 2026</b><br>Base: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Adjusted forecast (solid line)
+    fig.add_trace(go.Scatter(
+        x=adjusted_forecast['MonthShort'],
+        y=adjusted_forecast['Forecasted_Quantity'],
+        name='Adjusted Forecast',
+        mode='lines+markers',
+        line=dict(color='#10b981', width=3),
+        marker=dict(size=10, color='#10b981', line=dict(color='white', width=2)),
+        fill='tonexty',
+        fillcolor='rgba(16, 185, 129, 0.1)',
+        hovertemplate='<b>%{x} 2026</b><br>Adjusted: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Add difference annotations for significant changes
+    for i in range(len(base_forecast)):
+        base_val = base_forecast.iloc[i]['Forecasted_Quantity']
+        adj_val = adjusted_forecast.iloc[i]['Forecasted_Quantity']
+        diff_pct = ((adj_val - base_val) / base_val * 100) if base_val > 0 else 0
+        
+        if abs(diff_pct) >= 10:  # Only annotate significant differences
+            color = '#10b981' if diff_pct > 0 else '#ef4444'
+            fig.add_annotation(
+                x=adjusted_forecast.iloc[i]['MonthShort'],
+                y=adj_val,
+                text=f"{diff_pct:+.0f}%",
+                showarrow=False,
+                font=dict(size=10, color=color),
+                yshift=15
+            )
+    
+    fig.update_layout(
+        title=dict(
+            text='📊 Base vs Adjusted Forecast Comparison',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(title='Month', gridcolor='rgba(128,128,128,0.1)'),
+        yaxis=dict(title='Quantity (Units)', gridcolor='rgba(128,128,128,0.2)'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=400,
+        margin=dict(t=80, b=60),
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
 # =============================================================================
 # PURCHASING STRATEGY CHARTS
 # =============================================================================
@@ -1358,10 +1498,127 @@ def main():
     weight_2025 = 1.0 - weight_2024
     st.sidebar.caption(f"2025 Weight: {weight_2025:.0%}")
     
+    # Dynamic forecast adjustments
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🎛️ Forecast Adjustments")
+    
+    # Overall multiplier
+    overall_multiplier = st.sidebar.slider(
+        "Overall Forecast Multiplier", 
+        0.5, 2.0, 1.0, 0.05,
+        help="Adjust entire forecast up or down (1.0 = no change)"
+    )
+    
+    # Growth trend
+    growth_trend = st.sidebar.slider(
+        "Monthly Growth Trend %",
+        -5.0, 5.0, 0.0, 0.5,
+        help="Apply compound monthly growth/decline"
+    )
+    
+    # Initialize quarterly adjustments with defaults
+    q1_adj = 0
+    q2_adj = 0
+    q3_adj = 0
+    q4_adj = 0
+    
+    # Quarterly adjustments
+    with st.sidebar.expander("📅 Quarterly Adjustments", expanded=False):
+        q1_adj = st.slider("Q1 Adjustment %", -50, 50, 0, 5, key="q1_adj")
+        q2_adj = st.slider("Q2 Adjustment %", -50, 50, 0, 5, key="q2_adj")
+        q3_adj = st.slider("Q3 Adjustment %", -50, 50, 0, 5, key="q3_adj")
+        q4_adj = st.slider("Q4 Adjustment %", -50, 50, 0, 5, key="q4_adj")
+    
+    quarterly_adjustments = {1: q1_adj/100, 2: q2_adj/100, 3: q3_adj/100, 4: q4_adj/100}
+    
+    # Scenario presets
+    st.sidebar.markdown("**Quick Scenarios:**")
+    scenario_col1, scenario_col2 = st.sidebar.columns(2)
+    with scenario_col1:
+        if st.button("📈 Optimistic", use_container_width=True, help="+20% overall"):
+            st.session_state['scenario'] = 'optimistic'
+    with scenario_col2:
+        if st.button("📉 Conservative", use_container_width=True, help="-20% overall"):
+            st.session_state['scenario'] = 'conservative'
+    
+    # Check for scenario overrides
+    if 'scenario' in st.session_state:
+        if st.session_state['scenario'] == 'optimistic':
+            overall_multiplier = 1.2
+            st.sidebar.success("📈 Optimistic scenario: +20%")
+        elif st.session_state['scenario'] == 'conservative':
+            overall_multiplier = 0.8
+            st.sidebar.warning("📉 Conservative scenario: -20%")
+        
+        if st.sidebar.button("🔄 Reset to Base", use_container_width=True):
+            del st.session_state['scenario']
+            st.rerun()
+    
     # Generate forecasts
     monthly_forecast, quarterly_forecast, monthly_baselines = generate_2026_forecast(
         df, weight_2024=weight_2024, weight_2025=weight_2025
     )
+    
+    # Store base forecast for comparison before adjustments
+    base_monthly_forecast = monthly_forecast.copy() if not monthly_forecast.empty else pd.DataFrame()
+    base_total_qty = monthly_forecast['Forecasted_Quantity'].sum() if not monthly_forecast.empty else 0
+    base_total_amt = monthly_forecast['Forecasted_Amount'].sum() if not monthly_forecast.empty else 0
+    
+    # Apply dynamic adjustments
+    if not monthly_forecast.empty:
+        monthly_forecast, quarterly_forecast = apply_forecast_adjustments(
+            monthly_forecast, 
+            quarterly_forecast,
+            overall_multiplier=overall_multiplier,
+            growth_trend=growth_trend,
+            quarterly_adjustments=quarterly_adjustments
+        )
+    
+    # Calculate adjustment impact
+    adjusted_total_qty = monthly_forecast['Forecasted_Quantity'].sum() if not monthly_forecast.empty else 0
+    adjusted_total_amt = monthly_forecast['Forecasted_Amount'].sum() if not monthly_forecast.empty else 0
+    qty_change_pct = ((adjusted_total_qty - base_total_qty) / base_total_qty * 100) if base_total_qty > 0 else 0
+    amt_change_pct = ((adjusted_total_amt - base_total_amt) / base_total_amt * 100) if base_total_amt > 0 else 0
+    
+    # Show adjustment impact if any adjustments are active
+    adjustments_active = (overall_multiplier != 1.0 or growth_trend != 0.0 or 
+                          any(v != 0 for v in quarterly_adjustments.values()))
+    
+    if adjustments_active:
+        change_color = "#10b981" if qty_change_pct >= 0 else "#ef4444"
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+            border: 1px solid rgba(251, 191, 36, 0.4);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        ">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size: 24px;">🎛️</span>
+                    <div>
+                        <div style="font-weight: 600; color: #fbbf24;">Forecast Adjustments Active</div>
+                        <div style="font-size: 12px; opacity: 0.8;">Modified from base calculation</div>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 24px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; opacity: 0.7;">Base Qty</div>
+                        <div style="font-size: 14px; text-decoration: line-through; opacity: 0.6;">{base_total_qty:,.0f}</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; opacity: 0.7;">Adjusted Qty</div>
+                        <div style="font-size: 16px; font-weight: 700; color: {change_color};">{adjusted_total_qty:,.0f}</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 11px; opacity: 0.7;">Change</div>
+                        <div style="font-size: 16px; font-weight: 700; color: {change_color};">{qty_change_pct:+.1f}%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     # =========================
     # TOP METRICS ROW
@@ -1427,6 +1684,30 @@ def main():
         forecast_chart = create_forecast_chart(monthly_forecast)
         if forecast_chart:
             st.plotly_chart(forecast_chart, use_container_width=True)
+        
+        # Show base vs adjusted comparison if adjustments active
+        if adjustments_active and not base_monthly_forecast.empty:
+            with st.expander("📊 Base vs Adjusted Comparison", expanded=True):
+                comparison_chart = create_base_vs_adjusted_chart(base_monthly_forecast, monthly_forecast)
+                if comparison_chart:
+                    st.plotly_chart(comparison_chart, use_container_width=True)
+                
+                # Side by side quarterly comparison
+                st.markdown("**Quarterly Impact:**")
+                comp_cols = st.columns(4)
+                for i, q in enumerate([1, 2, 3, 4]):
+                    base_q = base_monthly_forecast[base_monthly_forecast['QuarterNum'] == q]['Forecasted_Quantity'].sum()
+                    adj_q = monthly_forecast[monthly_forecast['QuarterNum'] == q]['Forecasted_Quantity'].sum()
+                    change = ((adj_q - base_q) / base_q * 100) if base_q > 0 else 0
+                    
+                    with comp_cols[i]:
+                        delta_color = "normal" if change >= 0 else "inverse"
+                        st.metric(
+                            f"Q{q} 2026",
+                            f"{adj_q:,.0f}",
+                            delta=f"{change:+.1f}%",
+                            delta_color=delta_color
+                        )
         
         # Monthly forecast table
         with st.expander("📋 View Monthly Forecast Details", expanded=False):
