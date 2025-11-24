@@ -674,6 +674,266 @@ def create_revenue_forecast_chart(monthly_forecast):
 
 
 # =============================================================================
+# PURCHASING STRATEGY CHARTS
+# =============================================================================
+
+def create_demand_vs_order_chart(monthly_forecast, order_quantity):
+    """
+    Create a chart comparing forecasted demand vs order quantity.
+    """
+    if monthly_forecast.empty:
+        return None
+    
+    # Calculate cumulative demand
+    monthly_forecast = monthly_forecast.copy()
+    monthly_forecast['Cumulative_Demand'] = monthly_forecast['Forecasted_Quantity'].cumsum()
+    
+    fig = go.Figure()
+    
+    # Add monthly demand bars
+    fig.add_trace(go.Bar(
+        x=monthly_forecast['MonthShort'],
+        y=monthly_forecast['Forecasted_Quantity'],
+        name='Monthly Demand',
+        marker=dict(
+            color='rgba(99, 102, 241, 0.7)',
+            line=dict(color='rgba(255,255,255,0.3)', width=1)
+        ),
+        text=monthly_forecast['Forecasted_Quantity'].apply(lambda x: f"{x/1000:.0f}K"),
+        textposition='outside',
+        hovertemplate='<b>%{x} 2026</b><br>Demand: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Add cumulative demand line
+    fig.add_trace(go.Scatter(
+        x=monthly_forecast['MonthShort'],
+        y=monthly_forecast['Cumulative_Demand'],
+        name='Cumulative Demand',
+        mode='lines+markers',
+        line=dict(color='#f59e0b', width=3),
+        marker=dict(size=8),
+        yaxis='y2',
+        hovertemplate='<b>%{x} 2026</b><br>Cumulative: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Add order quantity reference line
+    fig.add_trace(go.Scatter(
+        x=monthly_forecast['MonthShort'],
+        y=[order_quantity] * len(monthly_forecast),
+        name=f'Order Qty ({order_quantity/1000000:.1f}M)',
+        mode='lines',
+        line=dict(color='#10b981', width=3, dash='dash'),
+        yaxis='y2',
+        hovertemplate=f'Order: {order_quantity:,} units<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='📊 2026 Demand Forecast vs Order Quantity',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(title='Month', gridcolor='rgba(128,128,128,0.1)'),
+        yaxis=dict(title='Monthly Demand', gridcolor='rgba(128,128,128,0.2)', side='left'),
+        yaxis2=dict(title='Cumulative / Order Qty', overlaying='y', side='right', gridcolor='rgba(128,128,128,0.1)'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=450,
+        margin=dict(t=80, b=60)
+    )
+    
+    return fig
+
+
+def calculate_inventory_depletion(monthly_forecast, starting_inventory):
+    """
+    Calculate month-by-month inventory depletion.
+    """
+    if monthly_forecast.empty:
+        return pd.DataFrame()
+    
+    depletion = []
+    inventory = starting_inventory
+    
+    # Extend to 2027 if inventory lasts that long
+    months_to_extend = max(24, int(starting_inventory / (monthly_forecast['Forecasted_Quantity'].mean() or 1)) + 6)
+    
+    for i in range(min(months_to_extend, 36)):  # Cap at 3 years
+        year = 2026 + (i // 12)
+        month = (i % 12) + 1
+        
+        # Use forecast data for 2026, extrapolate for 2027+
+        if i < 12 and i < len(monthly_forecast):
+            demand = monthly_forecast.iloc[i]['Forecasted_Quantity']
+        else:
+            # Use average monthly demand for projection
+            demand = monthly_forecast['Forecasted_Quantity'].mean()
+        
+        ending_inv = max(0, inventory - demand)
+        
+        depletion.append({
+            'Month_Num': i + 1,
+            'Month_Label': f"{datetime(year, month, 1).strftime('%b %Y')}",
+            'Year': year,
+            'Month': month,
+            'Starting_Inventory': inventory,
+            'Demand': demand,
+            'Ending_Inventory': ending_inv
+        })
+        
+        inventory = ending_inv
+        
+        if inventory <= 0:
+            break
+    
+    return pd.DataFrame(depletion)
+
+
+def create_inventory_depletion_chart(depletion_data, order_quantity):
+    """
+    Create inventory depletion timeline chart.
+    """
+    if depletion_data.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    # Add inventory level area
+    fig.add_trace(go.Scatter(
+        x=depletion_data['Month_Label'],
+        y=depletion_data['Ending_Inventory'],
+        fill='tozeroy',
+        name='Inventory Level',
+        mode='lines',
+        line=dict(color='#6366f1', width=2),
+        fillcolor='rgba(99, 102, 241, 0.3)',
+        hovertemplate='<b>%{x}</b><br>Inventory: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Add demand bars
+    fig.add_trace(go.Bar(
+        x=depletion_data['Month_Label'],
+        y=depletion_data['Demand'],
+        name='Monthly Demand',
+        marker=dict(color='rgba(239, 68, 68, 0.5)'),
+        hovertemplate='<b>%{x}</b><br>Demand: %{y:,.0f} units<extra></extra>'
+    ))
+    
+    # Add safety stock line (e.g., 3 months of demand)
+    avg_demand = depletion_data['Demand'].mean()
+    safety_stock = avg_demand * 3
+    
+    fig.add_hline(
+        y=safety_stock, 
+        line_dash="dot", 
+        line_color="#f59e0b",
+        annotation_text=f"Safety Stock ({safety_stock/1000:.0f}K)",
+        annotation_position="right"
+    )
+    
+    fig.update_layout(
+        title=dict(
+            text='📦 Inventory Depletion Timeline',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(title='Month', tickangle=-45, gridcolor='rgba(128,128,128,0.1)'),
+        yaxis=dict(title='Units', gridcolor='rgba(128,128,128,0.2)'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=400,
+        margin=dict(t=60, b=80),
+        barmode='overlay'
+    )
+    
+    return fig
+
+
+def create_cashflow_comparison_chart(tooling_cost, down_payment_a, remaining_a, down_payment_b, remaining_b, monthly_forecast, order_quantity, unit_cost):
+    """
+    Create cash flow comparison chart for both options.
+    """
+    if monthly_forecast.empty:
+        return None
+    
+    # Timeline: Order placed (Month 0), Shipment (Month 2), then monthly revenue
+    months = ['Order\n(Jan)', 'Production\n(Feb)', 'Shipment\n(Mar)'] + [f"{m}\n(Revenue)" for m in monthly_forecast['MonthShort'].tolist()[:9]]
+    
+    # Option A: Tooling Upfront
+    cashflow_a = [
+        -(tooling_cost + down_payment_a),  # Order: tooling + down payment
+        0,  # Production
+        -remaining_a,  # Shipment: remaining balance
+    ]
+    
+    # Option B: Tooling Baked In
+    cashflow_b = [
+        -down_payment_b,  # Order: just down payment (no separate tooling)
+        0,  # Production
+        -remaining_b,  # Shipment: remaining balance
+    ]
+    
+    # Add revenue months (same for both options)
+    for i in range(min(9, len(monthly_forecast))):
+        revenue = monthly_forecast.iloc[i]['Forecasted_Amount']
+        cashflow_a.append(revenue)
+        cashflow_b.append(revenue)
+    
+    # Calculate cumulative
+    cumulative_a = np.cumsum(cashflow_a)
+    cumulative_b = np.cumsum(cashflow_b)
+    
+    fig = go.Figure()
+    
+    # Option A cumulative
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=cumulative_a,
+        name='Option A: Tooling Upfront',
+        mode='lines+markers',
+        line=dict(color='#10b981', width=3),
+        marker=dict(size=8),
+        hovertemplate='<b>%{x}</b><br>Cumulative: $%{y:,.0f}<extra></extra>'
+    ))
+    
+    # Option B cumulative
+    fig.add_trace(go.Scatter(
+        x=months,
+        y=cumulative_b,
+        name='Option B: Tooling Baked In',
+        mode='lines+markers',
+        line=dict(color='#f59e0b', width=3),
+        marker=dict(size=8),
+        hovertemplate='<b>%{x}</b><br>Cumulative: $%{y:,.0f}<extra></extra>'
+    ))
+    
+    # Add break-even line
+    fig.add_hline(y=0, line_dash="dash", line_color="white", opacity=0.5)
+    
+    fig.update_layout(
+        title=dict(
+            text='💵 Cumulative Cash Flow Comparison',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(title='Timeline', gridcolor='rgba(128,128,128,0.1)', tickangle=-30),
+        yaxis=dict(title='Cumulative Cash Flow ($)', gridcolor='rgba(128,128,128,0.2)', tickformat='$,.0f'),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        height=450,
+        margin=dict(t=80, b=80)
+    )
+    
+    return fig
+
+
+# =============================================================================
 # CUSTOMER ANALYSIS
 # =============================================================================
 
@@ -1458,6 +1718,334 @@ def main():
             <div style="font-size: 11px; opacity: 0.5;">Distributed by customer likelihood (matches 2026 forecast)</div>
         </div>
         """, unsafe_allow_html=True)
+    
+    # =========================
+    # PURCHASING STRATEGY - HEINZ 2M UNIT ANALYSIS
+    # =========================
+    
+    st.markdown("---")
+    st.markdown("### 💰 Purchasing Strategy: Heinz 2M Unit Analysis")
+    st.caption("Cash flow modeling for 2 million unit order decision")
+    
+    # Get forecast quantities
+    if not monthly_forecast.empty:
+        total_qty_2026 = monthly_forecast['Forecasted_Quantity'].sum()
+        total_amt_2026 = monthly_forecast['Forecasted_Amount'].sum()
+    else:
+        total_qty_2026 = 0
+        total_amt_2026 = 0
+    
+    # Configuration inputs in sidebar
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🏭 Heinz Order Config")
+    
+    order_quantity = st.sidebar.number_input("Order Quantity", value=2000000, step=100000, format="%d")
+    unit_cost = st.sidebar.number_input("Unit Cost ($)", value=0.35, step=0.01, format="%.2f")
+    tooling_cost = st.sidebar.number_input("Tooling Cost ($)", value=75000, step=1000, format="%d")
+    down_payment_pct = st.sidebar.slider("Down Payment %", 10, 50, 20, 5)
+    
+    # Calculate key metrics
+    total_unit_cost = order_quantity * unit_cost
+    down_payment = total_unit_cost * (down_payment_pct / 100)
+    remaining_balance = total_unit_cost - down_payment
+    
+    # Calculate months of inventory
+    monthly_avg_demand = total_qty_2026 / 12 if total_qty_2026 > 0 else 50000
+    months_of_inventory = order_quantity / monthly_avg_demand if monthly_avg_demand > 0 else 0
+    
+    # Top metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("2026 Forecasted Demand", f"{total_qty_2026:,.0f}", delta=f"{total_qty_2026/1000:.0f}K units")
+    with col2:
+        st.metric("Order vs Demand", f"{(order_quantity/total_qty_2026*100):.0f}%" if total_qty_2026 > 0 else "N/A", 
+                  delta=f"{order_quantity - total_qty_2026:+,.0f} units")
+    with col3:
+        st.metric("Inventory Runway", f"{months_of_inventory:.1f} months", delta=f"~{months_of_inventory/12:.1f} years")
+    with col4:
+        st.metric("Total Investment", f"${total_unit_cost + tooling_cost:,.0f}")
+    
+    st.markdown("")
+    
+    # Create tabs for different analyses
+    purch_tab1, purch_tab2, purch_tab3 = st.tabs(["📊 Demand vs Order", "💵 Cash Flow Scenarios", "🎯 Recommendation"])
+    
+    with purch_tab1:
+        # Demand vs Order visualization
+        demand_vs_order_chart = create_demand_vs_order_chart(monthly_forecast, order_quantity)
+        if demand_vs_order_chart:
+            st.plotly_chart(demand_vs_order_chart, use_container_width=True)
+        
+        # Inventory depletion timeline
+        st.markdown("#### 📦 Inventory Depletion Timeline")
+        
+        depletion_data = calculate_inventory_depletion(monthly_forecast, order_quantity)
+        if not depletion_data.empty:
+            depletion_chart = create_inventory_depletion_chart(depletion_data, order_quantity)
+            if depletion_chart:
+                st.plotly_chart(depletion_chart, use_container_width=True)
+            
+            # Find when inventory runs out
+            runout_row = depletion_data[depletion_data['Ending_Inventory'] <= 0].head(1)
+            if not runout_row.empty:
+                runout_month = runout_row['Month_Label'].values[0]
+                st.info(f"📅 **Projected Inventory Runout:** {runout_month}")
+            else:
+                st.success(f"✅ Inventory lasts beyond forecast period ({months_of_inventory:.1f} months)")
+    
+    with purch_tab2:
+        st.markdown("#### 💵 Cash Flow Scenario Comparison")
+        
+        # Scenario 1: Tooling Paid Upfront (lower unit cost negotiations later)
+        # Scenario 2: Tooling Baked Into Unit Cost (higher per-unit but spread out)
+        # Scenario 3: Delayed Order (Wait until 2027)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.15) 100%);
+                border: 1px solid rgba(16, 185, 129, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #10b981; margin-bottom: 12px;">
+                    Option A: Pay Tooling Upfront
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">
+                    ✓ Own the tooling outright<br>
+                    ✓ Leverage for lower unit costs later<br>
+                    ✓ Clear cost separation<br>
+                    ✗ Higher upfront cash outlay
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Cash flow timeline for Option A
+            st.markdown("**Cash Flow Timeline:**")
+            st.markdown(f"""
+            - **Upfront (Order):** ${tooling_cost:,.0f} (tooling) + ${down_payment:,.0f} ({down_payment_pct}% down) = **${tooling_cost + down_payment:,.0f}**
+            - **On Shipment:** ${remaining_balance:,.0f}
+            - **Total:** ${total_unit_cost + tooling_cost:,.0f}
+            - **Per Unit (excl. tooling):** ${unit_cost:.3f}
+            """)
+        
+        with col2:
+            # Calculate baked-in unit cost
+            tooling_per_unit = tooling_cost / order_quantity
+            baked_unit_cost = unit_cost + tooling_per_unit
+            baked_total = order_quantity * baked_unit_cost
+            baked_down = baked_total * (down_payment_pct / 100)
+            baked_remaining = baked_total - baked_down
+            
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+                border: 1px solid rgba(251, 191, 36, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #fbbf24; margin-bottom: 12px;">
+                    Option B: Bake Tooling Into Unit Cost
+                </div>
+                <div style="font-size: 13px; opacity: 0.9;">
+                    ✓ Lower upfront cash outlay<br>
+                    ✓ Simpler single line item<br>
+                    ✗ Higher per-unit cost forever<br>
+                    ✗ Harder to negotiate down later
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("**Cash Flow Timeline:**")
+            st.markdown(f"""
+            - **Upfront (Order):** ${baked_down:,.0f} ({down_payment_pct}% down)
+            - **On Shipment:** ${baked_remaining:,.0f}
+            - **Total:** ${baked_total:,.0f}
+            - **Per Unit (incl. tooling):** ${baked_unit_cost:.4f} (+${tooling_per_unit:.4f})
+            """)
+        
+        # Cash Flow Comparison Chart
+        st.markdown("---")
+        st.markdown("#### 📈 Cash Flow Comparison Over Time")
+        
+        cashflow_chart = create_cashflow_comparison_chart(
+            tooling_cost, down_payment, remaining_balance,
+            baked_down, baked_remaining,
+            monthly_forecast, order_quantity, unit_cost
+        )
+        if cashflow_chart:
+            st.plotly_chart(cashflow_chart, use_container_width=True)
+        
+        # Break-even analysis
+        st.markdown("---")
+        st.markdown("#### ⚖️ Break-Even Analysis")
+        
+        # Calculate when revenue covers costs
+        avg_selling_price = total_amt_2026 / total_qty_2026 if total_qty_2026 > 0 else 1.50
+        margin_per_unit_a = avg_selling_price - unit_cost
+        margin_per_unit_b = avg_selling_price - baked_unit_cost
+        
+        breakeven_units_a = (tooling_cost + total_unit_cost) / margin_per_unit_a if margin_per_unit_a > 0 else 0
+        breakeven_units_b = baked_total / margin_per_unit_b if margin_per_unit_b > 0 else 0
+        
+        breakeven_months_a = breakeven_units_a / monthly_avg_demand if monthly_avg_demand > 0 else 0
+        breakeven_months_b = breakeven_units_b / monthly_avg_demand if monthly_avg_demand > 0 else 0
+        
+        be_col1, be_col2, be_col3 = st.columns(3)
+        
+        with be_col1:
+            st.metric("Avg Selling Price", f"${avg_selling_price:.2f}/unit")
+        with be_col2:
+            st.metric("Option A Break-Even", f"{breakeven_months_a:.1f} months", delta=f"{breakeven_units_a:,.0f} units")
+        with be_col3:
+            st.metric("Option B Break-Even", f"{breakeven_months_b:.1f} months", delta=f"{breakeven_units_b:,.0f} units")
+    
+    with purch_tab3:
+        st.markdown("#### 🎯 Strategic Recommendation")
+        
+        # Decision matrix
+        order_now_score = 0
+        wait_score = 0
+        
+        # Factor 1: Demand coverage
+        demand_coverage = order_quantity / total_qty_2026 if total_qty_2026 > 0 else 0
+        if 1.0 <= demand_coverage <= 2.0:
+            order_now_score += 2
+        elif demand_coverage > 2.0:
+            wait_score += 1
+        
+        # Factor 2: Inventory runway
+        if 12 <= months_of_inventory <= 24:
+            order_now_score += 2
+        elif months_of_inventory > 24:
+            wait_score += 1
+        
+        # Factor 3: Cash flow (20% down is favorable)
+        if down_payment_pct <= 25:
+            order_now_score += 1
+        
+        # Generate recommendation
+        if order_now_score > wait_score:
+            recommendation = "ORDER_NOW"
+            rec_color = "#10b981"
+        else:
+            recommendation = "WAIT"
+            rec_color = "#f59e0b"
+        
+        # Display recommendation
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%);
+            border: 2px solid rgba(99, 102, 241, 0.4);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            text-align: center;
+        ">
+            <div style="font-size: 14px; opacity: 0.7; margin-bottom: 8px;">ANALYSIS SUGGESTS</div>
+            <div style="font-size: 32px; font-weight: 700; color: {rec_color};">
+                {"✅ ORDER 2M UNITS IN 2026" if recommendation == "ORDER_NOW" else "⏳ WAIT UNTIL 2027"}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Detailed reasoning
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("##### ✅ Reasons to Order Now")
+            st.markdown(f"""
+            - **Demand Coverage:** 2M units = {demand_coverage:.1f}x your 2026 forecast ({total_qty_2026:,.0f} units)
+            - **Inventory Runway:** {months_of_inventory:.1f} months (~{months_of_inventory/12:.1f} years of stock)
+            - **Favorable Terms:** {down_payment_pct}% down (vs typical 33%) reduces upfront cash
+            - **Price Lock:** Locks in current pricing before potential increases
+            - **Supply Security:** Ensures no stockouts during growth
+            """)
+        
+        with col2:
+            st.markdown("##### ⚠️ Risks / Considerations")
+            st.markdown(f"""
+            - **Capital Tied Up:** ${total_unit_cost + tooling_cost:,.0f} total investment
+            - **Demand Uncertainty:** Forecast confidence decreases for Q3-Q4
+            - **Storage Costs:** {months_of_inventory:.0f} months of inventory to store
+            - **Cash Flow Timing:** When does revenue catch up to costs?
+            - **Market Changes:** Product/customer preferences could shift
+            """)
+        
+        # Tooling recommendation
+        st.markdown("---")
+        st.markdown("##### 🔧 Tooling Payment Recommendation")
+        
+        tooling_upfront_advantage = margin_per_unit_a - margin_per_unit_b
+        future_order_savings = tooling_upfront_advantage * 2000000  # Savings on next 2M order
+        
+        if tooling_upfront_advantage > 0.01:  # More than 1 cent per unit advantage
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.15) 100%);
+                border: 1px solid rgba(16, 185, 129, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #10b981;">
+                    💡 Recommend: Pay Tooling Upfront (Option A)
+                </div>
+                <div style="font-size: 13px; margin-top: 8px;">
+                    <b>Why:</b> Paying ${tooling_cost:,.0f} upfront gives you negotiating leverage. 
+                    On your NEXT 2M unit order, you could save ${future_order_savings:,.0f} by not paying the 
+                    ${tooling_per_unit:.4f}/unit tooling amortization again.<br><br>
+                    <b>Negotiation angle:</b> "We've already paid for tooling - this order should be at ${unit_cost:.3f}/unit, not ${baked_unit_cost:.4f}/unit."
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+                border: 1px solid rgba(251, 191, 36, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #fbbf24;">
+                    💡 Consider: Bake Tooling Into Unit Cost (Option B)
+                </div>
+                <div style="font-size: 13px; margin-top: 8px;">
+                    Lower upfront cash outlay (${tooling_cost:,.0f} less at order time). 
+                    The per-unit difference is minimal at scale.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Suggested order timing
+        st.markdown("---")
+        st.markdown("##### 📅 Suggested Order Timing (Cash Flow Optimization)")
+        
+        # Calculate optimal order month based on revenue accumulation
+        if not monthly_forecast.empty:
+            cumulative_revenue = monthly_forecast['Forecasted_Amount'].cumsum()
+            
+            # Find month where cumulative revenue covers down payment + tooling
+            initial_outlay = tooling_cost + down_payment
+            coverage_month = monthly_forecast[cumulative_revenue >= initial_outlay].head(1)
+            
+            if not coverage_month.empty:
+                optimal_month = coverage_month['MonthName'].values[0]
+                st.info(f"""
+                📊 **Optimal Order Timing:** By **{optimal_month} 2026**, your cumulative revenue (${initial_outlay:,.0f}+) 
+                would cover the initial outlay (tooling + down payment).
+                
+                **Suggested approach:**
+                1. Place order in **Q1 2026** to ensure inventory arrives for peak demand
+                2. Use Q1 revenue to cover the {down_payment_pct}% down payment
+                3. Remaining balance due on shipment (typically 60-90 days after order)
+                """)
+            else:
+                st.info("📊 Based on forecast, consider ordering at start of Q1 2026 to align with demand cycle.")
     
     # =========================
     # METHODOLOGY NOTES
