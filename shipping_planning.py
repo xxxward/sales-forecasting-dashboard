@@ -674,6 +674,328 @@ def create_revenue_forecast_chart(monthly_forecast):
 
 
 # =============================================================================
+# CUSTOMER ANALYSIS
+# =============================================================================
+
+def analyze_customers(df):
+    """
+    Analyze customer ordering patterns and behavior.
+    """
+    if df.empty or 'Company Name' not in df.columns:
+        return pd.DataFrame()
+    
+    # Filter out empty company names
+    df_customers = df[df['Company Name'].notna() & (df['Company Name'] != '')].copy()
+    
+    if df_customers.empty:
+        return pd.DataFrame()
+    
+    # Aggregate by customer
+    customer_summary = df_customers.groupby('Company Name').agg({
+        'Quantity': 'sum',
+        'Amount': 'sum',
+        'Close Date': ['count', 'min', 'max'],
+        'Year': lambda x: list(x.unique())
+    }).reset_index()
+    
+    # Flatten column names
+    customer_summary.columns = [
+        'Company Name', 'Total_Quantity', 'Total_Amount', 
+        'Order_Count', 'First_Order', 'Last_Order', 'Years_Active'
+    ]
+    
+    # Calculate additional metrics
+    customer_summary['Months_Active'] = (
+        (customer_summary['Last_Order'] - customer_summary['First_Order']).dt.days / 30
+    ).round(0).astype(int)
+    
+    customer_summary['Avg_Order_Value'] = (
+        customer_summary['Total_Amount'] / customer_summary['Order_Count']
+    ).round(2)
+    
+    customer_summary['Avg_Order_Qty'] = (
+        customer_summary['Total_Quantity'] / customer_summary['Order_Count']
+    ).round(0)
+    
+    # Check if customer was active in specific years
+    customer_summary['Is_2024_Customer'] = customer_summary['Years_Active'].apply(
+        lambda x: 2024 in x if isinstance(x, list) else False
+    )
+    customer_summary['Is_2025_Customer'] = customer_summary['Years_Active'].apply(
+        lambda x: 2025 in x if isinstance(x, list) else False
+    )
+    
+    # Format dates for display
+    customer_summary['First_Order'] = customer_summary['First_Order'].dt.strftime('%b %Y')
+    customer_summary['Last_Order'] = customer_summary['Last_Order'].dt.strftime('%b %Y')
+    
+    # Sort by total revenue
+    customer_summary = customer_summary.sort_values('Total_Amount', ascending=False)
+    
+    return customer_summary
+
+
+def identify_sticky_customers(df):
+    """
+    Identify customers most likely to continue ordering (sticky customers).
+    
+    Criteria:
+    - High: 3+ orders AND ordered in 2025
+    - Medium: 2 orders OR (1 order in last 6 months)
+    - Low: 1 order more than 6 months ago
+    """
+    customer_analysis = analyze_customers(df)
+    
+    if customer_analysis.empty:
+        return pd.DataFrame()
+    
+    # Get last order as datetime for comparison
+    df_customers = df[df['Company Name'].notna() & (df['Company Name'] != '')].copy()
+    last_orders = df_customers.groupby('Company Name')['Close Date'].max().reset_index()
+    last_orders.columns = ['Company Name', 'Last_Order_Date']
+    
+    customer_analysis = customer_analysis.merge(last_orders, on='Company Name', how='left')
+    
+    # Calculate months since last order
+    today = datetime.now()
+    customer_analysis['Months_Since_Last'] = (
+        (today - customer_analysis['Last_Order_Date']).dt.days / 30
+    ).round(1)
+    
+    # Assign stickiness
+    def calc_stickiness(row):
+        if row['Order_Count'] >= 3 and row['Is_2025_Customer']:
+            return 'High'
+        elif row['Order_Count'] >= 2:
+            return 'Medium'
+        elif row['Months_Since_Last'] <= 6:
+            return 'Medium'
+        else:
+            return 'Low'
+    
+    customer_analysis['Stickiness'] = customer_analysis.apply(calc_stickiness, axis=1)
+    
+    return customer_analysis
+
+
+def analyze_customer_cohorts(df):
+    """
+    Analyze customer cohorts by first order date.
+    """
+    if df.empty or 'Company Name' not in df.columns:
+        return pd.DataFrame()
+    
+    df_customers = df[df['Company Name'].notna() & (df['Company Name'] != '')].copy()
+    
+    # Get first order month for each customer
+    first_orders = df_customers.groupby('Company Name')['Close Date'].min().reset_index()
+    first_orders.columns = ['Company Name', 'Cohort_Date']
+    first_orders['Cohort'] = first_orders['Cohort_Date'].dt.to_period('M')
+    
+    # Count customers per cohort
+    cohort_counts = first_orders.groupby('Cohort').size().reset_index(name='New_Customers')
+    cohort_counts['Cohort'] = cohort_counts['Cohort'].astype(str)
+    
+    return cohort_counts
+
+
+def create_top_customers_chart(customer_df):
+    """
+    Create a horizontal bar chart of top customers.
+    """
+    if customer_df.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    # Truncate long customer names
+    customer_df = customer_df.copy()
+    customer_df['Display_Name'] = customer_df['Company Name'].apply(
+        lambda x: x[:25] + '...' if len(str(x)) > 25 else x
+    )
+    
+    # Reverse for horizontal bar (top at top)
+    customer_df = customer_df.iloc[::-1]
+    
+    fig.add_trace(go.Bar(
+        y=customer_df['Display_Name'],
+        x=customer_df['Total_Amount'],
+        orientation='h',
+        marker=dict(
+            color=customer_df['Total_Amount'],
+            colorscale='Viridis',
+            line=dict(color='rgba(255,255,255,0.3)', width=1)
+        ),
+        text=customer_df['Total_Amount'].apply(lambda x: f"${x/1000:.0f}K" if x >= 1000 else f"${x:.0f}"),
+        textposition='outside',
+        hovertemplate='<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='🏆 Top Customers by Revenue',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Total Revenue ($)',
+            gridcolor='rgba(128,128,128,0.2)',
+            tickformat='$,.0f'
+        ),
+        yaxis=dict(
+            title='',
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=500,
+        margin=dict(l=150, r=80, t=60, b=40)
+    )
+    
+    return fig
+
+
+def create_customer_trends_chart(df):
+    """
+    Create a chart showing customer ordering trends over time.
+    """
+    if df.empty or 'Company Name' not in df.columns:
+        return None
+    
+    df_customers = df[df['Company Name'].notna() & (df['Company Name'] != '')].copy()
+    
+    # Count unique customers per month
+    monthly_customers = df_customers.groupby(['Year', 'Month']).agg({
+        'Company Name': 'nunique',
+        'Quantity': 'sum',
+        'Amount': 'sum'
+    }).reset_index()
+    
+    monthly_customers.columns = ['Year', 'Month', 'Unique_Customers', 'Total_Qty', 'Total_Revenue']
+    
+    monthly_customers['MonthLabel'] = monthly_customers.apply(
+        lambda x: f"{datetime(int(x['Year']), int(x['Month']), 1).strftime('%b %Y')}", 
+        axis=1
+    )
+    monthly_customers['SortKey'] = monthly_customers['Year'] * 100 + monthly_customers['Month']
+    monthly_customers = monthly_customers.sort_values('SortKey')
+    
+    fig = go.Figure()
+    
+    # Add customer count bars
+    fig.add_trace(go.Bar(
+        x=monthly_customers['MonthLabel'],
+        y=monthly_customers['Unique_Customers'],
+        name='Active Customers',
+        marker=dict(
+            color='rgba(99, 102, 241, 0.8)',
+            line=dict(color='rgba(255,255,255,0.3)', width=1)
+        ),
+        text=monthly_customers['Unique_Customers'],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>Active Customers: %{y}<extra></extra>'
+    ))
+    
+    # Add revenue line on secondary axis
+    fig.add_trace(go.Scatter(
+        x=monthly_customers['MonthLabel'],
+        y=monthly_customers['Total_Revenue'],
+        name='Revenue',
+        mode='lines+markers',
+        line=dict(color='#10b981', width=3),
+        marker=dict(size=8),
+        yaxis='y2',
+        hovertemplate='<b>%{x}</b><br>Revenue: $%{y:,.0f}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='📈 Monthly Active Customers & Revenue',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Month',
+            tickangle=-45,
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        yaxis=dict(
+            title='Active Customers',
+            gridcolor='rgba(128,128,128,0.2)',
+            side='left'
+        ),
+        yaxis2=dict(
+            title='Revenue ($)',
+            overlaying='y',
+            side='right',
+            tickformat='$,.0f',
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        ),
+        height=450,
+        margin=dict(t=80, b=80)
+    )
+    
+    return fig
+
+
+def create_cohort_chart(cohort_data):
+    """
+    Create a chart showing new customer acquisition by cohort.
+    """
+    if cohort_data.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=cohort_data['Cohort'],
+        y=cohort_data['New_Customers'],
+        marker=dict(
+            color='rgba(139, 92, 246, 0.8)',
+            line=dict(color='rgba(255,255,255,0.3)', width=1)
+        ),
+        text=cohort_data['New_Customers'],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>New Customers: %{y}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='🆕 New Customer Acquisition by Month',
+            font=dict(size=18),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Cohort (First Order Month)',
+            tickangle=-45,
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        yaxis=dict(
+            title='New Customers',
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=400,
+        margin=dict(t=60, b=80)
+    )
+    
+    return fig
+
+
+# =============================================================================
 # MAIN DISPLAY FUNCTION
 # =============================================================================
 
@@ -872,6 +1194,201 @@ def main():
         revenue_chart = create_revenue_forecast_chart(monthly_forecast)
         if revenue_chart:
             st.plotly_chart(revenue_chart, use_container_width=True)
+    
+    # =========================
+    # CUSTOMER BREAKDOWN
+    # =========================
+    
+    st.markdown("---")
+    st.markdown("### 👥 Customer Breakdown")
+    
+    # Generate customer analysis
+    customer_analysis = analyze_customers(df)
+    
+    if not customer_analysis.empty:
+        # Top metrics row
+        total_customers = len(customer_analysis)
+        repeat_customers = len(customer_analysis[customer_analysis['Order_Count'] > 1])
+        repeat_rate = (repeat_customers / total_customers * 100) if total_customers > 0 else 0
+        top_customer_revenue = customer_analysis['Total_Amount'].max()
+        
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Customers", f"{total_customers:,}")
+        with col2:
+            st.metric("Repeat Customers", f"{repeat_customers:,}", delta=f"{repeat_rate:.0f}% repeat rate")
+        with col3:
+            st.metric("Avg Orders/Customer", f"{customer_analysis['Order_Count'].mean():.1f}")
+        with col4:
+            st.metric("Top Customer Revenue", f"${top_customer_revenue:,.0f}")
+        
+        st.markdown("")
+        
+        # Create tabs for different views
+        cust_tab1, cust_tab2, cust_tab3 = st.tabs(["🏆 Top Customers", "📈 Customer Trends", "🔍 Full Customer List"])
+        
+        with cust_tab1:
+            # Top customers chart
+            top_customers_chart = create_top_customers_chart(customer_analysis.head(15))
+            if top_customers_chart:
+                st.plotly_chart(top_customers_chart, use_container_width=True)
+            
+            # Top customers table
+            st.markdown("#### Top 15 Customers by Revenue")
+            top_display = customer_analysis.head(15)[[
+                'Company Name', 'Total_Quantity', 'Total_Amount', 'Order_Count', 
+                'First_Order', 'Last_Order', 'Months_Active', 'Avg_Order_Value'
+            ]].copy()
+            
+            top_display.columns = [
+                'Customer', 'Total Qty', 'Total Revenue', 'Orders', 
+                'First Order', 'Last Order', 'Months Active', 'Avg Order $'
+            ]
+            
+            top_display['Total Revenue'] = top_display['Total Revenue'].apply(lambda x: f"${x:,.0f}")
+            top_display['Avg Order $'] = top_display['Avg Order $'].apply(lambda x: f"${x:,.0f}")
+            top_display['Total Qty'] = top_display['Total Qty'].apply(lambda x: f"{x:,.0f}")
+            
+            st.dataframe(top_display, use_container_width=True, hide_index=True)
+        
+        with cust_tab2:
+            # Customer ordering patterns over time
+            customer_trends_chart = create_customer_trends_chart(df)
+            if customer_trends_chart:
+                st.plotly_chart(customer_trends_chart, use_container_width=True)
+            
+            # Cohort analysis - customers by first order date
+            st.markdown("#### Customer Cohort Analysis")
+            cohort_data = analyze_customer_cohorts(df)
+            if not cohort_data.empty:
+                cohort_chart = create_cohort_chart(cohort_data)
+                if cohort_chart:
+                    st.plotly_chart(cohort_chart, use_container_width=True)
+        
+        with cust_tab3:
+            # Search/filter
+            search_term = st.text_input("🔍 Search customers", placeholder="Type customer name...")
+            
+            filtered_customers = customer_analysis.copy()
+            if search_term:
+                filtered_customers = filtered_customers[
+                    filtered_customers['Company Name'].str.lower().str.contains(search_term.lower(), na=False)
+                ]
+            
+            # Full customer table
+            full_display = filtered_customers[[
+                'Company Name', 'Total_Quantity', 'Total_Amount', 'Order_Count',
+                'First_Order', 'Last_Order', 'Months_Active', 'Avg_Order_Value', 
+                'Is_2024_Customer', 'Is_2025_Customer'
+            ]].copy()
+            
+            full_display.columns = [
+                'Customer', 'Total Qty', 'Total Revenue', 'Orders',
+                'First Order', 'Last Order', 'Months Active', 'Avg Order $',
+                '2024 Customer', '2025 Customer'
+            ]
+            
+            full_display['Total Revenue'] = full_display['Total Revenue'].apply(lambda x: f"${x:,.0f}")
+            full_display['Avg Order $'] = full_display['Avg Order $'].apply(lambda x: f"${x:,.0f}")
+            full_display['Total Qty'] = full_display['Total Qty'].apply(lambda x: f"{x:,.0f}")
+            full_display['2024 Customer'] = full_display['2024 Customer'].apply(lambda x: "✅" if x else "")
+            full_display['2025 Customer'] = full_display['2025 Customer'].apply(lambda x: "✅" if x else "")
+            
+            st.dataframe(full_display, use_container_width=True, hide_index=True, height=400)
+            st.caption(f"Showing {len(filtered_customers):,} customers")
+            
+            # Download button
+            csv = customer_analysis.to_csv(index=False)
+            st.download_button(
+                label="📥 Download Full Customer List (CSV)",
+                data=csv,
+                file_name="concentrate_jar_customers.csv",
+                mime="text/csv"
+            )
+    
+    # =========================
+    # CUSTOMER STICKINESS ANALYSIS
+    # =========================
+    
+    st.markdown("---")
+    st.markdown("### 🎯 Customer Stickiness Analysis")
+    st.caption("Identifying customers most likely to continue ordering in 2026")
+    
+    sticky_customers = identify_sticky_customers(df)
+    
+    if not sticky_customers.empty:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # High likelihood customers
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, rgba(16, 185, 129, 0.15) 0%, rgba(5, 150, 105, 0.15) 100%);
+                border: 1px solid rgba(16, 185, 129, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #10b981; margin-bottom: 12px;">
+                    🟢 High Likelihood (3+ orders, active in 2025)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            high_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'High'].head(10)
+            if not high_likelihood.empty:
+                for _, row in high_likelihood.iterrows():
+                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Total_Amount']:,.0f}")
+            else:
+                st.info("No high-likelihood customers found")
+        
+        with col2:
+            # Medium likelihood customers
+            st.markdown("""
+            <div style="
+                background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(245, 158, 11, 0.15) 100%);
+                border: 1px solid rgba(251, 191, 36, 0.3);
+                border-radius: 12px;
+                padding: 16px;
+                margin-bottom: 12px;
+            ">
+                <div style="font-size: 16px; font-weight: 700; color: #fbbf24; margin-bottom: 12px;">
+                    🟡 Medium Likelihood (2 orders OR recent single order)
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            medium_likelihood = sticky_customers[sticky_customers['Stickiness'] == 'Medium'].head(10)
+            if not medium_likelihood.empty:
+                for _, row in medium_likelihood.iterrows():
+                    st.markdown(f"**{row['Company Name']}** - {row['Order_Count']} orders, ${row['Total_Amount']:,.0f}")
+            else:
+                st.info("No medium-likelihood customers found")
+        
+        # Stickiness summary
+        stickiness_summary = sticky_customers.groupby('Stickiness').agg({
+            'Company Name': 'count',
+            'Total_Amount': 'sum',
+            'Total_Quantity': 'sum'
+        }).reset_index()
+        stickiness_summary.columns = ['Likelihood', 'Customer Count', 'Total Revenue', 'Total Quantity']
+        
+        st.markdown("#### Stickiness Summary")
+        summary_col1, summary_col2, summary_col3 = st.columns(3)
+        
+        for i, likelihood in enumerate(['High', 'Medium', 'Low']):
+            row = stickiness_summary[stickiness_summary['Likelihood'] == likelihood]
+            if not row.empty:
+                with [summary_col1, summary_col2, summary_col3][i]:
+                    color = {'High': '#10b981', 'Medium': '#fbbf24', 'Low': '#ef4444'}[likelihood]
+                    st.markdown(f"""
+                    <div style="text-align: center; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+                        <div style="font-size: 12px; opacity: 0.7;">{likelihood} Likelihood</div>
+                        <div style="font-size: 24px; font-weight: 700; color: {color};">{int(row['Customer Count'].values[0])}</div>
+                        <div style="font-size: 11px; opacity: 0.6;">${row['Total Revenue'].values[0]:,.0f} revenue</div>
+                    </div>
+                    """, unsafe_allow_html=True)
     
     # =========================
     # METHODOLOGY NOTES
