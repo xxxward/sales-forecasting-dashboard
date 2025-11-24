@@ -735,7 +735,7 @@ def analyze_customers(df):
     return customer_summary
 
 
-def identify_sticky_customers(df):
+def identify_sticky_customers(df, forecast_total_revenue=None):
     """
     Identify customers most likely to continue ordering (sticky customers).
     
@@ -744,10 +744,7 @@ def identify_sticky_customers(df):
     - Medium: 2 orders OR (1 order in last 6 months)
     - Low: 1 order more than 6 months ago
     
-    Also calculates projected 2026 revenue based on:
-    - High: Average of their 2024/2025 annual spend
-    - Medium: 50% of their average annual spend (less certain)
-    - Low: 25% of their average annual spend (unlikely to return)
+    Projected 2026 revenue is scaled to match the forecast total.
     """
     customer_analysis = analyze_customers(df)
     
@@ -804,17 +801,26 @@ def identify_sticky_customers(df):
     
     customer_analysis['Stickiness'] = customer_analysis.apply(calc_stickiness, axis=1)
     
-    # Calculate projected 2026 revenue based on stickiness
-    def calc_projected_2026(row):
+    # Calculate raw projected 2026 revenue based on stickiness weights
+    def calc_raw_projection(row):
         avg_annual = row['Avg_Annual_Revenue']
         if row['Stickiness'] == 'High':
-            return avg_annual * 1.0  # 100% of average (likely to repeat)
+            return avg_annual * 1.0  # 100% weight
         elif row['Stickiness'] == 'Medium':
-            return avg_annual * 0.5  # 50% probability adjustment
+            return avg_annual * 0.5  # 50% weight
         else:  # Low
-            return avg_annual * 0.25  # 25% probability adjustment
+            return avg_annual * 0.25  # 25% weight
     
-    customer_analysis['Projected_2026_Revenue'] = customer_analysis.apply(calc_projected_2026, axis=1)
+    customer_analysis['Raw_Projection'] = customer_analysis.apply(calc_raw_projection, axis=1)
+    
+    # Scale projections to match forecast total
+    raw_total = customer_analysis['Raw_Projection'].sum()
+    
+    if forecast_total_revenue and raw_total > 0:
+        scale_factor = forecast_total_revenue / raw_total
+        customer_analysis['Projected_2026_Revenue'] = customer_analysis['Raw_Projection'] * scale_factor
+    else:
+        customer_analysis['Projected_2026_Revenue'] = customer_analysis['Raw_Projection']
     
     return customer_analysis
 
@@ -1356,7 +1362,10 @@ def main():
     st.markdown("### 🎯 Customer Stickiness Analysis")
     st.caption("Identifying customers most likely to continue ordering in 2026")
     
-    sticky_customers = identify_sticky_customers(df)
+    # Get the 2026 forecast total to scale customer projections
+    forecast_2026_total = monthly_forecast['Forecasted_Amount'].sum() if not monthly_forecast.empty else None
+    
+    sticky_customers = identify_sticky_customers(df, forecast_total_revenue=forecast_2026_total)
     
     if not sticky_customers.empty:
         col1, col2 = st.columns(2)
@@ -1444,9 +1453,9 @@ def main():
             border: 1px solid rgba(99, 102, 241, 0.3);
             border-radius: 12px;
         ">
-            <div style="font-size: 14px; opacity: 0.7;">Total Projected 2026 Revenue (All Customers)</div>
+            <div style="font-size: 14px; opacity: 0.7;">2026 Forecast Revenue - Customer Breakdown</div>
             <div style="font-size: 28px; font-weight: 700; color: #10b981;">${total_projected:,.0f}</div>
-            <div style="font-size: 11px; opacity: 0.5;">Based on average annual spend adjusted by likelihood</div>
+            <div style="font-size: 11px; opacity: 0.5;">Distributed by customer likelihood (matches 2026 forecast)</div>
         </div>
         """, unsafe_allow_html=True)
     
