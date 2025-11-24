@@ -2458,7 +2458,10 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
-    # CRITICAL: Match the original calculate_rep_metrics logic exactly
+    # Logic:
+    # 1. PA with Date (within Q4): Has PA Date in Q4 2025 AND Age < 13 business days
+    # 2. PA No Date: No PA Date AND Age < 13 business days  
+    # 3. PA Old (>2 Weeks): Age >= 13 business days (regardless of whether they have a PA date or not)
     pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
     
     if not pa_orders.empty:
@@ -2466,44 +2469,41 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         if 'Age_Business_Days' not in pa_orders.columns:
             pa_orders['Age_Business_Days'] = 0
         
-        # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 13 business days)
-        # Based on actual reconciliation: orders 13+ business days old are excluded
-        # This takes priority and removes orders from other categories
-        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
-        
-        # Create a mask for orders that are NOT old (Age < 13 days)
-        # These are the only ones eligible for Categories 1 and 2
-        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
-        
-        if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
-            # Ensure Pending Approval Date is properly parsed as datetime
-            young_pa['PA_Date_Parsed'] = pd.to_datetime(young_pa['Pending Approval Date'], errors='coerce')
+        # Parse Pending Approval Date for all PA orders
+        if 'Pending Approval Date' in pa_orders.columns:
+            pa_orders['PA_Date_Parsed'] = pd.to_datetime(pa_orders['Pending Approval Date'], errors='coerce')
             
             # Fix any dates that got parsed as 1900s (2-digit year issue: 26 -> 1926 instead of 2026)
-            if young_pa['PA_Date_Parsed'].notna().any():
-                mask_1900s = (young_pa['PA_Date_Parsed'].dt.year < 2000) & (young_pa['PA_Date_Parsed'].notna())
+            if pa_orders['PA_Date_Parsed'].notna().any():
+                mask_1900s = (pa_orders['PA_Date_Parsed'].dt.year < 2000) & (pa_orders['PA_Date_Parsed'].notna())
                 if mask_1900s.any():
-                    young_pa.loc[mask_1900s, 'PA_Date_Parsed'] = young_pa.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
-            
-            # CATEGORY 1: Pending Approval WITH valid dates WITHIN Q4 2025 only
-            # If Pending Approval Date is outside Q4 2025 (including Q1 2026), it's NOT counted toward rep totals
-            pa_with_date_mask = (
-                (young_pa['PA_Date_Parsed'].notna()) &
-                (young_pa['PA_Date_Parsed'] >= q4_start) &
-                (young_pa['PA_Date_Parsed'] <= q4_end)  # Must be within Q4 2025 (Oct 1 - Dec 31, 2025)
-            )
-            pa_date = young_pa[pa_with_date_mask].copy()
-            
-            # CATEGORY 2: Pending Approval with "No Date" string OR dates outside Q4 2025
-            # This includes: no date, invalid dates, AND dates outside Q4 (like Q1 2026)
-            pa_no_date_mask = (
-                (young_pa['PA_Date_Parsed'].isna()) |  # No date or invalid date
-                (young_pa['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
-                (young_pa['Pending Approval Date'].astype(str).str.strip() == '')
-            )
-            pa_nodate = young_pa[pa_no_date_mask].copy()
+                    pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] = pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
         else:
-            pa_date = pa_nodate = pd.DataFrame()
+            pa_orders['PA_Date_Parsed'] = pd.NaT
+        
+        # Determine which orders have a valid Q4 PA Date
+        has_q4_pa_date = (
+            (pa_orders['PA_Date_Parsed'].notna()) &
+            (pa_orders['PA_Date_Parsed'] >= q4_start) &
+            (pa_orders['PA_Date_Parsed'] <= q4_end)
+        )
+        
+        # Determine which orders have NO PA Date (or invalid/outside Q4)
+        has_no_pa_date = (
+            (pa_orders['PA_Date_Parsed'].isna()) |
+            (pa_orders['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
+            (pa_orders['Pending Approval Date'].astype(str).str.strip() == '')
+        )
+        
+        # CATEGORY 3: PA Old (>= 13 business days) - ONLY for orders WITHOUT a valid Q4 PA date
+        # Orders WITH a valid Q4 PA date should NOT go to PA Old, regardless of age
+        pa_old = pa_orders[(pa_orders['Age_Business_Days'] >= 13) & ~has_q4_pa_date].copy()
+        
+        # CATEGORY 1: PA with Date - has Q4 PA date AND is NOT old (< 13 days)
+        pa_date = pa_orders[has_q4_pa_date & (pa_orders['Age_Business_Days'] < 13)].copy()
+        
+        # CATEGORY 2: PA No Date - no PA date AND is NOT old (< 13 days)
+        pa_nodate = pa_orders[has_no_pa_date & (pa_orders['Age_Business_Days'] < 13)].copy()
     else:
         pa_old = pa_date = pa_nodate = pd.DataFrame()
     
