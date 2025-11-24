@@ -1211,11 +1211,19 @@ def load_all_data():
         if 'Status' in sales_orders_df.columns:
             sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
         
-        # Convert date columns
+        # Convert date columns - handle 2-digit years correctly (26 = 2026, not 1926)
         date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']
         for col in date_columns:
             if col in sales_orders_df.columns:
+                # First try standard parsing
                 sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
+                
+                # Fix any dates that got parsed as 1900s (2-digit year issue)
+                # If year < 2000, add 100 years (e.g., 1926 -> 2026)
+                if sales_orders_df[col].notna().any():
+                    mask = (sales_orders_df[col].dt.year < 2000) & (sales_orders_df[col].notna())
+                    if mask.any():
+                        sales_orders_df.loc[mask, col] = sales_orders_df.loc[mask, col] + pd.DateOffset(years=100)
         
         # Filter to include Pending Approval, Pending Fulfillment, AND Pending Billing/Partially Fulfilled
         if 'Status' in sales_orders_df.columns:
@@ -1443,6 +1451,11 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             # Parse Pending Approval Date for PA filtering
             if 'Pending Approval Date' in so_df.columns:
                 so_df['PA_Date_Parsed'] = pd.to_datetime(so_df['Pending Approval Date'], errors='coerce')
+                # Fix any dates that got parsed as 1900s (2-digit year issue: 26 -> 1926 instead of 2026)
+                if so_df['PA_Date_Parsed'].notna().any():
+                    mask_1900s = (so_df['PA_Date_Parsed'].dt.year < 2000) & (so_df['PA_Date_Parsed'].notna())
+                    if mask_1900s.any():
+                        so_df.loc[mask_1900s, 'PA_Date_Parsed'] = so_df.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
             else:
                 so_df['PA_Date_Parsed'] = pd.NaT
             
@@ -2465,6 +2478,12 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
             # Ensure Pending Approval Date is properly parsed as datetime
             young_pa['PA_Date_Parsed'] = pd.to_datetime(young_pa['Pending Approval Date'], errors='coerce')
+            
+            # Fix any dates that got parsed as 1900s (2-digit year issue: 26 -> 1926 instead of 2026)
+            if young_pa['PA_Date_Parsed'].notna().any():
+                mask_1900s = (young_pa['PA_Date_Parsed'].dt.year < 2000) & (young_pa['PA_Date_Parsed'].notna())
+                if mask_1900s.any():
+                    young_pa.loc[mask_1900s, 'PA_Date_Parsed'] = young_pa.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
             
             # CATEGORY 1: Pending Approval WITH valid dates WITHIN Q4 2025 only
             # If Pending Approval Date is outside Q4 2025 (including Q1 2026), it's NOT counted toward rep totals
