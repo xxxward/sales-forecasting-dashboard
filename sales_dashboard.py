@@ -1430,21 +1430,41 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             so_df = so_df.copy()
             so_df['Amount_Numeric'] = pd.to_numeric(so_df.get('Amount', 0), errors='coerce')
             
+            # Q4 2025 date range for filtering
+            q4_start = pd.Timestamp('2025-10-01')
+            q4_end = pd.Timestamp('2025-12-31')
+            
             # Parse dates
             if 'Estimated Ship Date' in so_df.columns:
                 so_df['Ship_Date_Parsed'] = pd.to_datetime(so_df['Estimated Ship Date'], errors='coerce')
             else:
                 so_df['Ship_Date_Parsed'] = pd.NaT
             
+            # Parse Pending Approval Date for PA filtering
+            if 'Pending Approval Date' in so_df.columns:
+                so_df['PA_Date_Parsed'] = pd.to_datetime(so_df['Pending Approval Date'], errors='coerce')
+            else:
+                so_df['PA_Date_Parsed'] = pd.NaT
+            
             # Pending Fulfillment
             pf_df = so_df[so_df.get('Status', '') == 'Pending Fulfillment']
             metrics['pending_fulfillment'] = pf_df[pf_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
             metrics['pending_fulfillment_no_date'] = pf_df[pf_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
             
-            # Pending Approval
-            pa_df = so_df[so_df.get('Status', '') == 'Pending Approval']
-            metrics['pending_approval'] = pa_df[pa_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
-            metrics['pending_approval_no_date'] = pa_df[pa_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
+            # Pending Approval - filtered by Pending Approval Date within Q4 2025
+            pa_df = so_df[so_df.get('Status', '') == 'Pending Approval'].copy()
+            
+            # PA with date: must have a valid date WITHIN Q4 2025
+            pa_with_q4_date = pa_df[
+                (pa_df['PA_Date_Parsed'].notna()) &
+                (pa_df['PA_Date_Parsed'] >= q4_start) &
+                (pa_df['PA_Date_Parsed'] <= q4_end)
+            ]
+            metrics['pending_approval'] = pa_with_q4_date['Amount_Numeric'].sum()
+            
+            # PA no date: missing or invalid Pending Approval Date
+            pa_no_date = pa_df[pa_df['PA_Date_Parsed'].isna()]
+            metrics['pending_approval_no_date'] = pa_no_date['Amount_Numeric'].sum()
             
             # Pending Approval > 2 weeks old
             if 'Transaction Date' in so_df.columns:
@@ -2443,21 +2463,24 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
         
         if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
-            # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age < 13 business days)
+            # Ensure Pending Approval Date is properly parsed as datetime
+            young_pa['PA_Date_Parsed'] = pd.to_datetime(young_pa['Pending Approval Date'], errors='coerce')
+            
+            # CATEGORY 1: Pending Approval WITH valid dates WITHIN Q4 2025 only
+            # If Pending Approval Date is outside Q4 2025 (including Q1 2026), it's NOT counted toward rep totals
             pa_with_date_mask = (
-                (young_pa['Pending Approval Date'].notna()) &
-                (young_pa['Pending Approval Date'] != 'No Date') &
-                (young_pa['Pending Approval Date'] >= q4_start) &
-                (young_pa['Pending Approval Date'] <= q4_end)
+                (young_pa['PA_Date_Parsed'].notna()) &
+                (young_pa['PA_Date_Parsed'] >= q4_start) &
+                (young_pa['PA_Date_Parsed'] <= q4_end)  # Must be within Q4 2025 (Oct 1 - Dec 31, 2025)
             )
             pa_date = young_pa[pa_with_date_mask].copy()
             
-            # CATEGORY 2: Pending Approval with "No Date" string (and Age < 13 business days)
-            # Robust matching for various "No Date" formats from Google Sheets
+            # CATEGORY 2: Pending Approval with "No Date" string OR dates outside Q4 2025
+            # This includes: no date, invalid dates, AND dates outside Q4 (like Q1 2026)
             pa_no_date_mask = (
+                (young_pa['PA_Date_Parsed'].isna()) |  # No date or invalid date
                 (young_pa['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
-                (young_pa['Pending Approval Date'].astype(str).str.strip() == '') |
-                (young_pa['Pending Approval Date'].isna())
+                (young_pa['Pending Approval Date'].astype(str).str.strip() == '')
             )
             pa_nodate = young_pa[pa_no_date_mask].copy()
         else:
