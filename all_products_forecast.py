@@ -44,15 +44,8 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
 CACHE_VERSION = "all_products_v2"  # Updated version for multi-source
 
-# Pending order statuses to include
-PENDING_STATUSES = [
-    "Pending Approval",
-    "Pending Fulfillment",
-    "Pending Billing/Partially Fulfilled"
-]
-
-# Confidence factor for pending orders (95% of pending orders typically convert)
-PENDING_ORDER_CONFIDENCE = 0.95
+# Confidence factor for active sales orders (95% typically convert to invoices)
+ACTIVE_ORDER_CONFIDENCE = 0.95
 
 # =============================================================================
 # DATA LOADING
@@ -282,8 +275,9 @@ def process_invoice_data(df):
 
 def process_sales_order_data(df):
     """
-    Process the sales order line item data with known column mappings.
-    Filter for pending statuses and prepare for forecasting.
+    Process the sales order line item data.
+    Uses Date Created (column Q) and includes all active (uninvoiced) orders.
+    Orders are distributed to 2026 forecast based on their creation month.
     """
     if df.empty:
         return df
@@ -321,7 +315,7 @@ def process_sales_order_data(df):
         elif col_lower == 'quote':
             col_mapping[col] = 'Quote'
         elif 'pending fulfillment date' in col_lower:
-            col_mapping[col] = 'Expected_Date'
+            col_mapping[col] = 'Pending_Fulfillment_Date'
         elif 'actual ship date' in col_lower:
             col_mapping[col] = 'Actual_Ship_Date'
         elif 'date created' in col_lower:
@@ -341,44 +335,24 @@ def process_sales_order_data(df):
     
     df = df.rename(columns=col_mapping)
     
-    # Filter for pending statuses ONLY
-    if 'Status' not in df.columns:
-        st.warning("⚠️ 'Status' column not found in Sales Order data")
+    # Use Date Created to assign orders to months
+    if 'Date_Created' not in df.columns:
+        st.warning("⚠️ 'Date Created' column not found in Sales Order data")
         return pd.DataFrame()
     
-    df = df[df['Status'].isin(PENDING_STATUSES)].copy()
+    df['Date_Created'] = pd.to_datetime(df['Date_Created'], errors='coerce')
+    
+    # Remove rows with no valid date
+    df = df[df['Date_Created'].notna()].copy()
     
     if df.empty:
-        st.info("ℹ️ No pending sales orders found")
+        st.info("ℹ️ No sales orders with valid Date Created")
         return df
     
-    # Parse Expected Date (Pending Fulfillment Date)
-    if 'Expected_Date' in df.columns:
-        df['Expected_Date'] = pd.to_datetime(df['Expected_Date'], errors='coerce')
-        # If no expected date, try using Date Created + 30 days as fallback
-        if df['Expected_Date'].isna().any() and 'Date_Created' in df.columns:
-            df['Date_Created_Parsed'] = pd.to_datetime(df['Date_Created'], errors='coerce')
-            df['Expected_Date'] = df['Expected_Date'].fillna(
-                df['Date_Created_Parsed'] + timedelta(days=30)
-            )
-    else:
-        # If no Expected_Date column, use Date Created + 30 days
-        if 'Date_Created' in df.columns:
-            df['Expected_Date'] = pd.to_datetime(df['Date_Created'], errors='coerce')
-            df['Expected_Date'] = df['Expected_Date'] + timedelta(days=30)
-        else:
-            st.warning("⚠️ Cannot determine expected date for sales orders")
-            return pd.DataFrame()
-    
-    # Remove rows with no valid expected date
-    df = df[df['Expected_Date'].notna()].copy()
-    
-    # Only include orders expected in 2026 or beyond
-    df = df[df['Expected_Date'].dt.year >= 2026].copy()
-    
-    # Extract Year and Month from expected date
-    df['Year'] = df['Expected_Date'].dt.year
-    df['Month'] = df['Expected_Date'].dt.month
+    # For 2026 forecast: Use the creation month to assign to corresponding month in 2026
+    # Example: Order created in March (any year) -> contributes to March 2026 forecast
+    df['Month'] = df['Date_Created'].dt.month
+    df['Year'] = 2026  # All orders contribute to 2026 forecast
     
     # Clean numeric columns
     if 'Quantity' in df.columns:
@@ -393,7 +367,7 @@ def process_sales_order_data(df):
         df['Product Type'] = df['Product Type'].fillna('Unknown').replace('', 'Unknown')
     
     # Mark this as pending order data
-    df['Data_Source'] = 'Pending Order'
+    df['Data_Source'] = 'Active Order'
     
     return df
 
@@ -749,7 +723,7 @@ def generate_2026_forecast(df, weight_2024=0.6, weight_2025=0.4, group_by=None):
 
 def calculate_pending_orders_forecast(sales_order_df):
     """
-    Calculate monthly forecast contribution from pending sales orders.
+    Calculate monthly forecast contribution from active sales orders.
     Groups by expected month and applies confidence factor.
     """
     if sales_order_df.empty:
@@ -764,9 +738,9 @@ def calculate_pending_orders_forecast(sales_order_df):
     
     monthly_pending.columns = ['Year', 'Month', 'Pending_Amount', 'Pending_Quantity', 'Order_Count']
     
-    # Apply confidence factor (95% of pending orders typically convert)
-    monthly_pending['Weighted_Amount'] = monthly_pending['Pending_Amount'] * PENDING_ORDER_CONFIDENCE
-    monthly_pending['Weighted_Quantity'] = monthly_pending['Pending_Quantity'] * PENDING_ORDER_CONFIDENCE
+    # Apply confidence factor (95% of active orders typically convert)
+    monthly_pending['Weighted_Amount'] = monthly_pending['Pending_Amount'] * ACTIVE_ORDER_CONFIDENCE
+    monthly_pending['Weighted_Quantity'] = monthly_pending['Pending_Quantity'] * ACTIVE_ORDER_CONFIDENCE
     
     # Filter for 2026 only
     monthly_pending = monthly_pending[monthly_pending['Year'] == 2026].copy()
@@ -1066,7 +1040,7 @@ def create_forecast_chart(monthly_forecast, metric='Amount'):
 
 def create_multi_source_stacked_chart(monthly_forecast):
     """
-    Create a stacked area chart showing historical baseline + pending orders.
+    Create a stacked area chart showing historical baseline + active sales orders.
     """
     if monthly_forecast.empty:
         return None
@@ -1089,17 +1063,17 @@ def create_multi_source_stacked_chart(monthly_forecast):
         stackgroup='one'
     ))
     
-    # Pending orders (top layer) - only if we have pending data
+    # Active orders (top layer) - only if we have active order data
     if has_pending:
         fig.add_trace(go.Scatter(
             x=monthly_forecast['MonthShort'],
             y=monthly_forecast['Pending_Amount'],
-            name='Pending Orders',
+            name='Active Orders',
             mode='lines',
             line=dict(width=0),
             fillcolor='rgba(59, 130, 246, 0.5)',  # Blue
             fill='tonexty',
-            hovertemplate='<b>%{x}</b><br>Pending: $%{y:,.0f}<extra></extra>',
+            hovertemplate='<b>%{x}</b><br>Active Orders: $%{y:,.0f}<extra></extra>',
             stackgroup='one'
         ))
     
@@ -1116,7 +1090,7 @@ def create_multi_source_stacked_chart(monthly_forecast):
     
     fig.update_layout(
         title=dict(
-            text='📊 2026 Forecast by Source (Historical + Pending Orders)',
+            text='📊 2026 Forecast by Source (Historical + Active Orders)',
             font=dict(size=20),
             x=0.5
         ),
@@ -1475,7 +1449,7 @@ def main():
             📦 All Products Forecast - 2026 (Multi-Source)
         </h1>
         <p style="margin: 8px 0 0 0; opacity: 0.8;">
-            Revenue and quantity forecasting combining historical invoices + pending sales orders
+            Revenue and quantity forecasting combining historical invoices + active sales orders
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -1525,9 +1499,9 @@ def main():
         st.success(f"✅ Loaded {len(invoice_df):,} invoice line items (historical)")
     with col2:
         if pending_order_count > 0:
-            st.success(f"✅ Loaded {pending_order_count:,} pending sales order lines (${pending_order_amount:,.0f})")
+            st.success(f"✅ Loaded {pending_order_count:,} active sales order lines (${pending_order_amount:,.0f})")
         else:
-            st.info("ℹ️ No pending sales orders found")
+            st.info("ℹ️ No active sales orders found")
     
     # Use invoice_df as the base for filtering (historical data)
     df = invoice_df
@@ -1541,14 +1515,14 @@ def main():
     # Data source toggle
     st.sidebar.markdown("### 📊 Data Sources")
     include_pending_orders = st.sidebar.checkbox(
-        "Include Pending Sales Orders",
+        "Include Active Sales Orders",
         value=True if not sales_order_df.empty else False,
         disabled=sales_order_df.empty,
-        help="Add pending sales orders to the forecast for more near-term accuracy"
+        help="Add active sales orders to the forecast (all uninvoiced orders)"
     )
     
     if include_pending_orders and not sales_order_df.empty:
-        st.sidebar.success(f"✅ {pending_order_count:,} pending orders included")
+        st.sidebar.success(f"✅ {pending_order_count:,} active orders included")
     
     # Historical weighting
     st.sidebar.markdown("---")
@@ -1736,7 +1710,7 @@ def main():
             delta_text = None
             if total_pending > 0:
                 pct_pending = (total_pending / total_amt_2026 * 100)
-                delta_text = f"${total_pending:,.0f} from pending orders ({pct_pending:.0f}%)"
+                delta_text = f"${total_pending:,.0f} from active orders ({pct_pending:.0f}%)"
             st.metric(
                 "2026 Total Revenue",
                 f"${total_amt_2026:,.0f}",
@@ -1761,7 +1735,7 @@ def main():
             if total_pending > 0:
                 pending_orders_count = monthly_forecast['Order_Count'].sum()
                 st.metric(
-                    "Pending Orders",
+                    "Active Orders",
                     f"${total_pending:,.0f}",
                     delta=f"{int(pending_orders_count)} orders"
                 )
