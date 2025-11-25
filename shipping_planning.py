@@ -100,6 +100,25 @@ def clean_numeric(value):
         return 0
 
 
+def format_number(value, include_dollar=False):
+    """
+    Format numbers with K or M suffix.
+    - >= 1,000,000: show as millions (e.g., "1.23M")
+    - >= 1,000: show as thousands (e.g., "500K")
+    - < 1,000: show as whole number (e.g., "500")
+    """
+    if value >= 1_000_000:
+        formatted = f"{value/1_000_000:.2f}M"
+    elif value >= 1_000:
+        formatted = f"{value/1_000:.0f}K"
+    else:
+        formatted = f"{int(value)}"
+    
+    if include_dollar:
+        return f"${formatted}"
+    return formatted
+
+
 def process_concentrate_data(df):
     """
     Process the concentrate jar data with known column mappings.
@@ -412,7 +431,7 @@ def create_historical_trend_chart(df):
                 color=color_map.get(year, '#6366f1'),
                 line=dict(color='rgba(255,255,255,0.3)', width=1)
             ),
-            text=year_data['Quantity'].apply(lambda x: f"{x/1000:.0f}K" if x >= 1000 else f"{int(x)}"),
+            text=year_data['Quantity'].apply(format_number),
             textposition='outside',
             hovertemplate='<b>%{x}</b><br>Quantity: %{y:,.0f}<extra></extra>'
         ))
@@ -479,7 +498,7 @@ def create_forecast_chart(monthly_forecast):
         name='2026 Forecast',
         line=dict(color='#10b981', width=3),
         marker=dict(size=10, color='#10b981', line=dict(color='white', width=2)),
-        text=monthly_forecast['Forecasted_Quantity'].apply(lambda x: f"{x/1000:.0f}K" if x >= 1000 else str(int(x))),
+        text=monthly_forecast['Forecasted_Quantity'].apply(format_number),
         textposition='top center',
         hovertemplate='<b>%{x} 2026</b><br>Forecast: %{y:,.0f} units<extra></extra>'
     ))
@@ -558,7 +577,7 @@ def create_quarterly_chart(quarterly_forecast):
             color=['#6366f1', '#8b5cf6', '#a855f7', '#c084fc'],
             line=dict(color='rgba(255,255,255,0.3)', width=2)
         ),
-        text=quarterly_forecast['Forecasted_Quantity'].apply(lambda x: f"{x/1000:.0f}K"),
+        text=quarterly_forecast['Forecasted_Quantity'].apply(format_number),
         textposition='outside',
         hovertemplate='<b>%{x}</b><br>Quantity: %{y:,.0f} units<extra></extra>'
     ))
@@ -636,7 +655,7 @@ def create_revenue_forecast_chart(monthly_forecast):
         name='2026 Revenue Forecast',
         line=dict(color='#10b981', width=3),
         marker=dict(size=10, color='#10b981', line=dict(color='white', width=2)),
-        text=monthly_forecast['Forecasted_Amount'].apply(lambda x: f"${x/1000:.0f}K"),
+        text=monthly_forecast['Forecasted_Amount'].apply(lambda x: format_number(x, include_dollar=True)),
         textposition='top center',
         hovertemplate='<b>%{x} 2026</b><br>Revenue: $%{y:,.0f}<extra></extra>'
     ))
@@ -839,7 +858,7 @@ def create_demand_vs_order_chart(monthly_forecast, order_quantity):
             color='rgba(99, 102, 241, 0.7)',
             line=dict(color='rgba(255,255,255,0.3)', width=1)
         ),
-        text=monthly_forecast['Forecasted_Quantity'].apply(lambda x: f"{x/1000:.0f}K"),
+        text=monthly_forecast['Forecasted_Quantity'].apply(format_number),
         textposition='outside',
         hovertemplate='<b>%{x} 2026</b><br>Demand: %{y:,.0f} units<extra></extra>'
     ))
@@ -1273,7 +1292,7 @@ def create_top_customers_chart(customer_df):
             colorscale='Viridis',
             line=dict(color='rgba(255,255,255,0.3)', width=1)
         ),
-        text=customer_df['Total_Amount'].apply(lambda x: f"${x/1000:.0f}K" if x >= 1000 else f"${x:.0f}"),
+        text=customer_df['Total_Amount'].apply(lambda x: format_number(x, include_dollar=True)),
         textposition='outside',
         hovertemplate='<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>'
     ))
