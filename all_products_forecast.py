@@ -276,8 +276,8 @@ def process_invoice_data(df):
 def process_sales_order_data(df):
     """
     Process the sales order line item data.
-    Uses Date Created (column Q) and includes all active (uninvoiced) orders.
-    Orders are distributed to 2026 forecast based on their creation month.
+    Uses Date Created (column Q) and includes only ACTIVE orders.
+    Filters out old/closed/inactive orders even if technically uninvoiced.
     """
     if df.empty:
         return df
@@ -335,7 +335,22 @@ def process_sales_order_data(df):
     
     df = df.rename(columns=col_mapping)
     
-    # Use Date Created to assign orders to months
+    # Filter out closed/billed orders (even if technically uninvoiced)
+    original_count = len(df)
+    
+    # Exclude orders with Date Closed populated
+    if 'Date_Closed' in df.columns:
+        closed_mask = df['Date_Closed'].notna() & (df['Date_Closed'] != '')
+        df = df[~closed_mask].copy()
+        st.info(f"🔍 Excluded {closed_mask.sum():,} closed orders")
+    
+    # Exclude orders with Date Billed populated  
+    if 'Date_Billed' in df.columns:
+        billed_mask = df['Date_Billed'].notna() & (df['Date_Billed'] != '')
+        df = df[~billed_mask].copy()
+        st.info(f"🔍 Excluded {billed_mask.sum():,} billed orders")
+    
+    # Use Date Created to filter for recent orders only
     if 'Date_Created' not in df.columns:
         st.warning("⚠️ 'Date Created' column not found in Sales Order data")
         return pd.DataFrame()
@@ -349,8 +364,21 @@ def process_sales_order_data(df):
         st.info("ℹ️ No sales orders with valid Date Created")
         return df
     
+    # Filter for orders created in the last 12 months (adjust as needed)
+    # This captures truly "active" orders, not ancient uninvoiced orders
+    cutoff_date = datetime.now() - timedelta(days=365)
+    before_date_filter = len(df)
+    df = df[df['Date_Created'] >= cutoff_date].copy()
+    after_date_filter = len(df)
+    
+    if before_date_filter > after_date_filter:
+        st.info(f"🔍 Filtered to orders from last 12 months: {after_date_filter:,} orders (excluded {before_date_filter - after_date_filter:,} older orders)")
+    
+    if df.empty:
+        st.info("ℹ️ No active sales orders from the last 12 months")
+        return df
+    
     # For 2026 forecast: Use the creation month to assign to corresponding month in 2026
-    # Example: Order created in March (any year) -> contributes to March 2026 forecast
     df['Month'] = df['Date_Created'].dt.month
     df['Year'] = 2026  # All orders contribute to 2026 forecast
     
@@ -366,8 +394,10 @@ def process_sales_order_data(df):
     if 'Product Type' in df.columns:
         df['Product Type'] = df['Product Type'].fillna('Unknown').replace('', 'Unknown')
     
-    # Mark this as pending order data
+    # Mark this as active order data
     df['Data_Source'] = 'Active Order'
+    
+    st.success(f"✅ Final result: {len(df):,} active orders (${df['Amount'].sum():,.0f} total)")
     
     return df
 
