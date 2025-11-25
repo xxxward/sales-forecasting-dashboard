@@ -37,6 +37,19 @@ except Exception as e:
     SHIPPING_PLANNING_AVAILABLE = False
     SHIPPING_PLANNING_ERROR = f"Error loading module: {str(e)}"
 
+# Optional: All Products Forecast module (if available)
+try:
+    import all_products_forecast
+    from importlib import reload
+    reload(all_products_forecast)  # Force reload to pick up any changes
+    ALL_PRODUCTS_FORECAST_AVAILABLE = True
+except ImportError as e:
+    ALL_PRODUCTS_FORECAST_AVAILABLE = False
+    ALL_PRODUCTS_FORECAST_ERROR = str(e)
+except Exception as e:
+    ALL_PRODUCTS_FORECAST_AVAILABLE = False
+    ALL_PRODUCTS_FORECAST_ERROR = f"Error loading module: {str(e)}"
+
 # Configure Plotly for dark mode compatibility
 pio.templates.default = "plotly"  # Use default template that adapts to theme
 
@@ -4634,7 +4647,7 @@ def main():
         # Create navigation options
         view_mode = st.radio(
             "Select View:",
-            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast"],
+            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast", "📦 All Products Forecast"],
             label_visibility="collapsed",
             key="nav_selector"
         )
@@ -4646,7 +4659,8 @@ def main():
             "🔍 Reconciliation": "Reconciliation",
             "🤖 AI Insights": "AI Insights",
             "💰 Commission": "💰 Commission",
-            "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast"
+            "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast",
+            "📦 All Products Forecast": "📦 All Products Forecast"
         }
         
         view_mode = view_mapping.get(view_mode, "Team Overview")
@@ -4800,6 +4814,28 @@ def main():
                 st.error(f"Error details: {SHIPPING_PLANNING_ERROR}")
             st.info("Make sure shipping_planning.py is in your repository at the same level as this dashboard file.")
             st.code("Expected file location: shipping_planning.py")
+            
+            # Debug info
+            with st.expander("🔧 Debug Information"):
+                st.write("**Current working directory:**")
+                import os
+                st.code(os.getcwd())
+                st.write("**Files in current directory:**")
+                try:
+                    files = os.listdir('.')
+                    st.code('\n'.join([f for f in files if f.endswith('.py')]))
+                except Exception as e:
+                    st.error(f"Cannot list files: {e}")
+    elif view_mode == "📦 All Products Forecast":
+        # All Products Forecasting view
+        if ALL_PRODUCTS_FORECAST_AVAILABLE:
+            all_products_forecast.main()
+        else:
+            st.error("❌ All Products Forecast module not found.")
+            if 'ALL_PRODUCTS_FORECAST_ERROR' in globals():
+                st.error(f"Error details: {ALL_PRODUCTS_FORECAST_ERROR}")
+            st.info("Make sure all_products_forecast.py is in your repository at the same level as this dashboard file.")
+            st.code("Expected file location: all_products_forecast.py")
             
             # Debug info
             with st.expander("🔧 Debug Information"):
