@@ -42,10 +42,20 @@ from datetime import datetime, timedelta
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
-CACHE_VERSION = "all_products_v2"  # Updated version for multi-source
+CACHE_VERSION = "all_products_v3"  # Updated version for three-source
 
 # Confidence factor for active sales orders (95% typically convert to invoices)
 ACTIVE_ORDER_CONFIDENCE = 0.95
+
+# HubSpot Deal Stage probability mapping (customize based on your stages)
+HUBSPOT_STAGE_PROBABILITY = {
+    'Appointment Scheduled': 0.20,
+    'Qualified to Buy': 0.40,
+    'Presentation Scheduled': 0.60,
+    'Decision Maker Bought-In': 0.80,
+    'Contract Sent': 0.90,
+    # Add your actual stages here with appropriate probabilities
+}
 
 # =============================================================================
 # DATA LOADING
@@ -146,6 +156,53 @@ def load_sales_order_line_items(version=CACHE_VERSION):
         
     except Exception as e:
         st.error(f"❌ Error loading Sales Order Line Item data: {str(e)}")
+        return pd.DataFrame()
+
+
+def load_hubspot_data(version=CACHE_VERSION):
+    """
+    Load data from Hubspot Data tab in Google Sheets
+    
+    Contains pipeline opportunities with Product Name, SKU, Deal Stage, Close Date, etc.
+    Only includes forecastable deals (Closed Won and Closed Lost already removed)
+    """
+    try:
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Missing Google Cloud credentials")
+            return pd.DataFrame()
+        
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+        
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        
+        # Load from Hubspot Data tab
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="Hubspot Data!A:Z"
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values:
+            st.info("ℹ️ No data found in 'Hubspot Data' tab")
+            return pd.DataFrame()
+        
+        # Pad rows to match column count
+        if len(values) > 1:
+            max_cols = max(len(row) for row in values)
+            for row in values:
+                while len(row) < max_cols:
+                    row.append('')
+        
+        df = pd.DataFrame(values[1:], columns=values[0])
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Error loading HubSpot data: {str(e)}")
         return pd.DataFrame()
 
 
@@ -398,6 +455,123 @@ def process_sales_order_data(df):
     df['Data_Source'] = 'Active Order'
     
     st.success(f"✅ Final result: {len(df):,} active orders (${df['Amount'].sum():,.0f} total)")
+    
+    return df
+
+
+def process_hubspot_data(df):
+    """
+    Process the HubSpot pipeline data.
+    Applies probability weighting based on Deal Stage.
+    Uses Close Date to assign to months in 2026.
+    """
+    if df.empty:
+        return df
+    
+    original_count = len(df)
+    
+    # Standardize column names
+    col_mapping = {}
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if 'product name' in col_lower:
+            col_mapping[col] = 'Product_Name'
+        elif col_lower == 'sku':
+            col_mapping[col] = 'SKU'
+        elif 'deal stage' in col_lower:
+            col_mapping[col] = 'Deal_Stage'
+        elif 'amount in company currency' in col_lower or (col_lower == 'amount' and 'company' in col.lower()):
+            col_mapping[col] = 'Amount'
+        elif col_lower == 'quantity':
+            col_mapping[col] = 'Quantity'
+        elif 'close date' in col_lower:
+            col_mapping[col] = 'Close_Date'
+        elif 'company name' in col_lower:
+            col_mapping[col] = 'Company_Name'
+        elif 'deal name' in col_lower:
+            col_mapping[col] = 'Deal_Name'
+        elif 'deal id' in col_lower:
+            col_mapping[col] = 'Deal_ID'
+        elif 'pipeline' in col_lower and 'hubspot' not in col_lower:
+            col_mapping[col] = 'Pipeline'
+    
+    df = df.rename(columns=col_mapping)
+    
+    # Filter out rows with no amount or zero amount
+    if 'Amount' in df.columns:
+        df['Amount'] = df['Amount'].apply(clean_numeric)
+        df = df[df['Amount'] > 0].copy()
+    else:
+        st.warning("⚠️ 'Amount' column not found in HubSpot data")
+        return pd.DataFrame()
+    
+    if df.empty:
+        st.info("ℹ️ No HubSpot deals with valid amounts")
+        return df
+    
+    # Parse Close Date
+    if 'Close_Date' not in df.columns:
+        st.warning("⚠️ 'Close Date' column not found in HubSpot data")
+        return pd.DataFrame()
+    
+    df['Close_Date'] = pd.to_datetime(df['Close_Date'], errors='coerce')
+    df = df[df['Close_Date'].notna()].copy()
+    
+    if df.empty:
+        st.info("ℹ️ No HubSpot deals with valid Close Date")
+        return df
+    
+    # Filter for deals closing in 2026
+    df = df[df['Close_Date'].dt.year == 2026].copy()
+    
+    if df.empty:
+        st.info("ℹ️ No HubSpot deals with 2026 close dates")
+        return df
+    
+    # Extract Year and Month from close date
+    df['Year'] = df['Close_Date'].dt.year
+    df['Month'] = df['Close_Date'].dt.month
+    
+    # Apply probability weighting based on Deal Stage
+    if 'Deal_Stage' in df.columns:
+        # Get default probability (50% if stage not in mapping)
+        df['Stage_Probability'] = df['Deal_Stage'].map(HUBSPOT_STAGE_PROBABILITY).fillna(0.50)
+        df['Weighted_Amount'] = df['Amount'] * df['Stage_Probability']
+        
+        # Show stage distribution
+        stage_summary = df.groupby('Deal_Stage').agg({
+            'Amount': 'sum',
+            'Weighted_Amount': 'sum',
+            'Deal_ID': 'nunique' if 'Deal_ID' in df.columns else 'count'
+        }).reset_index()
+        
+        st.info(f"🔍 HubSpot: {len(df)} deals across {df['Deal_Stage'].nunique()} stages")
+    else:
+        st.warning("⚠️ 'Deal Stage' column not found, using 50% default probability")
+        df['Stage_Probability'] = 0.50
+        df['Weighted_Amount'] = df['Amount'] * 0.50
+    
+    # Clean numeric columns
+    if 'Quantity' in df.columns:
+        df['Quantity'] = df['Quantity'].apply(clean_numeric)
+        df['Weighted_Quantity'] = df['Quantity'] * df['Stage_Probability']
+    else:
+        df['Quantity'] = 0
+        df['Weighted_Quantity'] = 0
+    
+    # Try to match Product Name to existing Product Type for filtering
+    # We'll use SKU or Product_Name as best effort
+    if 'Product_Name' in df.columns:
+        df['Product Type'] = df['Product_Name']  # Can enhance this with mapping later
+    else:
+        df['Product Type'] = 'Unknown'
+    
+    df['Item Type'] = 'Unknown'  # HubSpot data doesn't have this granularity yet
+    
+    # Mark this as pipeline data
+    df['Data_Source'] = 'Pipeline'
+    
+    st.success(f"✅ Processed {len(df):,} HubSpot pipeline deals (${df['Weighted_Amount'].sum():,.0f} weighted)")
     
     return df
 
@@ -788,9 +962,42 @@ def calculate_pending_orders_forecast(sales_order_df):
     return monthly_pending
 
 
-def combine_forecast_sources(historical_forecast, pending_forecast):
+def calculate_hubspot_forecast(hubspot_df):
     """
-    Combine historical baseline with pending orders to create unified forecast.
+    Calculate monthly forecast contribution from HubSpot pipeline.
+    Groups by close date month and uses weighted amounts (already probability-adjusted).
+    """
+    if hubspot_df.empty:
+        return pd.DataFrame()
+    
+    # Group by Year and Month
+    monthly_hs = hubspot_df.groupby(['Year', 'Month']).agg({
+        'Weighted_Amount': 'sum',
+        'Weighted_Quantity': 'sum',
+        'Deal_ID': 'nunique' if 'Deal_ID' in hubspot_df.columns else 'count'
+    }).reset_index()
+    
+    monthly_hs.columns = ['Year', 'Month', 'Weighted_Amount', 'Weighted_Quantity', 'Deal_Count']
+    
+    # Filter for 2026 only
+    monthly_hs = monthly_hs[monthly_hs['Year'] == 2026].copy()
+    
+    # Add month names
+    monthly_hs['MonthName'] = monthly_hs['Month'].apply(
+        lambda m: datetime(2026, m, 1).strftime('%B')
+    )
+    monthly_hs['MonthShort'] = monthly_hs['Month'].apply(
+        lambda m: datetime(2026, m, 1).strftime('%b')
+    )
+    monthly_hs['QuarterNum'] = ((monthly_hs['Month'] - 1) // 3) + 1
+    monthly_hs['Quarter'] = monthly_hs['QuarterNum'].apply(lambda q: f"Q{q} 2026")
+    
+    return monthly_hs
+
+
+def combine_forecast_sources(historical_forecast, pending_forecast, hubspot_forecast=None):
+    """
+    Combine historical baseline + active orders + HubSpot pipeline to create unified forecast.
     """
     if historical_forecast.empty:
         st.warning("⚠️ No historical forecast data")
@@ -798,12 +1005,17 @@ def combine_forecast_sources(historical_forecast, pending_forecast):
     
     combined = historical_forecast.copy()
     
-    # Add pending order columns (initialize to 0)
+    # Add active order columns (initialize to 0)
     combined['Pending_Amount'] = 0
     combined['Pending_Quantity'] = 0
     combined['Order_Count'] = 0
     
-    # Merge in pending orders by month
+    # Add HubSpot pipeline columns (initialize to 0)
+    combined['Pipeline_Amount'] = 0
+    combined['Pipeline_Quantity'] = 0
+    combined['Deal_Count'] = 0
+    
+    # Merge in active orders by month
     if not pending_forecast.empty:
         for _, pending_row in pending_forecast.iterrows():
             month = pending_row['Month']
@@ -814,13 +1026,32 @@ def combine_forecast_sources(historical_forecast, pending_forecast):
                 combined.loc[mask, 'Pending_Quantity'] = pending_row['Weighted_Quantity']
                 combined.loc[mask, 'Order_Count'] = pending_row['Order_Count']
     
+    # Merge in HubSpot pipeline by month
+    if hubspot_forecast is not None and not hubspot_forecast.empty:
+        for _, hs_row in hubspot_forecast.iterrows():
+            month = hs_row['Month']
+            mask = combined['Month'] == month
+            
+            if mask.any():
+                combined.loc[mask, 'Pipeline_Amount'] = hs_row['Weighted_Amount']
+                combined.loc[mask, 'Pipeline_Quantity'] = hs_row['Weighted_Quantity']
+                combined.loc[mask, 'Deal_Count'] = hs_row['Deal_Count']
+    
     # Rename baseline columns for clarity
     combined['Historical_Baseline_Amount'] = combined['Forecasted_Amount']
     combined['Historical_Baseline_Quantity'] = combined['Forecasted_Quantity']
     
-    # Calculate combined totals
-    combined['Forecasted_Amount'] = combined['Historical_Baseline_Amount'] + combined['Pending_Amount']
-    combined['Forecasted_Quantity'] = combined['Historical_Baseline_Quantity'] + combined['Pending_Quantity']
+    # Calculate combined totals (all three sources)
+    combined['Forecasted_Amount'] = (
+        combined['Historical_Baseline_Amount'] + 
+        combined['Pending_Amount'] + 
+        combined['Pipeline_Amount']
+    )
+    combined['Forecasted_Quantity'] = (
+        combined['Historical_Baseline_Quantity'] + 
+        combined['Pending_Quantity'] + 
+        combined['Pipeline_Quantity']
+    )
     
     # Calculate source mix percentages
     combined['Pct_Historical'] = np.where(
@@ -833,11 +1064,17 @@ def combine_forecast_sources(historical_forecast, pending_forecast):
         combined['Pending_Amount'] / combined['Forecasted_Amount'],
         0.0
     )
+    combined['Pct_Pipeline'] = np.where(
+        combined['Forecasted_Amount'] > 0,
+        combined['Pipeline_Amount'] / combined['Forecasted_Amount'],
+        0.0
+    )
     
     # Adjust confidence ranges based on source mix
-    # More pending orders = tighter confidence range
+    # More certain sources = tighter confidence range
     base_confidence = []
     for _, row in combined.iterrows():
+        # Base confidence by quarter
         if row['Month'] <= 3:
             base_conf = 0.20
         elif row['Month'] <= 6:
@@ -845,11 +1082,14 @@ def combine_forecast_sources(historical_forecast, pending_forecast):
         else:
             base_conf = 0.30
         
-        # Tighten confidence if we have pending orders
-        # Pending orders are 95% certain, so they reduce overall uncertainty
+        # Adjust based on data source mix
+        # Historical: ±20-30% confidence
+        # Active orders: ±10% confidence (95% certain)
+        # Pipeline: ±35% confidence (varies by stage)
         adjusted_conf = (
             row['Pct_Historical'] * base_conf +
-            row['Pct_Pending'] * 0.10  # ±10% for pending orders
+            row['Pct_Pending'] * 0.10 +  # Active orders are more certain
+            row['Pct_Pipeline'] * 0.35    # Pipeline is less certain
         )
         base_confidence.append(adjusted_conf)
     
@@ -866,13 +1106,15 @@ def combine_forecast_sources(historical_forecast, pending_forecast):
     quarterly_combined = combined.groupby(['QuarterNum', 'Quarter']).agg({
         'Historical_Baseline_Amount': 'sum',
         'Pending_Amount': 'sum',
+        'Pipeline_Amount': 'sum',
         'Forecasted_Amount': 'sum',
         'Forecasted_Quantity': 'sum',
         'Amt_Low': 'sum',
         'Amt_High': 'sum',
         'Qty_Low': 'sum',
         'Qty_High': 'sum',
-        'Order_Count': 'sum'
+        'Order_Count': 'sum',
+        'Deal_Count': 'sum'
     }).reset_index()
     
     return combined, quarterly_combined
@@ -1070,13 +1312,14 @@ def create_forecast_chart(monthly_forecast, metric='Amount'):
 
 def create_multi_source_stacked_chart(monthly_forecast):
     """
-    Create a stacked area chart showing historical baseline + active sales orders.
+    Create a stacked area chart showing historical baseline + active orders + HubSpot pipeline.
     """
     if monthly_forecast.empty:
         return None
     
     # Check if we have multi-source data
     has_pending = 'Pending_Amount' in monthly_forecast.columns and monthly_forecast['Pending_Amount'].sum() > 0
+    has_pipeline = 'Pipeline_Amount' in monthly_forecast.columns and monthly_forecast['Pipeline_Amount'].sum() > 0
     
     fig = go.Figure()
     
@@ -1093,7 +1336,7 @@ def create_multi_source_stacked_chart(monthly_forecast):
         stackgroup='one'
     ))
     
-    # Active orders (top layer) - only if we have active order data
+    # Active orders (middle layer) - only if we have active order data
     if has_pending:
         fig.add_trace(go.Scatter(
             x=monthly_forecast['MonthShort'],
@@ -1104,6 +1347,20 @@ def create_multi_source_stacked_chart(monthly_forecast):
             fillcolor='rgba(59, 130, 246, 0.5)',  # Blue
             fill='tonexty',
             hovertemplate='<b>%{x}</b><br>Active Orders: $%{y:,.0f}<extra></extra>',
+            stackgroup='one'
+        ))
+    
+    # HubSpot Pipeline (top layer) - only if we have pipeline data
+    if has_pipeline:
+        fig.add_trace(go.Scatter(
+            x=monthly_forecast['MonthShort'],
+            y=monthly_forecast['Pipeline_Amount'],
+            name='HubSpot Pipeline',
+            mode='lines',
+            line=dict(width=0),
+            fillcolor='rgba(249, 115, 22, 0.5)',  # Orange
+            fill='tonexty',
+            hovertemplate='<b>%{x}</b><br>Pipeline: $%{y:,.0f}<extra></extra>',
             stackgroup='one'
         ))
     
@@ -1118,9 +1375,17 @@ def create_multi_source_stacked_chart(monthly_forecast):
         hovertemplate='<b>%{x}</b><br>Total: $%{y:,.0f}<extra></extra>'
     ))
     
+    # Build title dynamically based on what sources are included
+    title_parts = ['Historical']
+    if has_pending:
+        title_parts.append('Active Orders')
+    if has_pipeline:
+        title_parts.append('Pipeline')
+    title_text = f"📊 2026 Forecast by Source ({' + '.join(title_parts)})"
+    
     fig.update_layout(
         title=dict(
-            text='📊 2026 Forecast by Source (Historical + Active Orders)',
+            text=title_text,
             font=dict(size=20),
             x=0.5
         ),
@@ -1149,6 +1414,141 @@ def create_multi_source_stacked_chart(monthly_forecast):
     )
     
     return fig
+
+
+def create_year_comparison_chart(filtered_df, monthly_forecast):
+    """
+    Create a comparison chart showing 2024 actual, 2025 actual, and 2026 forecast
+    """
+    if filtered_df.empty or monthly_forecast.empty:
+        return None
+    
+    # Get 2024 and 2025 actual data by month
+    monthly_actuals = filtered_df.groupby(['Year', 'Month']).agg({
+        'Amount': 'sum',
+        'Quantity': 'sum'
+    }).reset_index()
+    
+    # Prepare data for all 12 months
+    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    month_nums = list(range(1, 13))
+    
+    # Extract 2024 data
+    data_2024 = monthly_actuals[monthly_actuals['Year'] == 2024].set_index('Month')
+    revenue_2024 = [data_2024.loc[m, 'Amount'] if m in data_2024.index else 0 for m in month_nums]
+    
+    # Extract 2025 data
+    data_2025 = monthly_actuals[monthly_actuals['Year'] == 2025].set_index('Month')
+    revenue_2025 = [data_2025.loc[m, 'Amount'] if m in data_2025.index else 0 for m in month_nums]
+    
+    # Extract 2026 forecast
+    forecast_2026 = monthly_forecast.set_index('Month')
+    revenue_2026 = [forecast_2026.loc[m, 'Forecasted_Amount'] if m in forecast_2026.index else 0 for m in month_nums]
+    
+    fig = go.Figure()
+    
+    # 2024 bars
+    fig.add_trace(go.Bar(
+        x=months,
+        y=revenue_2024,
+        name='2024 Actual',
+        marker_color='rgba(139, 92, 246, 0.7)',
+        hovertemplate='<b>%{x} 2024</b><br>$%{y:,.0f}<extra></extra>'
+    ))
+    
+    # 2025 bars
+    fig.add_trace(go.Bar(
+        x=months,
+        y=revenue_2025,
+        name='2025 Actual',
+        marker_color='rgba(249, 115, 22, 0.7)',
+        hovertemplate='<b>%{x} 2025</b><br>$%{y:,.0f}<extra></extra>'
+    ))
+    
+    # 2026 bars
+    fig.add_trace(go.Bar(
+        x=months,
+        y=revenue_2026,
+        name='2026 Forecast',
+        marker_color='rgba(34, 197, 94, 0.7)',
+        hovertemplate='<b>%{x} 2026</b><br>$%{y:,.0f}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='📊 Year-Over-Year Comparison: 2024 vs 2025 vs 2026 Forecast',
+            font=dict(size=20),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Month',
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        yaxis=dict(
+            title='Revenue ($)',
+            gridcolor='rgba(128,128,128,0.2)',
+            tickformat='$,.0f'
+        ),
+        barmode='group',
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        ),
+        height=500,
+        margin=dict(t=80, b=60),
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
+def create_year_summary_table(filtered_df, monthly_forecast):
+    """
+    Create a summary table comparing 2024, 2025, and 2026
+    """
+    if filtered_df.empty or monthly_forecast.empty:
+        return None
+    
+    # Calculate totals
+    total_2024_rev = filtered_df[filtered_df['Year'] == 2024]['Amount'].sum()
+    total_2024_qty = filtered_df[filtered_df['Year'] == 2024]['Quantity'].sum()
+    
+    total_2025_rev = filtered_df[filtered_df['Year'] == 2025]['Amount'].sum()
+    total_2025_qty = filtered_df[filtered_df['Year'] == 2025]['Quantity'].sum()
+    
+    total_2026_rev = monthly_forecast['Forecasted_Amount'].sum()
+    total_2026_qty = monthly_forecast['Forecasted_Quantity'].sum()
+    
+    # Calculate growth rates
+    growth_25_vs_24 = ((total_2025_rev - total_2024_rev) / total_2024_rev * 100) if total_2024_rev > 0 else 0
+    growth_26_vs_25 = ((total_2026_rev - total_2025_rev) / total_2025_rev * 100) if total_2025_rev > 0 else 0
+    
+    summary_data = {
+        'Year': ['2024 Actual', '2025 Actual', '2026 Forecast'],
+        'Total Revenue': [
+            f'${total_2024_rev:,.0f}',
+            f'${total_2025_rev:,.0f}',
+            f'${total_2026_rev:,.0f}'
+        ],
+        'Total Quantity': [
+            f'{total_2024_qty:,.0f}',
+            f'{total_2025_qty:,.0f}',
+            f'{total_2026_qty:,.0f}'
+        ],
+        'Growth vs Prior Year': [
+            '-',
+            f'{growth_25_vs_24:+.1f}%',
+            f'{growth_26_vs_25:+.1f}%'
+        ]
+    }
+    
+    return pd.DataFrame(summary_data)
 
 
 def create_quarterly_chart(quarterly_forecast, metric='Amount'):
@@ -1479,13 +1879,13 @@ def main():
             📦 All Products Forecast - 2026 (Multi-Source)
         </h1>
         <p style="margin: 8px 0 0 0; opacity: 0.8;">
-            Revenue and quantity forecasting combining historical invoices + active sales orders
+            Revenue and quantity forecasting combining historical invoices + active sales orders + HubSpot pipeline
         </p>
     </div>
     """, unsafe_allow_html=True)
     
     # =========================
-    # LOAD DATA FROM BOTH SOURCES
+    # LOAD DATA FROM ALL THREE SOURCES
     # =========================
     
     # Load Invoice Line Items (historical data)
@@ -1503,7 +1903,7 @@ def main():
         st.error("❌ Invoice data processing failed. Check that required columns exist.")
         return
     
-    # Load Sales Order Line Items (pending orders)
+    # Load Sales Order Line Items (active orders)
     with st.spinner("Loading Sales Order Line Item data..."):
         raw_so_df = load_sales_order_line_items()
     
@@ -1523,8 +1923,24 @@ def main():
                 pending_order_count = len(sales_order_df)
                 pending_order_amount = sales_order_df['Amount'].sum()
     
+    # Load HubSpot Pipeline Data (future opportunities)
+    with st.spinner("Loading HubSpot Pipeline data..."):
+        raw_hubspot_df = load_hubspot_data()
+    
+    # Process HubSpot data
+    hubspot_df = pd.DataFrame()
+    hubspot_deal_count = 0
+    hubspot_weighted_amount = 0
+    
+    if not raw_hubspot_df.empty:
+        hubspot_df = process_hubspot_data(raw_hubspot_df)
+        
+        if not hubspot_df.empty:
+            hubspot_deal_count = len(hubspot_df)
+            hubspot_weighted_amount = hubspot_df['Weighted_Amount'].sum()
+    
     # Show data summary
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         st.success(f"✅ Loaded {len(invoice_df):,} invoice line items (historical)")
     with col2:
@@ -1532,6 +1948,11 @@ def main():
             st.success(f"✅ Loaded {pending_order_count:,} active sales order lines (${pending_order_amount:,.0f})")
         else:
             st.info("ℹ️ No active sales orders found")
+    with col3:
+        if hubspot_deal_count > 0:
+            st.success(f"✅ Loaded {hubspot_deal_count:,} HubSpot deals (${hubspot_weighted_amount:,.0f} weighted)")
+        else:
+            st.info("ℹ️ No HubSpot pipeline data found")
     
     # Use invoice_df as the base for filtering (historical data)
     df = invoice_df
@@ -1553,6 +1974,16 @@ def main():
     
     if include_pending_orders and not sales_order_df.empty:
         st.sidebar.success(f"✅ {pending_order_count:,} active orders included")
+    
+    include_hubspot_pipeline = st.sidebar.checkbox(
+        "Include HubSpot Pipeline",
+        value=True if not hubspot_df.empty else False,
+        disabled=hubspot_df.empty,
+        help="Add HubSpot pipeline deals to the forecast (weighted by stage probability)"
+    )
+    
+    if include_hubspot_pipeline and not hubspot_df.empty:
+        st.sidebar.success(f"✅ {hubspot_deal_count:,} pipeline deals included")
     
     # Historical weighting
     st.sidebar.markdown("---")
@@ -1692,19 +2123,44 @@ def main():
         if not filtered_so_df.empty:
             monthly_pending = calculate_pending_orders_forecast(filtered_so_df)
     
-    # Combine both sources
-    if not monthly_pending.empty:
+    # Calculate HubSpot pipeline forecast (if enabled and available)
+    monthly_hubspot = pd.DataFrame()
+    if include_hubspot_pipeline and not hubspot_df.empty:
+        # Apply same filters to HubSpot data (where applicable)
+        filtered_hs_df = hubspot_df.copy()
+        
+        # Note: HubSpot might not have exact same Product Type/Item Type structure
+        # Filter by Product_Name if it matches selected_product_type
+        if selected_product_type != 'All' and 'Product Type' in filtered_hs_df.columns:
+            filtered_hs_df = filtered_hs_df[filtered_hs_df['Product Type'] == selected_product_type]
+        
+        if selected_customer != 'All' and 'Company_Name' in filtered_hs_df.columns:
+            filtered_hs_df = filtered_hs_df[filtered_hs_df['Company_Name'] == selected_customer]
+        
+        if not filtered_hs_df.empty:
+            monthly_hubspot = calculate_hubspot_forecast(filtered_hs_df)
+    
+    # Combine all three sources
+    has_pending = not monthly_pending.empty
+    has_hubspot = not monthly_hubspot.empty
+    
+    if has_pending or has_hubspot:
         monthly_forecast, quarterly_forecast = combine_forecast_sources(
-            monthly_historical, monthly_pending
+            monthly_historical, 
+            monthly_pending if has_pending else pd.DataFrame(),
+            monthly_hubspot if has_hubspot else pd.DataFrame()
         )
     else:
         monthly_forecast = monthly_historical
         quarterly_forecast = quarterly_historical
-        # Add pending columns for consistency
+        # Add source columns for consistency
         if not monthly_forecast.empty:
             monthly_forecast['Pending_Amount'] = 0
             monthly_forecast['Pending_Quantity'] = 0
             monthly_forecast['Order_Count'] = 0
+            monthly_forecast['Pipeline_Amount'] = 0
+            monthly_forecast['Pipeline_Quantity'] = 0
+            monthly_forecast['Deal_Count'] = 0
             monthly_forecast['Historical_Baseline_Amount'] = monthly_forecast['Forecasted_Amount']
             monthly_forecast['Historical_Baseline_Quantity'] = monthly_forecast['Forecasted_Quantity']
     
@@ -1731,16 +2187,20 @@ def main():
         total_amt_2026 = monthly_forecast['Forecasted_Amount'].sum()
         total_historical = monthly_forecast['Historical_Baseline_Amount'].sum()
         total_pending = monthly_forecast['Pending_Amount'].sum()
+        total_pipeline = monthly_forecast['Pipeline_Amount'].sum() if 'Pipeline_Amount' in monthly_forecast.columns else 0
         q1_qty = monthly_forecast[monthly_forecast['QuarterNum'] == 1]['Forecasted_Quantity'].sum()
         q1_amt = monthly_forecast[monthly_forecast['QuarterNum'] == 1]['Forecasted_Amount'].sum()
         
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
-            delta_text = None
+            delta_components = []
             if total_pending > 0:
-                pct_pending = (total_pending / total_amt_2026 * 100)
-                delta_text = f"${total_pending:,.0f} from active orders ({pct_pending:.0f}%)"
+                delta_components.append(f"${total_pending:,.0f} active")
+            if total_pipeline > 0:
+                delta_components.append(f"${total_pipeline:,.0f} pipeline")
+            delta_text = " + ".join(delta_components) if delta_components else None
+            
             st.metric(
                 "2026 Total Revenue",
                 f"${total_amt_2026:,.0f}",
@@ -1755,13 +2215,6 @@ def main():
             )
         
         with col3:
-            st.metric(
-                "Q1 2026 Revenue",
-                f"${q1_amt:,.0f}",
-                delta="Highest confidence"
-            )
-        
-        with col4:
             if total_pending > 0:
                 pending_orders_count = monthly_forecast['Order_Count'].sum()
                 st.metric(
@@ -1769,6 +2222,34 @@ def main():
                     f"${total_pending:,.0f}",
                     delta=f"{int(pending_orders_count)} orders"
                 )
+            else:
+                st.metric(
+                    "Active Orders",
+                    "$0",
+                    delta="None loaded"
+                )
+        
+        with col4:
+            if total_pipeline > 0:
+                pipeline_deals_count = monthly_forecast['Deal_Count'].sum()
+                st.metric(
+                    "HubSpot Pipeline",
+                    f"${total_pipeline:,.0f}",
+                    delta=f"{int(pipeline_deals_count)} deals"
+                )
+            else:
+                st.metric(
+                    "HubSpot Pipeline",
+                    "$0",
+                    delta="None loaded"
+                )
+        
+        with col5:
+            st.metric(
+                "Q1 2026 Revenue",
+                f"${q1_amt:,.0f}",
+                delta="Highest confidence"
+            )
             else:
                 st.metric(
                     "2026 Total Quantity",
@@ -1791,6 +2272,21 @@ def main():
     ])
     
     with tab1:
+        # Year-over-year comparison
+        st.markdown("### 📊 Year-Over-Year Comparison")
+        
+        year_comparison_chart = create_year_comparison_chart(filtered_df, monthly_forecast)
+        if year_comparison_chart:
+            st.plotly_chart(year_comparison_chart, use_container_width=True)
+        
+        # Summary table
+        summary_table = create_year_summary_table(filtered_df, monthly_forecast)
+        if summary_table is not None:
+            st.markdown("#### 📋 Annual Summary")
+            st.dataframe(summary_table, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        
         # Historical trend
         st.markdown("### 📈 Historical Revenue Trend")
         hist_chart = create_historical_trend_chart(filtered_df)
