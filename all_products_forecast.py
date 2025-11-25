@@ -68,7 +68,7 @@ SALES_REPS = [
 # Outlier and data quality settings
 MIN_REVENUE_FOR_RECOMMENDATION = 50000  # Minimum $50K revenue to be recommended
 MIN_ORDERS_FOR_ANALYSIS = 5  # Minimum 5 orders to be considered
-OUTLIER_THRESHOLD_STD = 3.0  # Standard deviations for outlier detection
+OUTLIER_THRESHOLD_STD = 2.0  # Standard deviations for planning recommendations (2σ = ~95% of data)
 
 # =============================================================================
 # DATA LOADING
@@ -2524,6 +2524,25 @@ def main():
     df = invoice_df
     
     # =========================
+    # DEBUG INFO - Show actual totals
+    # =========================
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 Data Loaded")
+    
+    if not df.empty:
+        total_2024 = df[df['Year'] == 2024]['Amount'].sum()
+        total_2025 = df[df['Year'] == 2025]['Amount'].sum()
+        count_2024 = len(df[df['Year'] == 2024])
+        count_2025 = len(df[df['Year'] == 2025])
+        
+        st.sidebar.metric("2024 Revenue", f"${total_2024:,.0f}", delta=f"{count_2024:,} invoices")
+        st.sidebar.metric("2025 Revenue", f"${total_2025:,.0f}", delta=f"{count_2025:,} invoices")
+        
+        if total_2024 > 0:
+            yoy_change = ((total_2025 - total_2024) / total_2024) * 100
+            st.sidebar.caption(f"YoY Change: {yoy_change:+.1f}%")
+    
+    # =========================
     # SIDEBAR CONTROLS
     # =========================
     
@@ -2654,27 +2673,33 @@ def main():
         filtered_df = filtered_df[filtered_df['Sales Rep'] == selected_rep]
         filter_desc.append(f"Sales Rep: {selected_rep}")
     
-    # Data quality: Remove outliers and smooth data
+    # Data quality settings for PLANNING/RECOMMENDATIONS only
+    # These do NOT affect historical actuals or baseline forecast
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🧹 Data Quality")
+    st.sidebar.markdown("### 🧹 Planning Data Quality")
+    st.sidebar.caption("⚠️ Only affects Goal Planning recommendations, NOT historical actuals")
     
-    apply_outlier_removal = st.sidebar.checkbox(
-        "Remove Statistical Outliers",
-        value=True,
-        help=f"Remove transactions beyond {OUTLIER_THRESHOLD_STD} standard deviations"
+    apply_outlier_removal_planning = st.sidebar.checkbox(
+        "Remove Outliers (Planning Only)",
+        value=False,
+        help=f"For recommendations: Remove transactions beyond {OUTLIER_THRESHOLD_STD} standard deviations. Does NOT affect historical baseline."
     )
     
-    apply_smoothing = st.sidebar.checkbox(
-        "Filter Low-Volume Products",
-        value=True,
-        help=f"Only include products with >${MIN_REVENUE_FOR_RECOMMENDATION/1000:.0f}K revenue and >{MIN_ORDERS_FOR_ANALYSIS} orders"
+    apply_smoothing_planning = st.sidebar.checkbox(
+        "Filter Low-Volume Products (Planning)",
+        value=False,
+        help=f"For recommendations: Only include products with >${MIN_REVENUE_FOR_RECOMMENDATION/1000:.0f}K revenue and >{MIN_ORDERS_FOR_ANALYSIS} orders. Does NOT affect historical baseline."
     )
     
-    if apply_outlier_removal:
-        filtered_df = remove_outliers(filtered_df, column='Amount', threshold_std=OUTLIER_THRESHOLD_STD)
+    # Create separate planning dataframe (for Goal Planning tab recommendations)
+    # This is ONLY used for product recommendations, NOT for historical baseline
+    planning_df = filtered_df.copy()
     
-    if apply_smoothing:
-        filtered_df = smooth_product_data(filtered_df, min_revenue=MIN_REVENUE_FOR_RECOMMENDATION, min_orders=MIN_ORDERS_FOR_ANALYSIS)
+    if apply_outlier_removal_planning:
+        planning_df = remove_outliers(planning_df, column='Amount', threshold_std=OUTLIER_THRESHOLD_STD)
+    
+    if apply_smoothing_planning:
+        planning_df = smooth_product_data(planning_df, min_revenue=MIN_REVENUE_FOR_RECOMMENDATION, min_orders=MIN_ORDERS_FOR_ANALYSIS)
     
     # Dynamic forecast adjustments
     st.sidebar.markdown("---")
@@ -2972,6 +2997,18 @@ def main():
     with tab2:
         st.markdown("### 🎯 Strategic Goal Planning")
         
+        # Explanation box
+        st.info("""
+        **📌 Note on Data Quality Settings:**
+        
+        The "Planning Data Quality" settings in the sidebar (Remove Outliers, Filter Low-Volume Products) **only affect 
+        product recommendations** on this tab. They do NOT change your historical actuals or baseline forecast.
+        
+        - ✅ Historical 2024/2025 revenue = Always shows actual data (never filtered)
+        - ✅ Baseline forecast = Based on actual historical data (never filtered)
+        - 🎯 Product recommendations below = Optionally filtered to remove noise from planning
+        """)
+        
         # Goal setting
         col1, col2 = st.columns([1, 1])
         
@@ -3010,7 +3047,9 @@ def main():
             st.markdown("### 🎯 Recommended Product Focus Areas")
             st.markdown(f"*To close the ${gap_info['gap']:,.0f} gap, consider focusing on these high-growth products:*")
             
-            growth_potential = calculate_product_growth_potential(filtered_df)
+            # Use planning_df (with optional outlier removal) for recommendations
+            # This does NOT affect the historical baseline forecast
+            growth_potential = calculate_product_growth_potential(planning_df)
             
             if growth_potential is not None:
                 recommendations = recommend_product_focus(growth_potential, gap_info['gap'], top_n=5)
