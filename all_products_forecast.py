@@ -109,6 +109,26 @@ def clean_numeric(value):
         return 0
 
 
+def format_currency(x):
+    """Format currency with M for millions, K for thousands"""
+    if x >= 1000000:
+        return f"${x/1000000:.1f}M"
+    elif x >= 1000:
+        return f"${x/1000:.0f}K"
+    else:
+        return f"${int(x)}"
+
+
+def format_quantity(x):
+    """Format quantity with M for millions, K for thousands"""
+    if x >= 1000000:
+        return f"{x/1000000:.1f}M"
+    elif x >= 1000:
+        return f"{x/1000:.0f}K"
+    else:
+        return str(int(x))
+
+
 def process_invoice_data(df):
     """
     Process the invoice line item data with known column mappings.
@@ -521,7 +541,7 @@ def create_historical_trend_chart(df, title_suffix=""):
                 color=color_map.get(year, '#6366f1'),
                 line=dict(color='rgba(255,255,255,0.3)', width=1)
             ),
-            text=year_data['Amount'].apply(lambda x: f"${x/1000:.0f}K" if x >= 1000 else f"${int(x)}"),
+            text=year_data['Amount'].apply(format_currency),
             textposition='outside',
             hovertemplate='<b>%{x}</b><br>Revenue: $%{y:,.0f}<extra></extra>'
         ))
@@ -576,7 +596,7 @@ def create_forecast_chart(monthly_forecast, metric='Amount'):
         hist_2024 = 'Historical_Amt_2024'
         hist_2025 = 'Historical_Amt_2025'
         y_title = 'Revenue ($)'
-        format_func = lambda x: f"${x/1000:.0f}K" if x >= 1000 else f"${int(x)}"
+        format_func = format_currency
         hover_format = 'Revenue: $%{y:,.0f}'
     else:
         y_col = 'Forecasted_Quantity'
@@ -585,7 +605,7 @@ def create_forecast_chart(monthly_forecast, metric='Amount'):
         hist_2024 = 'Historical_Qty_2024'
         hist_2025 = 'Historical_Qty_2025'
         y_title = 'Quantity (Units)'
-        format_func = lambda x: f"{x/1000:.0f}K" if x >= 1000 else str(int(x))
+        format_func = format_quantity
         hover_format = 'Quantity: %{y:,.0f}'
     
     # Add confidence band (shaded area)
@@ -680,12 +700,12 @@ def create_quarterly_chart(quarterly_forecast, metric='Amount'):
     if metric == 'Amount':
         y_col = 'Forecasted_Amount'
         y_title = 'Revenue ($)'
-        format_func = lambda x: f"${x/1000:.0f}K"
+        format_func = format_currency
         hover_format = 'Revenue: $%{y:,.0f}'
     else:
         y_col = 'Forecasted_Quantity'
         y_title = 'Quantity (Units)'
-        format_func = lambda x: f"{x/1000:.0f}K"
+        format_func = format_quantity
         hover_format = 'Quantity: %{y:,.0f}'
     
     fig = go.Figure()
@@ -819,7 +839,7 @@ def create_top_customers_chart(df, top_n=15):
             colorscale='Viridis',
             line=dict(color='rgba(255,255,255,0.3)', width=1)
         ),
-        text=customer_totals['Amount'].apply(lambda x: f"${x/1000:.0f}K" if x >= 1000 else f"${x:.0f}"),
+        text=customer_totals['Amount'].apply(format_currency),
         textposition='outside',
         hovertemplate='<b>%{y}</b><br>Revenue: $%{x:,.0f}<extra></extra>'
     ))
@@ -1175,14 +1195,14 @@ def main():
             st.metric(
                 "2026 Total Revenue",
                 f"${total_amt_2026:,.0f}",
-                delta=f"${total_amt_2026/1000:.0f}K"
+                delta=format_currency(total_amt_2026)
             )
         
         with col2:
             st.metric(
                 "2026 Total Quantity",
                 f"{total_qty_2026:,.0f}",
-                delta=f"{total_qty_2026/1000:.0f}K units"
+                delta=f"{format_quantity(total_qty_2026)} units"
             )
         
         with col3:
@@ -1324,8 +1344,8 @@ def main():
                 
                 # Format columns
                 for col in ['2026 Revenue', 'Q1 Revenue', 'Q2 Revenue', 'Q3 Revenue', 'Q4 Revenue']:
-                    forecast_table[col] = forecast_table[col].apply(lambda x: f"${x:,.0f}")
-                forecast_table['2026 Quantity'] = forecast_table['2026 Quantity'].apply(lambda x: f"{x:,.0f}")
+                    forecast_table[col] = forecast_table[col].apply(format_currency)
+                forecast_table['2026 Quantity'] = forecast_table['2026 Quantity'].apply(format_quantity)
                 
                 st.dataframe(forecast_table, use_container_width=True, hide_index=True)
     
@@ -1350,8 +1370,8 @@ def main():
             customer_summary = customer_summary.sort_values('Total Revenue', ascending=False)
             
             # Format columns
-            customer_summary['Total Revenue'] = customer_summary['Total Revenue'].apply(lambda x: f"${x:,.0f}")
-            customer_summary['Total Quantity'] = customer_summary['Total Quantity'].apply(lambda x: f"{x:,.0f}")
+            customer_summary['Total Revenue'] = customer_summary['Total Revenue'].apply(format_currency)
+            customer_summary['Total Quantity'] = customer_summary['Total Quantity'].apply(format_quantity)
             customer_summary['First Order'] = pd.to_datetime(customer_summary['First Order']).dt.strftime('%b %Y')
             customer_summary['Last Order'] = pd.to_datetime(customer_summary['Last Order']).dt.strftime('%b %Y')
             
@@ -1375,7 +1395,11 @@ def main():
             
             # Format currency columns
             for col in ['Forecast Revenue', 'Rev Low', 'Rev High', '2024 Revenue', '2025 Revenue']:
-                display_df[col] = display_df[col].apply(lambda x: f"${x:,.0f}")
+                display_df[col] = display_df[col].apply(format_currency)
+            
+            # Format quantity columns
+            for col in ['Forecast Qty', 'Qty Low', 'Qty High']:
+                display_df[col] = display_df[col].apply(format_quantity)
             
             st.dataframe(display_df, use_container_width=True, hide_index=True)
         
