@@ -2260,12 +2260,6 @@ def main():
                 f"${q1_amt:,.0f}",
                 delta="Highest confidence"
             )
-            else:
-                st.metric(
-                    "2026 Total Quantity",
-                    f"{total_qty_2026:,.0f}",
-                    delta=format_currency(total_amt_2026)
-                )
     
     st.markdown("---")
     
