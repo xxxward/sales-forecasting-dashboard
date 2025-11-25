@@ -412,13 +412,13 @@ def process_sales_order_data(df):
     if 'Date_Closed' in df.columns:
         closed_mask = df['Date_Closed'].notna() & (df['Date_Closed'] != '')
         df = df[~closed_mask].copy()
-        st.info(f"🔍 Excluded {closed_mask.sum():,} closed orders")
+        # Excluded closed orders silently
     
     # Exclude orders with Date Billed populated  
     if 'Date_Billed' in df.columns:
         billed_mask = df['Date_Billed'].notna() & (df['Date_Billed'] != '')
         df = df[~billed_mask].copy()
-        st.info(f"🔍 Excluded {billed_mask.sum():,} billed orders")
+        # Excluded billed orders silently
     
     # Use Date Created to filter for recent orders only
     if 'Date_Created' not in df.columns:
@@ -431,7 +431,6 @@ def process_sales_order_data(df):
     df = df[df['Date_Created'].notna()].copy()
     
     if df.empty:
-        st.info("ℹ️ No sales orders with valid Date Created")
         return df
     
     # Filter for orders created in the last 12 months (adjust as needed)
@@ -441,11 +440,9 @@ def process_sales_order_data(df):
     df = df[df['Date_Created'] >= cutoff_date].copy()
     after_date_filter = len(df)
     
-    if before_date_filter > after_date_filter:
-        st.info(f"🔍 Filtered to orders from last 12 months: {after_date_filter:,} orders (excluded {before_date_filter - after_date_filter:,} older orders)")
+    # Filtered to recent orders silently
     
     if df.empty:
-        st.info("ℹ️ No active sales orders from the last 12 months")
         return df
     
     # For 2026 forecast: Use the creation month to assign to corresponding month in 2026
@@ -466,8 +463,6 @@ def process_sales_order_data(df):
     
     # Mark this as active order data
     df['Data_Source'] = 'Active Order'
-    
-    st.success(f"✅ Final result: {len(df):,} active orders (${df['Amount'].sum():,.0f} total)")
     
     return df
 
@@ -533,14 +528,12 @@ def process_hubspot_data(df):
     df = df[df['Close_Date'].notna()].copy()
     
     if df.empty:
-        st.info("ℹ️ No HubSpot deals with valid Close Date")
         return df
     
     # Filter for deals closing in 2026
     df = df[df['Close_Date'].dt.year == 2026].copy()
     
     if df.empty:
-        st.info("ℹ️ No HubSpot deals with 2026 close dates")
         return df
     
     # Extract Year and Month from close date
@@ -553,26 +546,9 @@ def process_hubspot_data(df):
         df['Status_Probability'] = df['Close_Status'].map(HUBSPOT_CLOSE_STATUS_PROBABILITY).fillna(0.25)
         df['Weighted_Amount'] = df['Amount'] * df['Status_Probability']
         
-        # Show status distribution
-        status_summary = df.groupby('Close_Status').agg({
-            'Amount': 'sum',
-            'Weighted_Amount': 'sum',
-            'Deal_ID': 'nunique' if 'Deal_ID' in df.columns else 'count'
-        }).reset_index()
-        
-        st.info(f"🔍 HubSpot: {len(df)} deals across {df['Close_Status'].nunique()} statuses (Commit/Expect/Best Case/Opportunity)")
-        
-        # Show breakdown by status
-        for _, row in status_summary.iterrows():
-            status = row['Close_Status']
-            count = row['Deal_ID']
-            total = row['Amount']
-            weighted = row['Weighted_Amount']
-            prob = HUBSPOT_CLOSE_STATUS_PROBABILITY.get(status, 0.25)
-            st.info(f"   • {status}: {count} deals, ${total:,.0f} total → ${weighted:,.0f} weighted ({prob:.0%})")
+        # Status summary calculated silently
         
     else:
-        st.warning("⚠️ 'Close Status' column not found, using 25% default probability")
         df['Status_Probability'] = 0.25
         df['Weighted_Amount'] = df['Amount'] * 0.25
     
@@ -601,19 +577,15 @@ def process_hubspot_data(df):
         #     # Add more mappings as needed
         # })
         
-        # Log unique product types for visibility
-        unique_hs_products = df['Product Type'].nunique()
-        st.info(f"🔍 HubSpot contains {unique_hs_products} unique product types")
+        # Product types logged silently
+        
     else:
         df['Product Type'] = 'Unknown'
-        st.warning("⚠️ 'Product Name' column not found in HubSpot data")
     
     df['Item Type'] = 'Unknown'  # HubSpot data doesn't have this granularity yet
     
     # Mark this as pipeline data
     df['Data_Source'] = 'Pipeline'
-    
-    st.success(f"✅ Processed {len(df):,} HubSpot pipeline deals (${df['Weighted_Amount'].sum():,.0f} weighted)")
     
     return df
 
@@ -2522,20 +2494,8 @@ def main():
             hubspot_deal_count = len(hubspot_df)
             hubspot_weighted_amount = hubspot_df['Weighted_Amount'].sum()
     
-    # Show data summary
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.success(f"✅ Loaded {len(invoice_df):,} invoice line items (historical)")
-    with col2:
-        if pending_order_count > 0:
-            st.success(f"✅ Loaded {pending_order_count:,} active sales order lines (${pending_order_amount:,.0f})")
-        else:
-            st.info("ℹ️ No active sales orders found")
-    with col3:
-        if hubspot_deal_count > 0:
-            st.success(f"✅ Loaded {hubspot_deal_count:,} HubSpot deals (${hubspot_weighted_amount:,.0f} weighted)")
-        else:
-            st.info("ℹ️ No HubSpot pipeline data found")
+    # Show data summary - removed to clean up interface
+    # Data counts available in sidebar "Data Loaded" section
     
     # Use invoice_df as the base for filtering (historical data)
     df = invoice_df
@@ -2643,27 +2603,23 @@ def main():
     else:
         selected_product_type = 'All'
     
-    # Item Type filter
-    if 'Item Type' in df.columns:
-        item_types = ['All'] + sorted(df['Item Type'].unique().tolist())
-        selected_item_type = st.sidebar.selectbox(
-            "Item Type",
-            item_types,
-            help="Filter by Calyx | Item Type"
-        )
-    else:
-        selected_item_type = 'All'
-    
-    # Customer filter
+    # Customer filter - searchable multiselect, exclude numeric-only names
     if 'Customer' in df.columns:
-        customers = ['All'] + sorted(df['Customer'].dropna().unique().tolist())
-        selected_customer = st.sidebar.selectbox(
-            "Customer",
-            customers[:100],  # Limit dropdown size
-            help="Filter by customer (top 100 shown)"
+        # Filter out customers that are just numbers
+        all_customers_raw = df['Customer'].dropna().unique().tolist()
+        all_customers = sorted([
+            c for c in all_customers_raw 
+            if not str(c).strip().replace('.', '').replace('-', '').isdigit()
+        ])
+        
+        selected_customers = st.sidebar.multiselect(
+            "Customer (Searchable)",
+            options=all_customers,
+            default=[],
+            help="Search and select customers to analyze"
         )
     else:
-        selected_customer = 'All'
+        selected_customers = []
     
     # Sales Rep filter
     if 'Sales Rep' in df.columns:
@@ -2689,13 +2645,12 @@ def main():
         filtered_df = filtered_df[filtered_df['Product Type'] == selected_product_type]
         filter_desc.append(f"Product Type: {selected_product_type}")
     
-    if selected_item_type != 'All':
-        filtered_df = filtered_df[filtered_df['Item Type'] == selected_item_type]
-        filter_desc.append(f"Item Type: {selected_item_type}")
-    
-    if selected_customer != 'All':
-        filtered_df = filtered_df[filtered_df['Customer'] == selected_customer]
-        filter_desc.append(f"Customer: {selected_customer}")
+    if selected_customers:  # Changed from selected_customer != 'All'
+        filtered_df = filtered_df[filtered_df['Customer'].isin(selected_customers)]
+        if len(selected_customers) == 1:
+            filter_desc.append(f"Customer: {selected_customers[0]}")
+        else:
+            filter_desc.append(f"Customers: {len(selected_customers)} selected")
     
     if selected_rep != 'All':
         filtered_df = filtered_df[filtered_df['Sales Rep'] == selected_rep]
@@ -2754,9 +2709,7 @@ def main():
     
     quarterly_adjustments = {1: q1_adj/100, 2: q2_adj/100, 3: q3_adj/100, 4: q4_adj/100}
     
-    # Show active filters
-    if filter_desc:
-        st.info(f"🔍 Active Filters: {' | '.join(filter_desc)} ({len(filtered_df):,} records)")
+    # Active filters tracked silently in filter_desc
     
     # =========================
     # GENERATE FORECASTS
@@ -2780,11 +2733,8 @@ def main():
         if selected_product_type != 'All' and 'Product Type' in filtered_so_df.columns:
             filtered_so_df = filtered_so_df[filtered_so_df['Product Type'] == selected_product_type]
         
-        if selected_item_type != 'All' and 'Item Type' in filtered_so_df.columns:
-            filtered_so_df = filtered_so_df[filtered_so_df['Item Type'] == selected_item_type]
-        
-        if selected_customer != 'All' and 'Customer' in filtered_so_df.columns:
-            filtered_so_df = filtered_so_df[filtered_so_df['Customer'] == selected_customer]
+        if selected_customers and 'Customer' in filtered_so_df.columns:
+            filtered_so_df = filtered_so_df[filtered_so_df['Customer'].isin(selected_customers)]
         
         if not filtered_so_df.empty:
             monthly_pending = calculate_pending_orders_forecast(filtered_so_df)
@@ -2795,13 +2745,13 @@ def main():
         # Apply same filters to HubSpot data (where applicable)
         filtered_hs_df = hubspot_df.copy()
         
-        # Note: HubSpot might not have exact same Product Type/Item Type structure
-        # Filter by Product_Name if it matches selected_product_type
+        # Note: HubSpot might not have exact same Product Type structure
+        # Filter by Product Type if it matches selected_product_type
         if selected_product_type != 'All' and 'Product Type' in filtered_hs_df.columns:
             filtered_hs_df = filtered_hs_df[filtered_hs_df['Product Type'] == selected_product_type]
         
-        if selected_customer != 'All' and 'Company_Name' in filtered_hs_df.columns:
-            filtered_hs_df = filtered_hs_df[filtered_hs_df['Company_Name'] == selected_customer]
+        if selected_customers and 'Company_Name' in filtered_hs_df.columns:
+            filtered_hs_df = filtered_hs_df[filtered_hs_df['Company_Name'].isin(selected_customers)]
         
         if not filtered_hs_df.empty:
             monthly_hubspot = calculate_hubspot_forecast(filtered_hs_df)
@@ -3117,7 +3067,7 @@ def main():
         
         # Scenario Planning
         st.markdown("### 🎨 Scenario Planning")
-        st.markdown("*Adjust product category growth rates to model different scenarios*")
+        st.markdown("*Set target increases for each product category*")
         
         if 'Product Type' in filtered_df.columns:
             # Get ALL product types (not just top 8)
@@ -3136,46 +3086,41 @@ def main():
                 product_summary['% of Total'] = (product_summary['Total Revenue'] / product_summary['Total Revenue'].sum() * 100).apply(lambda x: f"{x:.1f}%")
                 st.dataframe(product_summary[['Product Type', 'Revenue', '% of Total']], use_container_width=True, hide_index=True)
             
-            st.markdown("#### Adjust Growth Rates by Product Category")
+            st.markdown("#### Set Revenue Increases by Product Category")
             st.caption(f"📊 Showing all {len(all_products)} product types (sorted by revenue)")
+            st.caption("💡 Enter dollar amounts to increase each product category (e.g., $100000 = add $100K)")
             
-            product_scenarios = {}
+            product_increases = {}
             
-            # Create sliders for ALL products (organized in rows of 4)
+            # Create number inputs for ALL products (organized in rows of 3)
             product_list = list(all_products.items())
             
-            for i in range(0, len(product_list), 4):
-                cols = st.columns(4)
-                batch = product_list[i:i+4]
+            for i in range(0, len(product_list), 3):
+                cols = st.columns(3)
+                batch = product_list[i:i+3]
                 
                 for idx, (product, revenue) in enumerate(batch):
                     with cols[idx]:
-                        multiplier = st.slider(
-                            f"{product[:25]}..." if len(product) > 25 else product,
-                            min_value=0.5,
-                            max_value=2.0,
-                            value=1.0,
-                            step=0.1,
-                            format="%.1fx",
+                        increase = st.number_input(
+                            f"{product[:30]}..." if len(product) > 30 else product,
+                            min_value=-int(revenue),  # Can't decrease more than current revenue
+                            max_value=10000000,  # Max $10M increase
+                            value=0,
+                            step=50000,  # $50K steps
+                            format="%d",
                             key=f"scenario_{product}",
-                            help=f"Historical Revenue: ${revenue:,.0f}"
+                            help=f"Current Revenue: ${revenue:,.0f}\nEnter $ amount to add/subtract"
                         )
-                        product_scenarios[product] = multiplier
+                        product_increases[product] = increase
             
             # Show scenario impact
-            if any(v != 1.0 for v in product_scenarios.values()):
+            if any(v != 0 for v in product_increases.values()):
                 st.markdown("#### 📊 Scenario Impact")
                 
-                # Calculate weighted impact
-                total_revenue = filtered_df['Amount'].sum()
-                weighted_impact = 0
+                # Calculate total dollar increase
+                total_increase = sum(product_increases.values())
                 
-                for product, multiplier in product_scenarios.items():
-                    product_revenue = filtered_df[filtered_df['Product Type'] == product]['Amount'].sum()
-                    product_pct = product_revenue / total_revenue if total_revenue > 0 else 0
-                    weighted_impact += (multiplier - 1.0) * product_pct
-                
-                scenario_forecast = current_forecast_total * (1 + weighted_impact)
+                scenario_forecast = current_forecast_total + total_increase
                 scenario_gap = revenue_goal_2026 - scenario_forecast
                 
                 col1, col2, col3 = st.columns(3)
@@ -3183,20 +3128,39 @@ def main():
                     st.metric(
                         "Scenario Forecast",
                         f"${scenario_forecast:,.0f}",
-                        delta=f"${scenario_forecast - current_forecast_total:,.0f}"
+                        delta=f"${total_increase:+,.0f}"
                     )
                 with col2:
-                    st.metric(
-                        "vs Goal",
-                        f"${scenario_gap:,.0f}" if scenario_gap > 0 else "✅ Goal Met",
-                        delta="Gap" if scenario_gap > 0 else "Surplus"
-                    )
+                    if scenario_gap > 0:
+                        st.metric(
+                            "Gap Remaining",
+                            f"${scenario_gap:,.0f}",
+                            delta=f"{(scenario_gap / revenue_goal_2026 * 100):.1f}% of goal"
+                        )
+                    else:
+                        st.metric(
+                            "Goal Status",
+                            "✅ Goal Met",
+                            delta=f"Surplus: ${abs(scenario_gap):,.0f}"
+                        )
                 with col3:
-                    growth_needed = ((scenario_forecast / current_forecast_total) - 1) * 100
+                    growth_pct = (total_increase / current_forecast_total) * 100 if current_forecast_total > 0 else 0
                     st.metric(
                         "Total Growth",
-                        f"{growth_needed:+.1f}%"
+                        f"{growth_pct:+.1f}%",
+                        delta=f"${total_increase:+,.0f}"
                     )
+                
+                # Show breakdown by product
+                if st.checkbox("Show Product Breakdown", value=False, key="scenario_breakdown"):
+                    increases_df = pd.DataFrame([
+                        {'Product Type': prod, 'Increase': inc}
+                        for prod, inc in product_increases.items() if inc != 0
+                    ])
+                    if not increases_df.empty:
+                        increases_df = increases_df.sort_values('Increase', ascending=False)
+                        increases_df['Increase'] = increases_df['Increase'].apply(lambda x: f"${x:+,.0f}")
+                        st.dataframe(increases_df, use_container_width=True, hide_index=True)
     
     with tab3:
         st.markdown("### 👥 Sales Rep Territory Planning")
@@ -3363,6 +3327,157 @@ def main():
                                 use_container_width=True,
                                 hide_index=True
                             )
+                            
+                            # Individual Customer Deep Dive
+                            st.markdown("---")
+                            st.markdown("##### 🔍 Individual Customer Analysis")
+                            st.caption("Select a customer to view detailed analysis and forecast")
+                            
+                            # Get list of customers for this rep (excluding at-risk)
+                            active_rep_customers = [c for c in rep_customers if c not in churned_customers]
+                            
+                            if active_rep_customers:
+                                selected_customer = st.selectbox(
+                                    "Select Customer to Analyze",
+                                    options=active_rep_customers,
+                                    key=f"customer_analysis_{selected_rep}"
+                                )
+                                
+                                if selected_customer:
+                                    # Get customer data
+                                    customer_df = filtered_df[
+                                        (filtered_df['Sales Rep'] == selected_rep) & 
+                                        (filtered_df['Customer'] == selected_customer)
+                                    ].copy()
+                                    
+                                    if not customer_df.empty:
+                                        st.markdown(f"**Customer:** {selected_customer}")
+                                        
+                                        # Customer metrics
+                                        col1, col2, col3, col4 = st.columns(4)
+                                        
+                                        with col1:
+                                            total_revenue = customer_df['Amount'].sum()
+                                            st.metric("Total Revenue", f"${total_revenue:,.0f}")
+                                        
+                                        with col2:
+                                            order_count = len(customer_df)
+                                            st.metric("Total Orders", f"{order_count:,}")
+                                        
+                                        with col3:
+                                            avg_order = total_revenue / order_count if order_count > 0 else 0
+                                            st.metric("Avg Order Size", f"${avg_order:,.0f}")
+                                        
+                                        with col4:
+                                            first_order = customer_df['Date'].min()
+                                            last_order = customer_df['Date'].max()
+                                            months_active = ((last_order - first_order).days / 30.44) + 1
+                                            st.metric("Months Active", f"{months_active:.0f}")
+                                        
+                                        # Monthly trend
+                                        st.markdown("**📈 Monthly Revenue Trend**")
+                                        
+                                        customer_monthly = customer_df.groupby(['Year', 'Month']).agg({
+                                            'Amount': 'sum',
+                                            'Quantity': 'sum'
+                                        }).reset_index()
+                                        
+                                        customer_monthly['MonthLabel'] = pd.to_datetime(
+                                            customer_monthly[['Year', 'Month']].assign(day=1)
+                                        ).dt.strftime('%b %Y')
+                                        
+                                        fig_customer_trend = go.Figure()
+                                        fig_customer_trend.add_trace(go.Bar(
+                                            x=customer_monthly['MonthLabel'],
+                                            y=customer_monthly['Amount'],
+                                            marker_color='rgba(99, 102, 241, 0.7)',
+                                            text=customer_monthly['Amount'].apply(lambda x: f"${x/1000:.0f}K"),
+                                            textposition='outside'
+                                        ))
+                                        
+                                        fig_customer_trend.update_layout(
+                                            title=f"Monthly Revenue - {selected_customer}",
+                                            xaxis_title="Month",
+                                            yaxis_title="Revenue ($)",
+                                            yaxis_tickformat='$,.0f',
+                                            plot_bgcolor='rgba(0,0,0,0)',
+                                            paper_bgcolor='rgba(0,0,0,0)',
+                                            font=dict(color='white'),
+                                            height=350
+                                        )
+                                        
+                                        st.plotly_chart(fig_customer_trend, use_container_width=True)
+                                        
+                                        # Product mix
+                                        st.markdown("**📦 Product Mix**")
+                                        
+                                        if 'Product Type' in customer_df.columns:
+                                            product_mix = customer_df.groupby('Product Type').agg({
+                                                'Amount': 'sum',
+                                                'Quantity': 'sum'
+                                            }).reset_index().sort_values('Amount', ascending=False)
+                                            
+                                            product_mix['% of Customer Revenue'] = (
+                                                product_mix['Amount'] / product_mix['Amount'].sum() * 100
+                                            )
+                                            
+                                            product_mix['Amount'] = product_mix['Amount'].apply(lambda x: f"${x:,.0f}")
+                                            product_mix['Quantity'] = product_mix['Quantity'].apply(lambda x: f"{x:,.0f}")
+                                            product_mix['% of Customer Revenue'] = product_mix['% of Customer Revenue'].apply(lambda x: f"{x:.1f}%")
+                                            
+                                            st.dataframe(
+                                                product_mix[['Product Type', 'Amount', 'Quantity', '% of Customer Revenue']],
+                                                use_container_width=True,
+                                                hide_index=True
+                                            )
+                                        
+                                        # Quarterly breakdown
+                                        st.markdown("**📅 Quarterly Performance**")
+                                        
+                                        customer_quarterly = customer_df.groupby(['Year', 'Quarter']).agg({
+                                            'Amount': 'sum'
+                                        }).reset_index()
+                                        
+                                        customer_quarterly['Quarter_Label'] = (
+                                            'Q' + customer_quarterly['Quarter'].astype(str) + ' ' + 
+                                            customer_quarterly['Year'].astype(str)
+                                        )
+                                        
+                                        col1, col2 = st.columns(2)
+                                        
+                                        # Get latest year data
+                                        latest_year = customer_quarterly['Year'].max()
+                                        current_year_q = customer_quarterly[customer_quarterly['Year'] == latest_year]
+                                        
+                                        for idx, row in current_year_q.iterrows():
+                                            q_num = row['Quarter']
+                                            q_revenue = row['Amount']
+                                            
+                                            if q_num <= 2:
+                                                with col1:
+                                                    st.metric(f"Q{q_num} {latest_year}", f"${q_revenue:,.0f}")
+                                            else:
+                                                with col2:
+                                                    st.metric(f"Q{q_num} {latest_year}", f"${q_revenue:,.0f}")
+                                        
+                                        # 2026 Forecast for this customer
+                                        st.markdown("**🔮 2026 Forecast**")
+                                        st.caption("Based on historical trends for this customer")
+                                        
+                                        # Calculate simple forecast: average of recent months
+                                        recent_months = customer_monthly.tail(6)
+                                        avg_monthly_revenue = recent_months['Amount'].mean() if not recent_months.empty else 0
+                                        forecast_2026 = avg_monthly_revenue * 12
+                                        
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.metric("Projected 2026 Revenue", f"${forecast_2026:,.0f}")
+                                        with col2:
+                                            if total_revenue > 0:
+                                                growth_rate = ((forecast_2026 / total_revenue) - 1) * 100
+                                                st.metric("Projected Growth", f"{growth_rate:+.1f}%")
+                            else:
+                                st.warning("All customers for this rep are marked at-risk")
             except Exception as e:
                 st.error(f"Error loading rep planning: {str(e)}")
                 st.info("Please ensure Sales Rep column is properly formatted")
@@ -3370,12 +3485,8 @@ def main():
     with tab4:
         st.markdown("### 📊 Revenue Breakdown by Product")
         
-        breakdown_col = st.radio(
-            "Group by:",
-            ["Product Type", "Item Type"],
-            horizontal=True,
-            key="breakdown_col"
-        )
+        # Only show Product Type breakdown (Item Type removed)
+        breakdown_col = "Product Type"
         
         col1, col2 = st.columns(2)
         
