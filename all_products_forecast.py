@@ -585,11 +585,28 @@ def process_hubspot_data(df):
         df['Weighted_Quantity'] = 0
     
     # Try to match Product Name to existing Product Type for filtering
-    # We'll use SKU or Product_Name as best effort
+    # Map HubSpot product names to standardized Product Types
     if 'Product_Name' in df.columns:
-        df['Product Type'] = df['Product_Name']  # Can enhance this with mapping later
+        # Start with Product_Name as base
+        df['Product Type'] = df['Product_Name']
+        
+        # Apply common mappings (customize based on your naming conventions)
+        # This helps match HubSpot names to NetSuite product types
+        df['Product Type'] = df['Product Type'].str.strip()
+        
+        # You can add custom mappings here:
+        # df['Product Type'] = df['Product Type'].replace({
+        #     'Concentrate Jar - 5ml': 'Concentrate Jars',
+        #     'Flower Container': 'Flower Jars',
+        #     # Add more mappings as needed
+        # })
+        
+        # Log unique product types for visibility
+        unique_hs_products = df['Product Type'].nunique()
+        st.info(f"🔍 HubSpot contains {unique_hs_products} unique product types")
     else:
         df['Product Type'] = 'Unknown'
+        st.warning("⚠️ 'Product Name' column not found in HubSpot data")
     
     df['Item Type'] = 'Unknown'  # HubSpot data doesn't have this granularity yet
     
@@ -2541,6 +2558,17 @@ def main():
         if total_2024 > 0:
             yoy_change = ((total_2025 - total_2024) / total_2024) * 100
             st.sidebar.caption(f"YoY Change: {yoy_change:+.1f}%")
+        
+        # Product Type diagnostic
+        if 'Product Type' in df.columns:
+            unique_products = df['Product Type'].nunique()
+            st.sidebar.caption(f"📦 {unique_products} Product Types in invoices")
+            
+            with st.sidebar.expander("🔍 View All Product Types"):
+                product_list = sorted(df['Product Type'].unique().tolist())
+                for product in product_list:
+                    product_total = df[df['Product Type'] == product]['Amount'].sum()
+                    st.sidebar.caption(f"• {product}: ${product_total:,.0f}")
     
     # =========================
     # SIDEBAR CONTROLS
@@ -3092,27 +3120,47 @@ def main():
         st.markdown("*Adjust product category growth rates to model different scenarios*")
         
         if 'Product Type' in filtered_df.columns:
-            # Get top product types
-            top_products = filtered_df.groupby('Product Type')['Amount'].sum().sort_values(ascending=False).head(8)
+            # Get ALL product types (not just top 8)
+            all_products = filtered_df.groupby('Product Type')['Amount'].sum().sort_values(ascending=False)
+            
+            # Show product type selection
+            st.markdown("#### Product Categories Available")
+            
+            # Show summary of all product types
+            with st.expander("📋 View All Product Types & Revenue", expanded=False):
+                product_summary = pd.DataFrame({
+                    'Product Type': all_products.index,
+                    'Total Revenue': all_products.values
+                })
+                product_summary['Revenue'] = product_summary['Total Revenue'].apply(lambda x: f"${x:,.0f}")
+                product_summary['% of Total'] = (product_summary['Total Revenue'] / product_summary['Total Revenue'].sum() * 100).apply(lambda x: f"{x:.1f}%")
+                st.dataframe(product_summary[['Product Type', 'Revenue', '% of Total']], use_container_width=True, hide_index=True)
             
             st.markdown("#### Adjust Growth Rates by Product Category")
+            st.caption(f"📊 Showing all {len(all_products)} product types (sorted by revenue)")
             
             product_scenarios = {}
-            cols = st.columns(4)
             
-            for idx, (product, revenue) in enumerate(top_products.items()):
-                with cols[idx % 4]:
-                    multiplier = st.slider(
-                        f"{product[:20]}...",
-                        min_value=0.5,
-                        max_value=2.0,
-                        value=1.0,
-                        step=0.1,
-                        format="%.1fx",
-                        key=f"scenario_{product}",
-                        help=f"2025 Revenue: ${revenue:,.0f}"
-                    )
-                    product_scenarios[product] = multiplier
+            # Create sliders for ALL products (organized in rows of 4)
+            product_list = list(all_products.items())
+            
+            for i in range(0, len(product_list), 4):
+                cols = st.columns(4)
+                batch = product_list[i:i+4]
+                
+                for idx, (product, revenue) in enumerate(batch):
+                    with cols[idx]:
+                        multiplier = st.slider(
+                            f"{product[:25]}..." if len(product) > 25 else product,
+                            min_value=0.5,
+                            max_value=2.0,
+                            value=1.0,
+                            step=0.1,
+                            format="%.1fx",
+                            key=f"scenario_{product}",
+                            help=f"Historical Revenue: ${revenue:,.0f}"
+                        )
+                        product_scenarios[product] = multiplier
             
             # Show scenario impact
             if any(v != 1.0 for v in product_scenarios.values()):
@@ -3487,6 +3535,63 @@ def main():
         **Adjustments:** Use the forecast adjustment sliders to apply scenarios like optimistic (+20%) 
         or conservative (-20%) projections, or to model expected growth trends.
         """)
+        
+        st.markdown("---")
+        st.markdown("### 🔍 Product Type Diagnostic")
+        st.markdown("*Check consistency across data sources*")
+        
+        # Product type comparison across data sources
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown("**📄 Invoice Data**")
+            if 'Product Type' in df.columns:
+                invoice_products = sorted(df['Product Type'].unique().tolist())
+                st.caption(f"{len(invoice_products)} product types")
+                with st.expander("View List"):
+                    for product in invoice_products:
+                        st.caption(f"• {product}")
+            else:
+                st.warning("No Product Type column")
+        
+        with col2:
+            st.markdown("**📦 Sales Orders**")
+            if not sales_order_df.empty and 'Product Type' in sales_order_df.columns:
+                so_products = sorted(sales_order_df['Product Type'].unique().tolist())
+                st.caption(f"{len(so_products)} product types")
+                with st.expander("View List"):
+                    for product in so_products:
+                        st.caption(f"• {product}")
+            else:
+                st.caption("No active sales orders")
+        
+        with col3:
+            st.markdown("**🔮 HubSpot Pipeline**")
+            if not hubspot_df.empty and 'Product Type' in hubspot_df.columns:
+                hs_products = sorted(hubspot_df['Product Type'].unique().tolist())
+                st.caption(f"{len(hs_products)} product types")
+                with st.expander("View List"):
+                    for product in hs_products:
+                        st.caption(f"• {product}")
+            else:
+                st.caption("No HubSpot data loaded")
+        
+        # Show mismatches
+        if 'Product Type' in df.columns:
+            invoice_set = set(df['Product Type'].unique())
+            
+            if not sales_order_df.empty and 'Product Type' in sales_order_df.columns:
+                so_set = set(sales_order_df['Product Type'].unique())
+                only_in_so = so_set - invoice_set
+                if only_in_so:
+                    st.warning(f"⚠️ Sales Orders contain {len(only_in_so)} product types not in invoices: {', '.join(sorted(only_in_so))}")
+            
+            if not hubspot_df.empty and 'Product Type' in hubspot_df.columns:
+                hs_set = set(hubspot_df['Product Type'].unique())
+                only_in_hs = hs_set - invoice_set
+                if only_in_hs:
+                    st.warning(f"⚠️ HubSpot contains {len(only_in_hs)} product types not in invoices: {', '.join(sorted(only_in_hs))}")
+                    st.info("💡 **Tip:** Product names in HubSpot may need mapping to match Invoice Product Types. Edit lines 590-604 in the code to add custom mappings.")
 
 
 # Entry point when called from main dashboard
