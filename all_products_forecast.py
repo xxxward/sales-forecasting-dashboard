@@ -34,6 +34,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+from plotly.subplots import make_subplots
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
@@ -1868,6 +1869,226 @@ def apply_forecast_adjustments(monthly_forecast, quarterly_forecast, overall_mul
     return adjusted_monthly, adjusted_quarterly
 
 
+def create_customer_acquisition_analysis(df):
+    """
+    Analyze customer acquisition patterns - new vs returning customers by month
+    """
+    if df.empty or 'Customer' not in df.columns or 'Date' not in df.columns:
+        return None, None, None
+    
+    # Get first order date for each customer
+    customer_first_order = df.groupby('Customer')['Date'].min().reset_index()
+    customer_first_order.columns = ['Customer', 'First_Order_Date']
+    customer_first_order['First_Order_Month'] = customer_first_order['First_Order_Date'].dt.to_period('M')
+    
+    # Merge back to main df
+    df_with_cohort = df.merge(customer_first_order[['Customer', 'First_Order_Month']], on='Customer')
+    df_with_cohort['Order_Month'] = df_with_cohort['Date'].dt.to_period('M')
+    
+    # Calculate monthly active customers and revenue
+    monthly_stats = df_with_cohort.groupby('Order_Month').agg({
+        'Customer': 'nunique',
+        'Amount': 'sum'
+    }).reset_index()
+    monthly_stats.columns = ['Month', 'Active_Customers', 'Revenue']
+    monthly_stats['Month_Str'] = monthly_stats['Month'].astype(str)
+    
+    # Calculate new customer acquisitions by month
+    new_customers = customer_first_order.groupby('First_Order_Month').size().reset_index()
+    new_customers.columns = ['Month', 'New_Customers']
+    new_customers['Month_Str'] = new_customers['Month'].astype(str)
+    
+    return monthly_stats, new_customers, customer_first_order
+
+
+def create_monthly_active_customers_chart(monthly_stats):
+    """
+    Create chart showing monthly active customers and revenue
+    """
+    if monthly_stats is None or monthly_stats.empty:
+        return None
+    
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    
+    # Active customers bars
+    fig.add_trace(
+        go.Bar(
+            x=monthly_stats['Month_Str'],
+            y=monthly_stats['Active_Customers'],
+            name='Active Customers',
+            marker_color='rgba(99, 102, 241, 0.7)',
+            yaxis='y',
+            hovertemplate='<b>%{x}</b><br>Customers: %{y}<extra></extra>'
+        ),
+        secondary_y=False
+    )
+    
+    # Revenue line
+    fig.add_trace(
+        go.Scatter(
+            x=monthly_stats['Month_Str'],
+            y=monthly_stats['Revenue'],
+            name='Revenue',
+            mode='lines+markers',
+            line=dict(color='rgba(34, 197, 94, 1)', width=3),
+            marker=dict(size=8),
+            yaxis='y2',
+            hovertemplate='<b>%{x}</b><br>Revenue: $%{y:,.0f}<extra></extra>'
+        ),
+        secondary_y=True
+    )
+    
+    fig.update_xaxes(
+        title_text="Month",
+        gridcolor='rgba(128,128,128,0.1)',
+        tickangle=-45
+    )
+    
+    fig.update_yaxes(
+        title_text="Active Customers",
+        secondary_y=False,
+        gridcolor='rgba(128,128,128,0.2)'
+    )
+    
+    fig.update_yaxes(
+        title_text="Revenue ($)",
+        secondary_y=True,
+        tickformat='$,.0f'
+    )
+    
+    fig.update_layout(
+        title=dict(
+            text='📊 Monthly Active Customers & Revenue',
+            font=dict(size=20),
+            x=0.5
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        ),
+        height=500,
+        margin=dict(t=80, b=100),
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
+def create_new_customer_acquisition_chart(new_customers):
+    """
+    Create chart showing new customer acquisition by cohort month
+    """
+    if new_customers is None or new_customers.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=new_customers['Month_Str'],
+        y=new_customers['New_Customers'],
+        marker_color='rgba(139, 92, 246, 0.7)',
+        text=new_customers['New_Customers'],
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>New Customers: %{y}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='📈 New Customer Acquisition by Month',
+            font=dict(size=20),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Cohort (First Order Month)',
+            gridcolor='rgba(128,128,128,0.1)',
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title='New Customers',
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=500,
+        margin=dict(t=80, b=100),
+        showlegend=False
+    )
+    
+    return fig
+
+
+def create_product_acquisition_analysis(df):
+    """
+    Analyze product adoption - which products attract new customers
+    """
+    if df.empty or 'Customer' not in df.columns or 'Product Type' not in df.columns:
+        return None
+    
+    # Get first order for each customer
+    customer_first_order = df.sort_values('Date').groupby('Customer').first().reset_index()
+    
+    # Count which product types brought in new customers
+    product_acquisition = customer_first_order.groupby('Product Type').agg({
+        'Customer': 'count',
+        'Amount': 'sum'
+    }).reset_index()
+    product_acquisition.columns = ['Product Type', 'New_Customers', 'First_Order_Revenue']
+    product_acquisition = product_acquisition.sort_values('New_Customers', ascending=False)
+    
+    return product_acquisition
+
+
+def create_product_acquisition_chart(product_acquisition):
+    """
+    Create chart showing which products acquire new customers
+    """
+    if product_acquisition is None or product_acquisition.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Bar(
+        x=product_acquisition['Product Type'].head(15),
+        y=product_acquisition['New_Customers'].head(15),
+        marker_color='rgba(249, 115, 22, 0.7)',
+        text=product_acquisition['New_Customers'].head(15),
+        textposition='outside',
+        hovertemplate='<b>%{x}</b><br>New Customers: %{y}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='🎯 New Customer Acquisition by Product Type',
+            font=dict(size=20),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Product Type',
+            gridcolor='rgba(128,128,128,0.1)',
+            tickangle=-45
+        ),
+        yaxis=dict(
+            title='New Customers Acquired',
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=500,
+        margin=dict(t=80, b=120),
+        showlegend=False
+    )
+    
+    return fig
+
+
 # =============================================================================
 # MAIN FUNCTION
 # =============================================================================
@@ -1999,8 +2220,8 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚖️ Historical Weights")
     weight_2024 = st.sidebar.slider(
-        "2024 Weight", 0.0, 1.0, 0.6, 0.05,
-        help="Weight given to 2024 data (healthier stock levels)"
+        "2024 Weight", 0.0, 1.0, 0.3, 0.05,  # Changed from 0.6 to 0.3
+        help="Weight given to 2024 data (lower = less influence, more weight on recent 2025 trends)"
     )
     weight_2025 = 1.0 - weight_2024
     st.sidebar.caption(f"2025 Weight: {weight_2025:.0%}")
@@ -2420,6 +2641,33 @@ def main():
     with tab3:
         st.markdown("### 🏆 Customer Analysis")
         
+        # Customer Acquisition Analysis
+        st.markdown("#### 📊 Customer Acquisition Trends")
+        
+        monthly_stats, new_customers, customer_cohorts = create_customer_acquisition_analysis(filtered_df)
+        
+        if monthly_stats is not None:
+            # Monthly active customers & revenue chart
+            active_customers_chart = create_monthly_active_customers_chart(monthly_stats)
+            if active_customers_chart:
+                st.plotly_chart(active_customers_chart, use_container_width=True)
+            
+            # New customer acquisition chart
+            new_customer_chart = create_new_customer_acquisition_chart(new_customers)
+            if new_customer_chart:
+                st.plotly_chart(new_customer_chart, use_container_width=True)
+            
+            # Product acquisition analysis
+            product_acquisition = create_product_acquisition_analysis(filtered_df)
+            if product_acquisition is not None:
+                product_acq_chart = create_product_acquisition_chart(product_acquisition)
+                if product_acq_chart:
+                    st.plotly_chart(product_acq_chart, use_container_width=True)
+            
+            st.markdown("---")
+        
+        # Top customers chart (existing)
+        st.markdown("#### 💰 Top Customers by Revenue")
         top_customers_chart = create_top_customers_chart(filtered_df, top_n=15)
         if top_customers_chart:
             st.plotly_chart(top_customers_chart, use_container_width=True)
