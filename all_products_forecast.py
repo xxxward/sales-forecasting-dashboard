@@ -1,37 +1,32 @@
 """
-All Products Forecasting Module
-================================
-Creates 2026 forecasts for ALL products based on Invoice Line Item data.
+All Products Forecasting Module - Multi-Source
+===============================================
+Creates 2026 forecasts combining:
+1. Historical Invoice Line Item data (baseline trend)
+2. Pending Sales Orders (committed revenue not yet invoiced)
+
 Uses weighted historical analysis (2024 weighted higher than 2025).
 Allows filtering and analysis by product type, item type, customer, and sales rep.
 
 Navigation: "📦 All Products Forecast" in sidebar menu
 
-Columns from Google Sheet (Invoice Line Item tab):
-A: Document Number
-B: Status
-C: Date
-D: Due Date
-E: Created From
-F: Created By
-G: Customer
-H: Item
-I: Quantity
-J: Account
-K: Period
-L: Department
-M: Amount
-N: Amount (Transaction Total)
-O: Amount Remaining
-P: CSM
-Q: Date Closed
-R: Sales Rep
-S: External ID
-T: Amount (Shipping)
-U: Amount (Transaction Tax Total)
-V: Terms
-W: Calyx | Item Type
-X: PI || Product Type
+Data Sources:
+-------------
+Invoice Line Item tab (A:X):
+A: Document Number, B: Status, C: Date, D: Due Date, E: Created From
+F: Created By, G: Customer, H: Item, I: Quantity, J: Account
+K: Period, L: Department, M: Amount, N: Amount (Transaction Total)
+O: Amount Remaining, P: CSM, Q: Date Closed, R: Sales Rep
+S: External ID, T: Amount (Shipping), U: Amount (Transaction Tax Total)
+V: Terms, W: Calyx | Item Type, X: PI || Product Type
+
+Sales Order Line Item tab (A:W):
+A: Internal ID, B: Document Number, C: Item, D: Amount, E: Item Rate
+F: Quantity Ordered, G: Quantity Fulfilled, H: Purchase Order, I: Invoice
+J: PI || Product Type, K: Transaction Discount, L: Income Account, M: Class
+N: Quote, O: Pending Fulfillment Date, P: Actual Ship Date, Q: Date Created
+R: Date Billed, S: Date Closed, T: Customer Companyname, U: HubSpot Pipeline
+V: Calyx | Item Type, W: Status
 """
 
 import streamlit as st
@@ -47,7 +42,17 @@ from datetime import datetime, timedelta
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
-CACHE_VERSION = "all_products_v1"
+CACHE_VERSION = "all_products_v2"  # Updated version for multi-source
+
+# Pending order statuses to include
+PENDING_STATUSES = [
+    "Pending Approval",
+    "Pending Fulfillment",
+    "Pending Billing/Partially Fulfilled"
+]
+
+# Confidence factor for pending orders (95% of pending orders typically convert)
+PENDING_ORDER_CONFIDENCE = 0.95
 
 # =============================================================================
 # DATA LOADING
@@ -95,6 +100,59 @@ def load_invoice_line_items(version=CACHE_VERSION):
         
     except Exception as e:
         st.error(f"❌ Error loading Invoice Line Item data: {str(e)}")
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=CACHE_TTL)
+def load_sales_order_line_items(version=CACHE_VERSION):
+    """
+    Load data from Sales Order Line Item tab in Google Sheets
+    
+    Columns (A:W):
+    A: Internal ID, B: Document Number, C: Item, D: Amount, E: Item Rate
+    F: Quantity Ordered, G: Quantity Fulfilled, H: Purchase Order, I: Invoice
+    J: PI || Product Type, K: Transaction Discount, L: Income Account, M: Class
+    N: Quote, O: Pending Fulfillment Date, P: Actual Ship Date, Q: Date Created
+    R: Date Billed, S: Date Closed, T: Customer Companyname, U: HubSpot Pipeline
+    V: Calyx | Item Type, W: Status
+    """
+    try:
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Missing Google Cloud credentials")
+            return pd.DataFrame()
+        
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+        
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        
+        # Load from Sales Order Line Item tab - columns A:W
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="Sales Order Line Item!A:W"
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values:
+            st.warning("⚠️ No data found in 'Sales Order Line Item' tab")
+            return pd.DataFrame()
+        
+        # Pad rows to match column count
+        if len(values) > 1:
+            max_cols = max(len(row) for row in values)
+            for row in values:
+                while len(row) < max_cols:
+                    row.append('')
+        
+        df = pd.DataFrame(values[1:], columns=values[0])
+        return df
+        
+    except Exception as e:
+        st.error(f"❌ Error loading Sales Order Line Item data: {str(e)}")
         return pd.DataFrame()
 
 
@@ -220,6 +278,195 @@ def process_invoice_data(df):
         df['Product Type'] = df['Product Type'].fillna('Unknown').replace('', 'Unknown')
     
     return df
+
+
+def process_sales_order_data(df):
+    """
+    Process the sales order line item data with known column mappings.
+    Filter for pending statuses and prepare for forecasting.
+    """
+    if df.empty:
+        return df
+    
+    # Standardize column names
+    col_mapping = {}
+    for col in df.columns:
+        col_lower = col.lower().strip()
+        if 'internal id' in col_lower:
+            col_mapping[col] = 'Internal_ID'
+        elif 'document number' in col_lower:
+            col_mapping[col] = 'Document Number'
+        elif col_lower == 'item':
+            col_mapping[col] = 'Item'
+        elif col_lower == 'amount' and 'transaction' not in col_lower:
+            col_mapping[col] = 'Amount'
+        elif 'item rate' in col_lower:
+            col_mapping[col] = 'Item_Rate'
+        elif 'quantity ordered' in col_lower:
+            col_mapping[col] = 'Quantity'
+        elif 'quantity fulfilled' in col_lower:
+            col_mapping[col] = 'Quantity_Fulfilled'
+        elif 'purchase order' in col_lower:
+            col_mapping[col] = 'Purchase_Order'
+        elif col_lower == 'invoice':
+            col_mapping[col] = 'Invoice'
+        elif 'pi' in col_lower and 'product type' in col_lower:
+            col_mapping[col] = 'Product Type'
+        elif 'transaction discount' in col_lower:
+            col_mapping[col] = 'Transaction_Discount'
+        elif 'income account' in col_lower:
+            col_mapping[col] = 'Income_Account'
+        elif col_lower == 'class':
+            col_mapping[col] = 'Class'
+        elif col_lower == 'quote':
+            col_mapping[col] = 'Quote'
+        elif 'pending fulfillment date' in col_lower:
+            col_mapping[col] = 'Expected_Date'
+        elif 'actual ship date' in col_lower:
+            col_mapping[col] = 'Actual_Ship_Date'
+        elif 'date created' in col_lower:
+            col_mapping[col] = 'Date_Created'
+        elif 'date billed' in col_lower:
+            col_mapping[col] = 'Date_Billed'
+        elif 'date closed' in col_lower:
+            col_mapping[col] = 'Date_Closed'
+        elif 'customer companyname' in col_lower or 'customer' in col_lower:
+            col_mapping[col] = 'Customer'
+        elif 'hubspot pipeline' in col_lower:
+            col_mapping[col] = 'HubSpot_Pipeline'
+        elif 'calyx' in col_lower and 'item type' in col_lower:
+            col_mapping[col] = 'Item Type'
+        elif col_lower == 'status':
+            col_mapping[col] = 'Status'
+    
+    df = df.rename(columns=col_mapping)
+    
+    # Filter for pending statuses ONLY
+    if 'Status' not in df.columns:
+        st.warning("⚠️ 'Status' column not found in Sales Order data")
+        return pd.DataFrame()
+    
+    df = df[df['Status'].isin(PENDING_STATUSES)].copy()
+    
+    if df.empty:
+        st.info("ℹ️ No pending sales orders found")
+        return df
+    
+    # Parse Expected Date (Pending Fulfillment Date)
+    if 'Expected_Date' in df.columns:
+        df['Expected_Date'] = pd.to_datetime(df['Expected_Date'], errors='coerce')
+        # If no expected date, try using Date Created + 30 days as fallback
+        if df['Expected_Date'].isna().any() and 'Date_Created' in df.columns:
+            df['Date_Created_Parsed'] = pd.to_datetime(df['Date_Created'], errors='coerce')
+            df['Expected_Date'] = df['Expected_Date'].fillna(
+                df['Date_Created_Parsed'] + timedelta(days=30)
+            )
+    else:
+        # If no Expected_Date column, use Date Created + 30 days
+        if 'Date_Created' in df.columns:
+            df['Expected_Date'] = pd.to_datetime(df['Date_Created'], errors='coerce')
+            df['Expected_Date'] = df['Expected_Date'] + timedelta(days=30)
+        else:
+            st.warning("⚠️ Cannot determine expected date for sales orders")
+            return pd.DataFrame()
+    
+    # Remove rows with no valid expected date
+    df = df[df['Expected_Date'].notna()].copy()
+    
+    # Only include orders expected in 2026 or beyond
+    df = df[df['Expected_Date'].dt.year >= 2026].copy()
+    
+    # Extract Year and Month from expected date
+    df['Year'] = df['Expected_Date'].dt.year
+    df['Month'] = df['Expected_Date'].dt.month
+    
+    # Clean numeric columns
+    if 'Quantity' in df.columns:
+        df['Quantity'] = df['Quantity'].apply(clean_numeric)
+    if 'Amount' in df.columns:
+        df['Amount'] = df['Amount'].apply(clean_numeric)
+    
+    # Clean up Item Type and Product Type
+    if 'Item Type' in df.columns:
+        df['Item Type'] = df['Item Type'].fillna('Unknown').replace('', 'Unknown')
+    if 'Product Type' in df.columns:
+        df['Product Type'] = df['Product Type'].fillna('Unknown').replace('', 'Unknown')
+    
+    # Mark this as pending order data
+    df['Data_Source'] = 'Pending Order'
+    
+    return df
+
+
+def get_invoiced_order_numbers(invoice_df):
+    """
+    Extract set of sales order numbers that have already been invoiced
+    to prevent double-counting
+    """
+    if invoice_df.empty or 'Created From' not in invoice_df.columns:
+        return set()
+    
+    # Extract order numbers from "Created From" field
+    invoiced_orders = invoice_df['Created From'].dropna().unique()
+    
+    order_numbers = set()
+    for order_ref in invoiced_orders:
+        order_str = str(order_ref).strip()
+        if order_str and order_str != '' and order_str != 'nan':
+            order_numbers.add(order_str)
+            # Also extract just number portion if it has a delimiter
+            if '#' in order_str:
+                num_part = order_str.split('#')[-1].strip()
+                order_numbers.add(num_part)
+    
+    return order_numbers
+
+
+def filter_uninvoiced_sales_orders(sales_order_df, invoice_df):
+    """
+    Remove sales orders that have already been invoiced
+    """
+    if sales_order_df.empty:
+        return sales_order_df
+    
+    # First, exclude any orders where Invoice column is populated
+    if 'Invoice' in sales_order_df.columns:
+        mask = sales_order_df['Invoice'].isna() | (sales_order_df['Invoice'] == '')
+        sales_order_df = sales_order_df[mask].copy()
+    
+    # Get list of invoiced order numbers
+    invoiced_orders = get_invoiced_order_numbers(invoice_df)
+    
+    if not invoiced_orders or 'Document Number' not in sales_order_df.columns:
+        return sales_order_df
+    
+    original_count = len(sales_order_df)
+    original_amount = sales_order_df['Amount'].sum() if 'Amount' in sales_order_df.columns else 0
+    
+    # Check both full document number and extracted number
+    def check_if_invoiced(doc_num):
+        doc_str = str(doc_num).strip()
+        if doc_str in invoiced_orders:
+            return True
+        if '#' in doc_str:
+            num_part = doc_str.split('#')[-1].strip()
+            if num_part in invoiced_orders:
+                return True
+        return False
+    
+    mask = ~sales_order_df['Document Number'].apply(check_if_invoiced)
+    deduplicated = sales_order_df[mask].copy()
+    
+    # Log the filtering
+    removed_count = original_count - len(deduplicated)
+    if removed_count > 0:
+        removed_amount = original_amount - (deduplicated['Amount'].sum() if 'Amount' in deduplicated.columns else 0)
+        st.info(
+            f"🔍 Deduplication: Excluded {removed_count:,} sales order lines "
+            f"(${removed_amount:,.0f}) already invoiced"
+        )
+    
+    return deduplicated
 
 
 # =============================================================================
@@ -500,6 +747,133 @@ def generate_2026_forecast(df, weight_2024=0.6, weight_2025=0.4, group_by=None):
     return monthly_forecast, quarterly_forecast, monthly_baselines
 
 
+def calculate_pending_orders_forecast(sales_order_df):
+    """
+    Calculate monthly forecast contribution from pending sales orders.
+    Groups by expected month and applies confidence factor.
+    """
+    if sales_order_df.empty:
+        return pd.DataFrame()
+    
+    # Group by Year and Month
+    monthly_pending = sales_order_df.groupby(['Year', 'Month']).agg({
+        'Amount': 'sum',
+        'Quantity': 'sum',
+        'Document Number': 'nunique'  # Count distinct orders
+    }).reset_index()
+    
+    monthly_pending.columns = ['Year', 'Month', 'Pending_Amount', 'Pending_Quantity', 'Order_Count']
+    
+    # Apply confidence factor (95% of pending orders typically convert)
+    monthly_pending['Weighted_Amount'] = monthly_pending['Pending_Amount'] * PENDING_ORDER_CONFIDENCE
+    monthly_pending['Weighted_Quantity'] = monthly_pending['Pending_Quantity'] * PENDING_ORDER_CONFIDENCE
+    
+    # Filter for 2026 only
+    monthly_pending = monthly_pending[monthly_pending['Year'] == 2026].copy()
+    
+    # Add month names
+    monthly_pending['MonthName'] = monthly_pending['Month'].apply(
+        lambda m: datetime(2026, m, 1).strftime('%B')
+    )
+    monthly_pending['MonthShort'] = monthly_pending['Month'].apply(
+        lambda m: datetime(2026, m, 1).strftime('%b')
+    )
+    monthly_pending['QuarterNum'] = ((monthly_pending['Month'] - 1) // 3) + 1
+    monthly_pending['Quarter'] = monthly_pending['QuarterNum'].apply(lambda q: f"Q{q} 2026")
+    
+    return monthly_pending
+
+
+def combine_forecast_sources(historical_forecast, pending_forecast):
+    """
+    Combine historical baseline with pending orders to create unified forecast.
+    """
+    if historical_forecast.empty:
+        st.warning("⚠️ No historical forecast data")
+        return pd.DataFrame(), pd.DataFrame()
+    
+    combined = historical_forecast.copy()
+    
+    # Add pending order columns (initialize to 0)
+    combined['Pending_Amount'] = 0
+    combined['Pending_Quantity'] = 0
+    combined['Order_Count'] = 0
+    
+    # Merge in pending orders by month
+    if not pending_forecast.empty:
+        for _, pending_row in pending_forecast.iterrows():
+            month = pending_row['Month']
+            mask = combined['Month'] == month
+            
+            if mask.any():
+                combined.loc[mask, 'Pending_Amount'] = pending_row['Weighted_Amount']
+                combined.loc[mask, 'Pending_Quantity'] = pending_row['Weighted_Quantity']
+                combined.loc[mask, 'Order_Count'] = pending_row['Order_Count']
+    
+    # Rename baseline columns for clarity
+    combined['Historical_Baseline_Amount'] = combined['Forecasted_Amount']
+    combined['Historical_Baseline_Quantity'] = combined['Forecasted_Quantity']
+    
+    # Calculate combined totals
+    combined['Forecasted_Amount'] = combined['Historical_Baseline_Amount'] + combined['Pending_Amount']
+    combined['Forecasted_Quantity'] = combined['Historical_Baseline_Quantity'] + combined['Pending_Quantity']
+    
+    # Calculate source mix percentages
+    combined['Pct_Historical'] = np.where(
+        combined['Forecasted_Amount'] > 0,
+        combined['Historical_Baseline_Amount'] / combined['Forecasted_Amount'],
+        1.0
+    )
+    combined['Pct_Pending'] = np.where(
+        combined['Forecasted_Amount'] > 0,
+        combined['Pending_Amount'] / combined['Forecasted_Amount'],
+        0.0
+    )
+    
+    # Adjust confidence ranges based on source mix
+    # More pending orders = tighter confidence range
+    base_confidence = []
+    for _, row in combined.iterrows():
+        if row['Month'] <= 3:
+            base_conf = 0.20
+        elif row['Month'] <= 6:
+            base_conf = 0.25
+        else:
+            base_conf = 0.30
+        
+        # Tighten confidence if we have pending orders
+        # Pending orders are 95% certain, so they reduce overall uncertainty
+        adjusted_conf = (
+            row['Pct_Historical'] * base_conf +
+            row['Pct_Pending'] * 0.10  # ±10% for pending orders
+        )
+        base_confidence.append(adjusted_conf)
+    
+    combined['Confidence_Factor'] = base_confidence
+    combined['Confidence'] = combined['Confidence_Factor'].apply(lambda x: f"±{int(x*100)}%")
+    
+    # Recalculate confidence ranges
+    combined['Amt_Low'] = combined['Forecasted_Amount'] * (1 - combined['Confidence_Factor'])
+    combined['Amt_High'] = combined['Forecasted_Amount'] * (1 + combined['Confidence_Factor'])
+    combined['Qty_Low'] = combined['Forecasted_Quantity'] * (1 - combined['Confidence_Factor'])
+    combined['Qty_High'] = combined['Forecasted_Quantity'] * (1 + combined['Confidence_Factor'])
+    
+    # Generate quarterly summary
+    quarterly_combined = combined.groupby(['QuarterNum', 'Quarter']).agg({
+        'Historical_Baseline_Amount': 'sum',
+        'Pending_Amount': 'sum',
+        'Forecasted_Amount': 'sum',
+        'Forecasted_Quantity': 'sum',
+        'Amt_Low': 'sum',
+        'Amt_High': 'sum',
+        'Qty_Low': 'sum',
+        'Qty_High': 'sum',
+        'Order_Count': 'sum'
+    }).reset_index()
+    
+    return combined, quarterly_combined
+
+
 # =============================================================================
 # VISUALIZATION
 # =============================================================================
@@ -671,6 +1045,89 @@ def create_forecast_chart(monthly_forecast, metric='Amount'):
             title=y_title,
             gridcolor='rgba(128,128,128,0.2)',
             tickformat='$,.0f' if metric == 'Amount' else ',.0f'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        legend=dict(
+            orientation='h',
+            yanchor='bottom',
+            y=1.02,
+            xanchor='right',
+            x=1
+        ),
+        height=500,
+        margin=dict(t=80, b=60),
+        hovermode='x unified'
+    )
+    
+    return fig
+
+
+def create_multi_source_stacked_chart(monthly_forecast):
+    """
+    Create a stacked area chart showing historical baseline + pending orders.
+    """
+    if monthly_forecast.empty:
+        return None
+    
+    # Check if we have multi-source data
+    has_pending = 'Pending_Amount' in monthly_forecast.columns and monthly_forecast['Pending_Amount'].sum() > 0
+    
+    fig = go.Figure()
+    
+    # Historical baseline (bottom layer)
+    fig.add_trace(go.Scatter(
+        x=monthly_forecast['MonthShort'],
+        y=monthly_forecast['Historical_Baseline_Amount'] if 'Historical_Baseline_Amount' in monthly_forecast.columns else monthly_forecast['Forecasted_Amount'],
+        name='Historical Baseline',
+        mode='lines',
+        line=dict(width=0),
+        fillcolor='rgba(34, 197, 94, 0.5)',  # Green
+        fill='tozeroy',
+        hovertemplate='<b>%{x}</b><br>Historical: $%{y:,.0f}<extra></extra>',
+        stackgroup='one'
+    ))
+    
+    # Pending orders (top layer) - only if we have pending data
+    if has_pending:
+        fig.add_trace(go.Scatter(
+            x=monthly_forecast['MonthShort'],
+            y=monthly_forecast['Pending_Amount'],
+            name='Pending Orders',
+            mode='lines',
+            line=dict(width=0),
+            fillcolor='rgba(59, 130, 246, 0.5)',  # Blue
+            fill='tonexty',
+            hovertemplate='<b>%{x}</b><br>Pending: $%{y:,.0f}<extra></extra>',
+            stackgroup='one'
+        ))
+    
+    # Total line (on top, bold)
+    fig.add_trace(go.Scatter(
+        x=monthly_forecast['MonthShort'],
+        y=monthly_forecast['Forecasted_Amount'],
+        name='Total Forecast',
+        mode='lines+markers',
+        line=dict(color='rgb(99, 102, 241)', width=3),
+        marker=dict(size=8, color='rgb(99, 102, 241)', line=dict(width=2, color='white')),
+        hovertemplate='<b>%{x}</b><br>Total: $%{y:,.0f}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='📊 2026 Forecast by Source (Historical + Pending Orders)',
+            font=dict(size=20),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Month',
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        yaxis=dict(
+            title='Revenue ($)',
+            gridcolor='rgba(128,128,128,0.2)',
+            tickformat='$,.0f'
         ),
         plot_bgcolor='rgba(0,0,0,0)',
         paper_bgcolor='rgba(0,0,0,0)',
@@ -1004,6 +1461,7 @@ def apply_forecast_adjustments(monthly_forecast, quarterly_forecast, overall_mul
 def main():
     """
     Main function for All Products Forecasting dashboard.
+    Combines historical invoice data with pending sales orders.
     """
     st.markdown("""
     <div style="
@@ -1014,31 +1472,65 @@ def main():
         margin-bottom: 24px;
     ">
         <h1 style="margin: 0; font-size: 28px; display: flex; align-items: center; gap: 12px;">
-            📦 All Products Forecast - 2026
+            📦 All Products Forecast - 2026 (Multi-Source)
         </h1>
         <p style="margin: 8px 0 0 0; opacity: 0.8;">
-            Revenue and quantity forecasting for all product lines based on Invoice Line Item historical data
+            Revenue and quantity forecasting combining historical invoices + pending sales orders
         </p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Load data
+    # =========================
+    # LOAD DATA FROM BOTH SOURCES
+    # =========================
+    
+    # Load Invoice Line Items (historical data)
     with st.spinner("Loading Invoice Line Item data..."):
-        raw_df = load_invoice_line_items()
+        raw_invoice_df = load_invoice_line_items()
     
-    if raw_df.empty:
-        st.error("❌ No data loaded. Check your Google Sheets connection and ensure the 'Invoice Line Item' tab exists.")
+    if raw_invoice_df.empty:
+        st.error("❌ No invoice data loaded. Check your Google Sheets connection and ensure the 'Invoice Line Item' tab exists.")
         return
     
-    # Process data
-    df = process_invoice_data(raw_df)
+    # Process invoice data
+    invoice_df = process_invoice_data(raw_invoice_df)
     
-    if df.empty:
-        st.error("❌ Data processing failed. Check that required columns exist.")
+    if invoice_df.empty:
+        st.error("❌ Invoice data processing failed. Check that required columns exist.")
         return
+    
+    # Load Sales Order Line Items (pending orders)
+    with st.spinner("Loading Sales Order Line Item data..."):
+        raw_so_df = load_sales_order_line_items()
+    
+    # Process and filter sales orders
+    sales_order_df = pd.DataFrame()
+    pending_order_count = 0
+    pending_order_amount = 0
+    
+    if not raw_so_df.empty:
+        sales_order_df = process_sales_order_data(raw_so_df)
+        
+        # Deduplicate - remove already invoiced orders
+        if not sales_order_df.empty:
+            sales_order_df = filter_uninvoiced_sales_orders(sales_order_df, invoice_df)
+            
+            if not sales_order_df.empty:
+                pending_order_count = len(sales_order_df)
+                pending_order_amount = sales_order_df['Amount'].sum()
     
     # Show data summary
-    st.success(f"✅ Loaded {len(df):,} invoice line items")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.success(f"✅ Loaded {len(invoice_df):,} invoice line items (historical)")
+    with col2:
+        if pending_order_count > 0:
+            st.success(f"✅ Loaded {pending_order_count:,} pending sales order lines (${pending_order_amount:,.0f})")
+        else:
+            st.info("ℹ️ No pending sales orders found")
+    
+    # Use invoice_df as the base for filtering (historical data)
+    df = invoice_df
     
     # =========================
     # SIDEBAR CONTROLS
@@ -1046,7 +1538,20 @@ def main():
     
     st.sidebar.markdown("## 📦 Forecast Controls")
     
+    # Data source toggle
+    st.sidebar.markdown("### 📊 Data Sources")
+    include_pending_orders = st.sidebar.checkbox(
+        "Include Pending Sales Orders",
+        value=True if not sales_order_df.empty else False,
+        disabled=sales_order_df.empty,
+        help="Add pending sales orders to the forecast for more near-term accuracy"
+    )
+    
+    if include_pending_orders and not sales_order_df.empty:
+        st.sidebar.success(f"✅ {pending_order_count:,} pending orders included")
+    
     # Historical weighting
+    st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚖️ Historical Weights")
     weight_2024 = st.sidebar.slider(
         "2024 Weight", 0.0, 1.0, 0.6, 0.05,
@@ -1160,10 +1665,44 @@ def main():
         st.warning("⚠️ No data matches the selected filters.")
         return
     
-    # Generate aggregate forecast
-    monthly_forecast, quarterly_forecast, monthly_baselines = generate_2026_forecast(
+    # Generate historical baseline forecast
+    monthly_historical, quarterly_historical, monthly_baselines = generate_2026_forecast(
         filtered_df, weight_2024=weight_2024, weight_2025=weight_2025
     )
+    
+    # Calculate pending orders forecast (if enabled and available)
+    monthly_pending = pd.DataFrame()
+    if include_pending_orders and not sales_order_df.empty:
+        # Apply same filters to sales orders
+        filtered_so_df = sales_order_df.copy()
+        
+        if selected_product_type != 'All' and 'Product Type' in filtered_so_df.columns:
+            filtered_so_df = filtered_so_df[filtered_so_df['Product Type'] == selected_product_type]
+        
+        if selected_item_type != 'All' and 'Item Type' in filtered_so_df.columns:
+            filtered_so_df = filtered_so_df[filtered_so_df['Item Type'] == selected_item_type]
+        
+        if selected_customer != 'All' and 'Customer' in filtered_so_df.columns:
+            filtered_so_df = filtered_so_df[filtered_so_df['Customer'] == selected_customer]
+        
+        if not filtered_so_df.empty:
+            monthly_pending = calculate_pending_orders_forecast(filtered_so_df)
+    
+    # Combine both sources
+    if not monthly_pending.empty:
+        monthly_forecast, quarterly_forecast = combine_forecast_sources(
+            monthly_historical, monthly_pending
+        )
+    else:
+        monthly_forecast = monthly_historical
+        quarterly_forecast = quarterly_historical
+        # Add pending columns for consistency
+        if not monthly_forecast.empty:
+            monthly_forecast['Pending_Amount'] = 0
+            monthly_forecast['Pending_Quantity'] = 0
+            monthly_forecast['Order_Count'] = 0
+            monthly_forecast['Historical_Baseline_Amount'] = monthly_forecast['Forecasted_Amount']
+            monthly_forecast['Historical_Baseline_Quantity'] = monthly_forecast['Forecasted_Quantity']
     
     # Store base forecast for comparison
     base_monthly_forecast = monthly_forecast.copy() if not monthly_forecast.empty else pd.DataFrame()
@@ -1186,23 +1725,29 @@ def main():
     if not monthly_forecast.empty:
         total_qty_2026 = monthly_forecast['Forecasted_Quantity'].sum()
         total_amt_2026 = monthly_forecast['Forecasted_Amount'].sum()
+        total_historical = monthly_forecast['Historical_Baseline_Amount'].sum()
+        total_pending = monthly_forecast['Pending_Amount'].sum()
         q1_qty = monthly_forecast[monthly_forecast['QuarterNum'] == 1]['Forecasted_Quantity'].sum()
         q1_amt = monthly_forecast[monthly_forecast['QuarterNum'] == 1]['Forecasted_Amount'].sum()
         
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
+            delta_text = None
+            if total_pending > 0:
+                pct_pending = (total_pending / total_amt_2026 * 100)
+                delta_text = f"${total_pending:,.0f} from pending orders ({pct_pending:.0f}%)"
             st.metric(
                 "2026 Total Revenue",
                 f"${total_amt_2026:,.0f}",
-                delta=format_currency(total_amt_2026)
+                delta=delta_text
             )
         
         with col2:
             st.metric(
-                "2026 Total Quantity",
-                f"{total_qty_2026:,.0f}",
-                delta=f"{format_quantity(total_qty_2026)} units"
+                "Historical Baseline",
+                f"${total_historical:,.0f}",
+                delta=f"{(total_historical/total_amt_2026*100):.0f}% of total"
             )
         
         with col3:
@@ -1213,11 +1758,19 @@ def main():
             )
         
         with col4:
-            st.metric(
-                "Q1 2026 Quantity",
-                f"{q1_qty:,.0f}",
-                delta="±20% confidence"
-            )
+            if total_pending > 0:
+                pending_orders_count = monthly_forecast['Order_Count'].sum()
+                st.metric(
+                    "Pending Orders",
+                    f"${total_pending:,.0f}",
+                    delta=f"{int(pending_orders_count)} orders"
+                )
+            else:
+                st.metric(
+                    "2026 Total Quantity",
+                    f"{total_qty_2026:,.0f}",
+                    delta=format_currency(total_amt_2026)
+                )
     
     st.markdown("---")
     
@@ -1255,6 +1808,17 @@ def main():
         metric_type = 'Amount' if metric_choice == 'Revenue' else 'Quantity'
         
         if not monthly_forecast.empty:
+            # Multi-source breakdown chart (if we have pending orders)
+            has_pending = 'Pending_Amount' in monthly_forecast.columns and monthly_forecast['Pending_Amount'].sum() > 0
+            if has_pending:
+                st.markdown("#### 📊 Forecast by Source")
+                multi_source_chart = create_multi_source_stacked_chart(monthly_forecast)
+                if multi_source_chart:
+                    st.plotly_chart(multi_source_chart, use_container_width=True)
+                
+                st.markdown("---")
+            
+            # Standard forecast chart
             forecast_chart = create_forecast_chart(monthly_forecast, metric=metric_type)
             if forecast_chart:
                 st.plotly_chart(forecast_chart, use_container_width=True)
