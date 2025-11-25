@@ -47,14 +47,12 @@ CACHE_VERSION = "all_products_v3"  # Updated version for three-source
 # Confidence factor for active sales orders (95% typically convert to invoices)
 ACTIVE_ORDER_CONFIDENCE = 0.95
 
-# HubSpot Deal Stage probability mapping (customize based on your stages)
-HUBSPOT_STAGE_PROBABILITY = {
-    'Appointment Scheduled': 0.20,
-    'Qualified to Buy': 0.40,
-    'Presentation Scheduled': 0.60,
-    'Decision Maker Bought-In': 0.80,
-    'Contract Sent': 0.90,
-    # Add your actual stages here with appropriate probabilities
+# HubSpot Close Status probability mapping (Column P)
+HUBSPOT_CLOSE_STATUS_PROBABILITY = {
+    'Commit': 0.90,        # 90% - Highly likely to close
+    'Expect': 0.75,        # 75% - Expected to close
+    'Best Case': 0.50,     # 50% - Possible to close
+    'Opportunity': 0.25,   # 25% - Early stage opportunity
 }
 
 # =============================================================================
@@ -462,7 +460,7 @@ def process_sales_order_data(df):
 def process_hubspot_data(df):
     """
     Process the HubSpot pipeline data.
-    Applies probability weighting based on Deal Stage.
+    Applies probability weighting based on Close Status (Column P).
     Uses Close Date to assign to months in 2026.
     """
     if df.empty:
@@ -478,6 +476,8 @@ def process_hubspot_data(df):
             col_mapping[col] = 'Product_Name'
         elif col_lower == 'sku':
             col_mapping[col] = 'SKU'
+        elif 'close status' in col_lower:
+            col_mapping[col] = 'Close_Status'
         elif 'deal stage' in col_lower:
             col_mapping[col] = 'Deal_Stage'
         elif 'amount in company currency' in col_lower or (col_lower == 'amount' and 'company' in col.lower()):
@@ -532,29 +532,39 @@ def process_hubspot_data(df):
     df['Year'] = df['Close_Date'].dt.year
     df['Month'] = df['Close_Date'].dt.month
     
-    # Apply probability weighting based on Deal Stage
-    if 'Deal_Stage' in df.columns:
-        # Get default probability (50% if stage not in mapping)
-        df['Stage_Probability'] = df['Deal_Stage'].map(HUBSPOT_STAGE_PROBABILITY).fillna(0.50)
-        df['Weighted_Amount'] = df['Amount'] * df['Stage_Probability']
+    # Apply probability weighting based on Close Status (Column P)
+    if 'Close_Status' in df.columns:
+        # Map Close Status to probability
+        df['Status_Probability'] = df['Close_Status'].map(HUBSPOT_CLOSE_STATUS_PROBABILITY).fillna(0.25)
+        df['Weighted_Amount'] = df['Amount'] * df['Status_Probability']
         
-        # Show stage distribution
-        stage_summary = df.groupby('Deal_Stage').agg({
+        # Show status distribution
+        status_summary = df.groupby('Close_Status').agg({
             'Amount': 'sum',
             'Weighted_Amount': 'sum',
             'Deal_ID': 'nunique' if 'Deal_ID' in df.columns else 'count'
         }).reset_index()
         
-        st.info(f"🔍 HubSpot: {len(df)} deals across {df['Deal_Stage'].nunique()} stages")
+        st.info(f"🔍 HubSpot: {len(df)} deals across {df['Close_Status'].nunique()} statuses (Commit/Expect/Best Case/Opportunity)")
+        
+        # Show breakdown by status
+        for _, row in status_summary.iterrows():
+            status = row['Close_Status']
+            count = row['Deal_ID']
+            total = row['Amount']
+            weighted = row['Weighted_Amount']
+            prob = HUBSPOT_CLOSE_STATUS_PROBABILITY.get(status, 0.25)
+            st.info(f"   • {status}: {count} deals, ${total:,.0f} total → ${weighted:,.0f} weighted ({prob:.0%})")
+        
     else:
-        st.warning("⚠️ 'Deal Stage' column not found, using 50% default probability")
-        df['Stage_Probability'] = 0.50
-        df['Weighted_Amount'] = df['Amount'] * 0.50
+        st.warning("⚠️ 'Close Status' column not found, using 25% default probability")
+        df['Status_Probability'] = 0.25
+        df['Weighted_Amount'] = df['Amount'] * 0.25
     
     # Clean numeric columns
     if 'Quantity' in df.columns:
         df['Quantity'] = df['Quantity'].apply(clean_numeric)
-        df['Weighted_Quantity'] = df['Quantity'] * df['Stage_Probability']
+        df['Weighted_Quantity'] = df['Quantity'] * df['Status_Probability']
     else:
         df['Quantity'] = 0
         df['Weighted_Quantity'] = 0
