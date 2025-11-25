@@ -56,6 +56,15 @@ HUBSPOT_CLOSE_STATUS_PROBABILITY = {
     'Opportunity': 0.25,   # 25% - Early stage opportunity
 }
 
+# Sales Rep Configuration
+SALES_REPS = [
+    'Alex Gonzalez',
+    'Lance Mitton', 
+    'Dave Borkowski',
+    'Jake Lynch',
+    'Brad Sherman'
+]
+
 # =============================================================================
 # DATA LOADING
 # =============================================================================
@@ -2089,6 +2098,262 @@ def create_product_acquisition_chart(product_acquisition):
     return fig
 
 
+def calculate_product_growth_potential(df):
+    """
+    Calculate growth potential for each product type based on historical trends
+    """
+    if df.empty or 'Product Type' not in df.columns:
+        return None
+    
+    # Calculate year-over-year growth by product
+    product_by_year = df.groupby(['Product Type', 'Year'])['Amount'].sum().reset_index()
+    
+    growth_rates = []
+    for product in product_by_year['Product Type'].unique():
+        product_data = product_by_year[product_by_year['Product Type'] == product].sort_values('Year')
+        
+        if len(product_data) >= 2:
+            # Get 2024 and 2025 values
+            rev_2024 = product_data[product_data['Year'] == 2024]['Amount'].sum()
+            rev_2025 = product_data[product_data['Year'] == 2025]['Amount'].sum()
+            
+            if rev_2024 > 0:
+                growth_rate = ((rev_2025 - rev_2024) / rev_2024) * 100
+                
+                growth_rates.append({
+                    'Product Type': product,
+                    'Revenue_2024': rev_2024,
+                    'Revenue_2025': rev_2025,
+                    'Growth_Rate': growth_rate,
+                    'Revenue_Increase': rev_2025 - rev_2024
+                })
+    
+    if not growth_rates:
+        return None
+    
+    growth_df = pd.DataFrame(growth_rates)
+    growth_df = growth_df.sort_values('Growth_Rate', ascending=False)
+    
+    return growth_df
+
+
+def calculate_gap_to_goal(current_forecast, goal_amount):
+    """
+    Calculate the gap between current forecast and goal
+    """
+    gap = goal_amount - current_forecast
+    gap_pct = (gap / current_forecast * 100) if current_forecast > 0 else 0
+    
+    return {
+        'current_forecast': current_forecast,
+        'goal': goal_amount,
+        'gap': gap,
+        'gap_pct': gap_pct,
+        'needs_growth': gap > 0
+    }
+
+
+def recommend_product_focus(growth_potential, gap_amount, top_n=5):
+    """
+    Recommend which products to focus on to close the revenue gap
+    """
+    if growth_potential is None or growth_potential.empty:
+        return None
+    
+    # Sort by growth rate and revenue size
+    # Prioritize products that are both growing fast AND have meaningful revenue
+    growth_potential['Score'] = (
+        growth_potential['Growth_Rate'] * 0.6 +  # 60% weight on growth rate
+        (growth_potential['Revenue_2025'] / growth_potential['Revenue_2025'].max() * 100) * 0.4  # 40% weight on size
+    )
+    
+    recommendations = growth_potential.sort_values('Score', ascending=False).head(top_n)
+    
+    # Calculate how much each product could contribute if growth continues
+    recommendations['Potential_2026'] = recommendations['Revenue_2025'] * (1 + recommendations['Growth_Rate']/100)
+    recommendations['Additional_Revenue'] = recommendations['Potential_2026'] - recommendations['Revenue_2025']
+    
+    # Calculate what % of gap each could close
+    recommendations['Gap_Coverage'] = (recommendations['Additional_Revenue'] / gap_amount * 100) if gap_amount > 0 else 0
+    
+    return recommendations
+
+
+def apply_product_scenario(monthly_forecast, product_adjustments):
+    """
+    Apply growth rate adjustments to specific product types
+    product_adjustments: dict like {'Concentrate Jars': 1.25, 'Flower Jars': 1.10}
+    """
+    # This would need product-level forecast data
+    # For now, return a scenario summary
+    adjusted_forecast = monthly_forecast.copy()
+    
+    # Apply overall multiplier based on weighted average of adjustments
+    if product_adjustments:
+        avg_multiplier = np.mean(list(product_adjustments.values()))
+        adjusted_forecast['Forecasted_Amount'] = adjusted_forecast['Forecasted_Amount'] * avg_multiplier
+        adjusted_forecast['Forecasted_Quantity'] = adjusted_forecast['Forecasted_Quantity'] * avg_multiplier
+    
+    return adjusted_forecast
+
+
+def create_gap_analysis_visual(gap_info):
+    """
+    Create a visual showing current forecast vs goal
+    """
+    fig = go.Figure()
+    
+    # Current forecast bar
+    fig.add_trace(go.Bar(
+        x=['Current Forecast'],
+        y=[gap_info['current_forecast']],
+        name='Current Forecast',
+        marker_color='rgba(99, 102, 241, 0.7)',
+        text=[f"${gap_info['current_forecast']:,.0f}"],
+        textposition='inside',
+        textfont=dict(size=16, color='white')
+    ))
+    
+    # Goal bar
+    fig.add_trace(go.Bar(
+        x=['2026 Goal'],
+        y=[gap_info['goal']],
+        name='Goal',
+        marker_color='rgba(34, 197, 94, 0.7)',
+        text=[f"${gap_info['goal']:,.0f}"],
+        textposition='inside',
+        textfont=dict(size=16, color='white')
+    ))
+    
+    # Gap indicator
+    if gap_info['needs_growth']:
+        fig.add_annotation(
+            x=1,
+            y=gap_info['current_forecast'] + (gap_info['gap'] / 2),
+            text=f"GAP: ${gap_info['gap']:,.0f}<br>({gap_info['gap_pct']:.1f}% growth needed)",
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=1,
+            arrowwidth=2,
+            arrowcolor='rgba(249, 115, 22, 1)',
+            font=dict(size=14, color='rgba(249, 115, 22, 1)'),
+            bgcolor='rgba(0,0,0,0.7)',
+            bordercolor='rgba(249, 115, 22, 1)',
+            borderwidth=2
+        )
+    
+    fig.update_layout(
+        title=dict(
+            text='🎯 Revenue Goal vs Current Forecast',
+            font=dict(size=20),
+            x=0.5
+        ),
+        yaxis=dict(
+            title='Revenue ($)',
+            tickformat='$,.0f',
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=400,
+        showlegend=False
+    )
+    
+    return fig
+
+
+def create_product_recommendation_chart(recommendations):
+    """
+    Create chart showing recommended product focus areas
+    """
+    if recommendations is None or recommendations.empty:
+        return None
+    
+    fig = go.Figure()
+    
+    # Growth rate bars
+    fig.add_trace(go.Bar(
+        x=recommendations['Product Type'],
+        y=recommendations['Growth_Rate'],
+        marker_color='rgba(34, 197, 94, 0.7)',
+        text=recommendations['Growth_Rate'].apply(lambda x: f"{x:+.1f}%"),
+        textposition='outside',
+        name='Historical Growth Rate',
+        hovertemplate='<b>%{x}</b><br>Growth: %{y:.1f}%<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title=dict(
+            text='🎯 Recommended Product Focus (By Growth Potential)',
+            font=dict(size=20),
+            x=0.5
+        ),
+        xaxis=dict(
+            title='Product Type',
+            tickangle=-45,
+            gridcolor='rgba(128,128,128,0.1)'
+        ),
+        yaxis=dict(
+            title='YoY Growth Rate (%)',
+            gridcolor='rgba(128,128,128,0.2)'
+        ),
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font=dict(color='white'),
+        height=500,
+        margin=dict(t=80, b=120),
+        showlegend=False
+    )
+    
+    return fig
+
+
+def get_rep_customers(df, sales_rep):
+    """
+    Get list of customers for a specific sales rep
+    """
+    if 'Sales Rep' not in df.columns:
+        return []
+    
+    rep_customers = df[df['Sales Rep'] == sales_rep]['Customer'].unique().tolist()
+    return sorted(rep_customers)
+
+
+def calculate_rep_forecast(monthly_forecast, df, sales_rep, excluded_customers=None):
+    """
+    Calculate forecast for a specific sales rep's territory
+    """
+    if 'Sales Rep' not in df.columns:
+        return None, None
+    
+    # Filter to rep's historical data
+    rep_df = df[df['Sales Rep'] == sales_rep].copy()
+    
+    # Exclude churned customers if specified
+    if excluded_customers:
+        rep_df = rep_df[~rep_df['Customer'].isin(excluded_customers)]
+    
+    # Calculate rep's % of total revenue
+    total_revenue = df['Amount'].sum()
+    rep_revenue = rep_df['Amount'].sum()
+    rep_pct = (rep_revenue / total_revenue) if total_revenue > 0 else 0
+    
+    # Apply rep % to forecast
+    rep_forecast = monthly_forecast.copy()
+    rep_forecast['Forecasted_Amount'] = rep_forecast['Forecasted_Amount'] * rep_pct
+    rep_forecast['Forecasted_Quantity'] = rep_forecast['Forecasted_Quantity'] * rep_pct
+    
+    rep_stats = {
+        'total_revenue': rep_revenue,
+        'pct_of_total': rep_pct * 100,
+        'customer_count': rep_df['Customer'].nunique(),
+        'avg_order_size': rep_revenue / len(rep_df) if len(rep_df) > 0 else 0
+    }
+    
+    return rep_forecast, rep_stats
+
+
 # =============================================================================
 # MAIN FUNCTION
 # =============================================================================
@@ -2230,6 +2495,26 @@ def main():
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔍 Filters")
     
+    # Churn Management
+    st.sidebar.markdown("#### ⚠️ Churn Risk Management")
+    
+    if 'Customer' in df.columns:
+        all_customers = sorted(df['Customer'].dropna().unique().tolist())
+        excluded_customers = st.sidebar.multiselect(
+            "Exclude Customers (Churn Risk)",
+            options=all_customers,
+            default=[],
+            help="Select customers to exclude from forecast (at-risk of churning)"
+        )
+        
+        if excluded_customers:
+            excluded_revenue = df[df['Customer'].isin(excluded_customers)]['Amount'].sum()
+            st.sidebar.error(f"Excluding ${excluded_revenue:,.0f} in historical revenue from {len(excluded_customers)} customer(s)")
+    else:
+        excluded_customers = []
+    
+    st.sidebar.markdown("---")
+    
     # Product Type filter
     if 'Product Type' in df.columns:
         product_types = ['All'] + sorted(df['Product Type'].unique().tolist())
@@ -2277,6 +2562,11 @@ def main():
     # Apply filters
     filtered_df = df.copy()
     filter_desc = []
+    
+    # Apply churn exclusions first
+    if excluded_customers:
+        filtered_df = filtered_df[~filtered_df['Customer'].isin(excluded_customers)]
+        filter_desc.append(f"Excluded {len(excluded_customers)} at-risk customer(s)")
     
     if selected_product_type != 'All':
         filtered_df = filtered_df[filtered_df['Product Type'] == selected_product_type]
@@ -2488,8 +2778,10 @@ def main():
     # TABS FOR DIFFERENT VIEWS
     # =========================
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📈 Forecast Overview",
+        "🎯 Goal Planning",
+        "👥 Sales Rep Planning",
         "📊 Product Breakdown",
         "🏆 Customer Analysis",
         "📋 Detailed Data",
@@ -2586,6 +2878,305 @@ def main():
                     """, unsafe_allow_html=True)
     
     with tab2:
+        st.markdown("### 🎯 Strategic Goal Planning")
+        
+        # Goal setting
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            revenue_goal_2026 = st.number_input(
+                "💰 Set 2026 Revenue Goal ($)",
+                min_value=0,
+                value=20000000,
+                step=100000,
+                format="%d",
+                help="Enter your target revenue for 2026"
+            )
+        
+        with col2:
+            if not monthly_forecast.empty:
+                current_forecast_total = monthly_forecast['Forecasted_Amount'].sum()
+                gap_info = calculate_gap_to_goal(current_forecast_total, revenue_goal_2026)
+                
+                if gap_info['needs_growth']:
+                    st.error(f"⚠️ **Gap to Goal:** ${gap_info['gap']:,.0f} ({gap_info['gap_pct']:.1f}% growth needed)")
+                else:
+                    st.success(f"✅ **Exceeding Goal by:** ${abs(gap_info['gap']):,.0f}")
+        
+        st.markdown("---")
+        
+        # Visual goal comparison
+        if not monthly_forecast.empty:
+            gap_visual = create_gap_analysis_visual(gap_info)
+            if gap_visual:
+                st.plotly_chart(gap_visual, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # Product focus recommendations
+        if gap_info['needs_growth']:
+            st.markdown("### 🎯 Recommended Product Focus Areas")
+            st.markdown(f"*To close the ${gap_info['gap']:,.0f} gap, consider focusing on these high-growth products:*")
+            
+            growth_potential = calculate_product_growth_potential(filtered_df)
+            
+            if growth_potential is not None:
+                recommendations = recommend_product_focus(growth_potential, gap_info['gap'], top_n=5)
+                
+                if recommendations is not None:
+                    # Chart
+                    rec_chart = create_product_recommendation_chart(recommendations)
+                    if rec_chart:
+                        st.plotly_chart(rec_chart, use_container_width=True)
+                    
+                    # Detailed recommendations table
+                    st.markdown("#### 📋 Detailed Growth Analysis")
+                    
+                    rec_display = recommendations[['Product Type', 'Revenue_2025', 'Growth_Rate', 
+                                                   'Additional_Revenue', 'Gap_Coverage']].copy()
+                    rec_display.columns = ['Product Type', '2025 Revenue', 'YoY Growth %', 
+                                          'Potential 2026 Increase', '% of Gap Covered']
+                    
+                    rec_display['2025 Revenue'] = rec_display['2025 Revenue'].apply(lambda x: f"${x:,.0f}")
+                    rec_display['YoY Growth %'] = rec_display['YoY Growth %'].apply(lambda x: f"{x:+.1f}%")
+                    rec_display['Potential 2026 Increase'] = rec_display['Potential 2026 Increase'].apply(lambda x: f"${x:,.0f}")
+                    rec_display['% of Gap Covered'] = rec_display['% of Gap Covered'].apply(lambda x: f"{x:.1f}%")
+                    
+                    st.dataframe(rec_display, use_container_width=True, hide_index=True)
+                    
+                    # Strategic insights
+                    st.markdown("#### 💡 Strategic Insights")
+                    top_product = recommendations.iloc[0]
+                    st.info(f"""
+                    **Top Opportunity:** {top_product['Product Type']}
+                    - Currently growing at **{top_product['Growth_Rate']:.1f}%** YoY
+                    - Could contribute **${top_product['Additional_Revenue']:,.0f}** if growth continues
+                    - Would cover **{top_product['Gap_Coverage']:.1f}%** of your revenue gap
+                    """)
+        
+        st.markdown("---")
+        
+        # Scenario Planning
+        st.markdown("### 🎨 Scenario Planning")
+        st.markdown("*Adjust product category growth rates to model different scenarios*")
+        
+        if 'Product Type' in filtered_df.columns:
+            # Get top product types
+            top_products = filtered_df.groupby('Product Type')['Amount'].sum().sort_values(ascending=False).head(8)
+            
+            st.markdown("#### Adjust Growth Rates by Product Category")
+            
+            product_scenarios = {}
+            cols = st.columns(4)
+            
+            for idx, (product, revenue) in enumerate(top_products.items()):
+                with cols[idx % 4]:
+                    multiplier = st.slider(
+                        f"{product[:20]}...",
+                        min_value=0.5,
+                        max_value=2.0,
+                        value=1.0,
+                        step=0.1,
+                        format="%.1fx",
+                        key=f"scenario_{product}",
+                        help=f"2025 Revenue: ${revenue:,.0f}"
+                    )
+                    product_scenarios[product] = multiplier
+            
+            # Show scenario impact
+            if any(v != 1.0 for v in product_scenarios.values()):
+                st.markdown("#### 📊 Scenario Impact")
+                
+                # Calculate weighted impact
+                total_revenue = filtered_df['Amount'].sum()
+                weighted_impact = 0
+                
+                for product, multiplier in product_scenarios.items():
+                    product_revenue = filtered_df[filtered_df['Product Type'] == product]['Amount'].sum()
+                    product_pct = product_revenue / total_revenue if total_revenue > 0 else 0
+                    weighted_impact += (multiplier - 1.0) * product_pct
+                
+                scenario_forecast = current_forecast_total * (1 + weighted_impact)
+                scenario_gap = revenue_goal_2026 - scenario_forecast
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        "Scenario Forecast",
+                        f"${scenario_forecast:,.0f}",
+                        delta=f"${scenario_forecast - current_forecast_total:,.0f}"
+                    )
+                with col2:
+                    st.metric(
+                        "vs Goal",
+                        f"${scenario_gap:,.0f}" if scenario_gap > 0 else "✅ Goal Met",
+                        delta="Gap" if scenario_gap > 0 else "Surplus"
+                    )
+                with col3:
+                    growth_needed = ((scenario_forecast / current_forecast_total) - 1) * 100
+                    st.metric(
+                        "Total Growth",
+                        f"{growth_needed:+.1f}%"
+                    )
+    
+    with tab7:
+        st.markdown("### 👥 Sales Rep Territory Planning")
+        
+        # Rep selector
+        selected_rep = st.selectbox(
+            "Select Sales Rep",
+            SALES_REPS,
+            help="Choose a sales rep to view their territory forecast"
+        )
+        
+        if selected_rep and 'Sales Rep' in filtered_df.columns:
+            # Get rep's customers
+            rep_customers = get_rep_customers(filtered_df, selected_rep)
+            
+            st.markdown(f"#### 📊 Territory Overview: {selected_rep}")
+            
+            # Churn management
+            st.markdown("##### ⚠️ Churn Risk Management")
+            st.caption("Select customers you expect might churn in 2026:")
+            
+            churned_customers = st.multiselect(
+                "At-Risk Customers",
+                options=rep_customers,
+                default=[],
+                key=f"churn_{selected_rep}",
+                help="These customers will be excluded from the forecast"
+            )
+            
+            # Calculate rep forecast
+            rep_forecast, rep_stats = calculate_rep_forecast(
+                monthly_forecast, 
+                filtered_df, 
+                selected_rep,
+                excluded_customers=churned_customers
+            )
+            
+            if rep_stats:
+                st.markdown("---")
+                
+                # Rep metrics
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "Historical Revenue",
+                        f"${rep_stats['total_revenue']:,.0f}"
+                    )
+                
+                with col2:
+                    st.metric(
+                        "% of Total",
+                        f"{rep_stats['pct_of_total']:.1f}%"
+                    )
+                
+                with col3:
+                    st.metric(
+                        "Active Customers",
+                        f"{rep_stats['customer_count']}"
+                    )
+                
+                with col4:
+                    st.metric(
+                        "Avg Order Size",
+                        f"${rep_stats['avg_order_size']:,.0f}"
+                    )
+                
+                # Show impact of churn
+                if churned_customers:
+                    churned_revenue = filtered_df[
+                        (filtered_df['Sales Rep'] == selected_rep) & 
+                        (filtered_df['Customer'].isin(churned_customers))
+                    ]['Amount'].sum()
+                    
+                    st.warning(f"⚠️ Excluding {len(churned_customers)} at-risk customers (${churned_revenue:,.0f} historical revenue)")
+                
+                st.markdown("---")
+                
+                # Rep forecast chart
+                if rep_forecast is not None and not rep_forecast.empty:
+                    st.markdown("##### 📈 Monthly Forecast by Territory")
+                    
+                    fig = go.Figure()
+                    
+                    fig.add_trace(go.Bar(
+                        x=rep_forecast['MonthShort'],
+                        y=rep_forecast['Forecasted_Amount'],
+                        marker_color='rgba(99, 102, 241, 0.7)',
+                        text=rep_forecast['Forecasted_Amount'].apply(lambda x: f"${x/1000:.0f}K"),
+                        textposition='outside'
+                    ))
+                    
+                    fig.update_layout(
+                        title=f"2026 Forecast - {selected_rep}",
+                        xaxis_title="Month",
+                        yaxis_title="Revenue ($)",
+                        yaxis_tickformat='$,.0f',
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='white'),
+                        height=400
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Territory goal setting
+                    st.markdown("---")
+                    st.markdown("##### 🎯 Territory Goal Planning")
+                    
+                    rep_forecast_total = rep_forecast['Forecasted_Amount'].sum()
+                    
+                    rep_goal = st.number_input(
+                        f"Set 2026 Goal for {selected_rep} ($)",
+                        min_value=0,
+                        value=int(rep_forecast_total * 1.15),  # Default to 15% growth
+                        step=10000,
+                        key=f"goal_{selected_rep}"
+                    )
+                    
+                    rep_gap = rep_goal - rep_forecast_total
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Current Forecast", f"${rep_forecast_total:,.0f}")
+                    with col2:
+                        if rep_gap > 0:
+                            st.metric("Gap to Goal", f"${rep_gap:,.0f}", delta=f"{(rep_gap/rep_forecast_total*100):.1f}% growth needed")
+                        else:
+                            st.success(f"✅ Exceeding goal by ${abs(rep_gap):,.0f}")
+                    
+                    # Customer breakdown
+                    st.markdown("---")
+                    st.markdown("##### 👥 Customer Breakdown")
+                    
+                    rep_customer_summary = filtered_df[filtered_df['Sales Rep'] == selected_rep].groupby('Customer').agg({
+                        'Amount': 'sum',
+                        'Date': ['count', 'max']
+                    }).reset_index()
+                    
+                    rep_customer_summary.columns = ['Customer', 'Revenue', 'Orders', 'Last Order']
+                    rep_customer_summary = rep_customer_summary.sort_values('Revenue', ascending=False)
+                    
+                    # Mark churned customers
+                    rep_customer_summary['Status'] = rep_customer_summary['Customer'].apply(
+                        lambda x: '⚠️ At Risk' if x in churned_customers else '✅ Active'
+                    )
+                    
+                    rep_customer_summary['Revenue'] = rep_customer_summary['Revenue'].apply(lambda x: f"${x:,.0f}")
+                    rep_customer_summary['Last Order'] = pd.to_datetime(rep_customer_summary['Last Order']).dt.strftime('%b %Y')
+                    
+                    st.dataframe(
+                        rep_customer_summary[['Customer', 'Status', 'Revenue', 'Orders', 'Last Order']],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+        else:
+            st.info("Sales Rep data not found in dataset. Ensure 'Sales Rep' column exists.")
+    
+    with tab6:
         st.markdown("### 📊 Revenue Breakdown by Product")
         
         breakdown_col = st.radio(
@@ -2638,7 +3229,7 @@ def main():
                 
                 st.dataframe(forecast_table, use_container_width=True, hide_index=True)
     
-    with tab3:
+    with tab7:
         st.markdown("### 🏆 Customer Analysis")
         
         # Customer Acquisition Analysis
@@ -2693,7 +3284,7 @@ def main():
             
             st.dataframe(customer_summary.head(50), use_container_width=True, hide_index=True)
     
-    with tab4:
+    with tab6:
         st.markdown("### 📋 Monthly Forecast Details")
         
         if not monthly_forecast.empty:
@@ -2725,7 +3316,7 @@ def main():
         st.dataframe(filtered_df.head(100), use_container_width=True)
         st.caption(f"Showing first 100 of {len(filtered_df):,} records")
     
-    with tab5:
+    with tab7:
         st.markdown(f"""
         ### How This Forecast is Calculated
         
