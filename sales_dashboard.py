@@ -1211,19 +1211,11 @@ def load_all_data():
         if 'Status' in sales_orders_df.columns:
             sales_orders_df['Status'] = sales_orders_df['Status'].astype(str).str.strip()
         
-        # Convert date columns - handle 2-digit years correctly (26 = 2026, not 1926)
+        # Convert date columns
         date_columns = ['Order Start Date', 'Customer Promise Date', 'Projected Date', 'Pending Approval Date']
         for col in date_columns:
             if col in sales_orders_df.columns:
-                # First try standard parsing
                 sales_orders_df[col] = pd.to_datetime(sales_orders_df[col], errors='coerce')
-                
-                # Fix any dates that got parsed as 1900s (2-digit year issue)
-                # If year < 2000, add 100 years (e.g., 1926 -> 2026)
-                if sales_orders_df[col].notna().any():
-                    mask = (sales_orders_df[col].dt.year < 2000) & (sales_orders_df[col].notna())
-                    if mask.any():
-                        sales_orders_df.loc[mask, col] = sales_orders_df.loc[mask, col] + pd.DateOffset(years=100)
         
         # Filter to include Pending Approval, Pending Fulfillment, AND Pending Billing/Partially Fulfilled
         if 'Status' in sales_orders_df.columns:
@@ -1438,46 +1430,21 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             so_df = so_df.copy()
             so_df['Amount_Numeric'] = pd.to_numeric(so_df.get('Amount', 0), errors='coerce')
             
-            # Q4 2025 date range for filtering
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
-            
             # Parse dates
             if 'Estimated Ship Date' in so_df.columns:
                 so_df['Ship_Date_Parsed'] = pd.to_datetime(so_df['Estimated Ship Date'], errors='coerce')
             else:
                 so_df['Ship_Date_Parsed'] = pd.NaT
             
-            # Parse Pending Approval Date for PA filtering
-            if 'Pending Approval Date' in so_df.columns:
-                so_df['PA_Date_Parsed'] = pd.to_datetime(so_df['Pending Approval Date'], errors='coerce')
-                # Fix any dates that got parsed as 1900s (2-digit year issue: 26 -> 1926 instead of 2026)
-                if so_df['PA_Date_Parsed'].notna().any():
-                    mask_1900s = (so_df['PA_Date_Parsed'].dt.year < 2000) & (so_df['PA_Date_Parsed'].notna())
-                    if mask_1900s.any():
-                        so_df.loc[mask_1900s, 'PA_Date_Parsed'] = so_df.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
-            else:
-                so_df['PA_Date_Parsed'] = pd.NaT
-            
             # Pending Fulfillment
             pf_df = so_df[so_df.get('Status', '') == 'Pending Fulfillment']
             metrics['pending_fulfillment'] = pf_df[pf_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
             metrics['pending_fulfillment_no_date'] = pf_df[pf_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
             
-            # Pending Approval - filtered by Pending Approval Date within Q4 2025
-            pa_df = so_df[so_df.get('Status', '') == 'Pending Approval'].copy()
-            
-            # PA with date: must have a valid date WITHIN Q4 2025
-            pa_with_q4_date = pa_df[
-                (pa_df['PA_Date_Parsed'].notna()) &
-                (pa_df['PA_Date_Parsed'] >= q4_start) &
-                (pa_df['PA_Date_Parsed'] <= q4_end)
-            ]
-            metrics['pending_approval'] = pa_with_q4_date['Amount_Numeric'].sum()
-            
-            # PA no date: missing or invalid Pending Approval Date
-            pa_no_date = pa_df[pa_df['PA_Date_Parsed'].isna()]
-            metrics['pending_approval_no_date'] = pa_no_date['Amount_Numeric'].sum()
+            # Pending Approval
+            pa_df = so_df[so_df.get('Status', '') == 'Pending Approval']
+            metrics['pending_approval'] = pa_df[pa_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
+            metrics['pending_approval_no_date'] = pa_df[pa_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
             
             # Pending Approval > 2 weeks old
             if 'Transaction Date' in so_df.columns:
@@ -2458,10 +2425,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
-    # Logic:
-    # 1. PA with Date (within Q4): Has PA Date in Q4 2025 AND Age < 13 business days
-    # 2. PA No Date: No PA Date AND Age < 13 business days  
-    # 3. PA Old (>2 Weeks): Age >= 13 business days (regardless of whether they have a PA date or not)
+    # CRITICAL: Match the original calculate_rep_metrics logic exactly
     pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
     
     if not pa_orders.empty:
@@ -2469,44 +2433,35 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         if 'Age_Business_Days' not in pa_orders.columns:
             pa_orders['Age_Business_Days'] = 0
         
-        # Parse Pending Approval Date for all PA orders
-        if 'Pending Approval Date' in pa_orders.columns:
-            pa_orders['PA_Date_Parsed'] = pd.to_datetime(pa_orders['Pending Approval Date'], errors='coerce')
-            
-            # Fix any dates that got parsed as 1900s (2-digit year issue: 26 -> 1926 instead of 2026)
-            if pa_orders['PA_Date_Parsed'].notna().any():
-                mask_1900s = (pa_orders['PA_Date_Parsed'].dt.year < 2000) & (pa_orders['PA_Date_Parsed'].notna())
-                if mask_1900s.any():
-                    pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] = pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
-        else:
-            pa_orders['PA_Date_Parsed'] = pd.NaT
-        
-        # Determine which orders have a valid Q4 PA Date
-        has_q4_pa_date = (
-            (pa_orders['PA_Date_Parsed'].notna()) &
-            (pa_orders['PA_Date_Parsed'] >= q4_start) &
-            (pa_orders['PA_Date_Parsed'] <= q4_end)
-        )
-        
-        # Determine which orders have NO PA Date (or invalid/outside Q4)
-        has_no_pa_date = (
-            (pa_orders['PA_Date_Parsed'].isna()) |
-            (pa_orders['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
-            (pa_orders['Pending Approval Date'].astype(str).str.strip() == '')
-        )
-        
-        # CATEGORY 3: PA Old (>= 13 business days) - ANY PA order that is old, regardless of PA date
-        # This takes priority - old orders go here first
+        # CATEGORY 3 (PRIORITY): Old Pending Approval (Age >= 13 business days)
+        # Based on actual reconciliation: orders 13+ business days old are excluded
+        # This takes priority and removes orders from other categories
         pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
         
-        # Only "young" orders (< 13 days) are eligible for PA with Date or PA No Date
+        # Create a mask for orders that are NOT old (Age < 13 days)
+        # These are the only ones eligible for Categories 1 and 2
         young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
         
-        # CATEGORY 1: PA with Date - has Q4 PA date AND is NOT old (< 13 days)
-        pa_date = young_pa[has_q4_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
-        
-        # CATEGORY 2: PA No Date - no PA date AND is NOT old (< 13 days)
-        pa_nodate = young_pa[has_no_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
+        if not young_pa.empty and 'Pending Approval Date' in young_pa.columns:
+            # CATEGORY 1: Pending Approval WITH valid Q4 dates (and Age < 13 business days)
+            pa_with_date_mask = (
+                (young_pa['Pending Approval Date'].notna()) &
+                (young_pa['Pending Approval Date'] != 'No Date') &
+                (young_pa['Pending Approval Date'] >= q4_start) &
+                (young_pa['Pending Approval Date'] <= q4_end)
+            )
+            pa_date = young_pa[pa_with_date_mask].copy()
+            
+            # CATEGORY 2: Pending Approval with "No Date" string (and Age < 13 business days)
+            # Robust matching for various "No Date" formats from Google Sheets
+            pa_no_date_mask = (
+                (young_pa['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
+                (young_pa['Pending Approval Date'].astype(str).str.strip() == '') |
+                (young_pa['Pending Approval Date'].isna())
+            )
+            pa_nodate = young_pa[pa_no_date_mask].copy()
+        else:
+            pa_date = pa_nodate = pd.DataFrame()
     else:
         pa_old = pa_date = pa_nodate = pd.DataFrame()
     
@@ -4634,7 +4589,7 @@ def main():
         # Create navigation options
         view_mode = st.radio(
             "Select View:",
-            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast"],
+            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "📦 Q4 Shipping Plan"],
             label_visibility="collapsed",
             key="nav_selector"
         )
@@ -4646,7 +4601,7 @@ def main():
             "🔍 Reconciliation": "Reconciliation",
             "🤖 AI Insights": "AI Insights",
             "💰 Commission": "💰 Commission",
-            "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast"
+            "📦 Q4 Shipping Plan": "📦 Q4 Shipping Plan"
         }
         
         view_mode = view_mapping.get(view_mode, "Team Overview")
@@ -4790,12 +4745,12 @@ def main():
     elif view_mode == "💰 Commission":
         # Commission calculator view (password protected)
         commission_calculator.display_commission_section(invoices_df, sales_orders_df)
-    elif view_mode == "🧪 Concentrate Jar Forecast":
-        # Concentrate Jar Forecasting view
+    elif view_mode == "📦 Q4 Shipping Plan":
+        # Shipping planning view
         if SHIPPING_PLANNING_AVAILABLE:
             shipping_planning.main()
         else:
-            st.error("❌ Concentrate Jar Forecasting module not found.")
+            st.error("❌ Shipping Planning module not found.")
             if 'SHIPPING_PLANNING_ERROR' in globals():
                 st.error(f"Error details: {SHIPPING_PLANNING_ERROR}")
             st.info("Make sure shipping_planning.py is in your repository at the same level as this dashboard file.")
