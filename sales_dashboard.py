@@ -2451,6 +2451,20 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
         
+        # DEBUG: Let's see what we're actually dealing with
+        if 'Calyx External Order' in pf_orders.columns:
+            st.write("🔍 DEBUG: Calyx External Order Column Analysis")
+            st.write("Sample raw values from Calyx External Order column:")
+            st.write(pf_orders['Calyx External Order'].head(10).tolist())
+            st.write("Value types:")
+            st.write(pf_orders['Calyx External Order'].apply(type).unique())
+            st.write("After string conversion and upper():")
+            st.write(pf_orders['Calyx External Order'].astype(str).str.strip().str.upper().head(10).tolist())
+            st.write("Unique values in column:")
+            st.write(pf_orders['Calyx External Order'].unique())
+            st.write("Value counts:")
+            st.write(pf_orders['Calyx External Order'].value_counts())
+        
         # Check External/Internal flag
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
