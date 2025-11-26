@@ -780,8 +780,8 @@ def load_all_data():
     # Load invoice data from NetSuite - EXTEND to include Columns T:U (Corrected Customer Name, Rep Master)
     invoices_df = load_google_sheets_data("NS Invoices", "A:U", version=CACHE_VERSION)
     
-    # Load sales orders data from NetSuite - EXTEND to include Columns through AF (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
+    # Load sales orders data from NetSuite - EXTEND to include Columns through AE (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AE", version=CACHE_VERSION)
     
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -1155,15 +1155,15 @@ def load_all_data():
         if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
             rename_dict[col_names[12]] = 'Projected Date'  # Column M
         
-        # NEW COLUMN POSITIONS after adding Calyx | External Order in column AC
-        if len(col_names) > 28:
-            rename_dict[col_names[28]] = 'Calyx External Order'  # Column AC - NEW!
-        if len(col_names) > 29 and 'Pending Approval Date' not in rename_dict.values():
-            rename_dict[col_names[29]] = 'Pending Approval Date'  # Column AD (was AB)
+        # NEW COLUMN POSITIONS after adding Calyx | External Order in column AB
+        if len(col_names) > 27:
+            rename_dict[col_names[27]] = 'Calyx External Order'  # Column AB - NEW!
+        if len(col_names) > 28 and 'Pending Approval Date' not in rename_dict.values():
+            rename_dict[col_names[28]] = 'Pending Approval Date'  # Column AC (was AD)
+        if len(col_names) > 29:
+            rename_dict[col_names[29]] = 'Corrected Customer Name'  # Column AD (was AE)
         if len(col_names) > 30:
-            rename_dict[col_names[30]] = 'Corrected Customer Name'  # Column AE (was AC)
-        if len(col_names) > 31:
-            rename_dict[col_names[31]] = 'Rep Master'  # Column AF (was AD)
+            rename_dict[col_names[30]] = 'Rep Master'  # Column AE (was AF)
         
         # NEW: Map PI || CSM column (Column G based on screenshot)
         for idx, col in enumerate(col_names):
