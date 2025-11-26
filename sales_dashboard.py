@@ -783,6 +783,17 @@ def load_all_data():
     # Load sales orders data from NetSuite - EXTEND to include Columns through AE (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AE", version=CACHE_VERSION)
     
+    # TEMP DEBUG: Check raw data in columns L and M before processing
+    if not sales_orders_df.empty and len(sales_orders_df.columns) > 12:
+        st.sidebar.write("🔍 RAW DATA CHECK:")
+        st.sidebar.write(f"Column L (index 11) name: '{sales_orders_df.columns[11]}'")
+        st.sidebar.write(f"Column M (index 12) name: '{sales_orders_df.columns[12]}'")
+        st.sidebar.write(f"Column L non-null: {sales_orders_df.iloc[:, 11].notna().sum()} of {len(sales_orders_df)}")
+        st.sidebar.write(f"Column M non-null: {sales_orders_df.iloc[:, 12].notna().sum()} of {len(sales_orders_df)}")
+        st.sidebar.write(f"Column L sample values: {sales_orders_df.iloc[:, 11].dropna().head(3).tolist()}")
+        st.sidebar.write(f"Column M sample values: {sales_orders_df.iloc[:, 12].dropna().head(3).tolist()}")
+        st.sidebar.write("---")
+    
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
         # Get column names from first row
