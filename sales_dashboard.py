@@ -1150,6 +1150,22 @@ def load_all_data():
         # Map specific columns by position (0-indexed) - be more careful
         if len(col_names) > 8 and 'Order Start Date' not in rename_dict.values():
             rename_dict[col_names[8]] = 'Order Start Date'  # Column I
+        
+        # Smart map Customer Promise column (handles "Customer Promise Date" or "Customer Promise Last Date to Ship")
+        for idx, col in enumerate(col_names):
+            col_lower = str(col).lower()
+            if 'customer' in col_lower and 'promise' in col_lower and 'Customer Promise Date' not in rename_dict.values():
+                rename_dict[col] = 'Customer Promise Date'
+                break
+        
+        # Smart map Projected Date column
+        for idx, col in enumerate(col_names):
+            col_lower = str(col).lower()
+            if 'projected' in col_lower and 'date' in col_lower and 'Projected Date' not in rename_dict.values():
+                rename_dict[col] = 'Projected Date'
+                break
+        
+        # Fallback to position if not found by name
         if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
             rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
         if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
@@ -2441,31 +2457,43 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     if not pf_orders.empty:
         # Check if dates are in Q4 range
         def has_q4_date(row):
-            if pd.notna(row.get('Customer Promise Date')):
+            # Check Customer Promise Date
+            if 'Customer Promise Date' in row.index and pd.notna(row.get('Customer Promise Date')):
                 if q4_start <= row['Customer Promise Date'] <= q4_end:
                     return True
-            if pd.notna(row.get('Projected Date')):
+            # Check Projected Date
+            if 'Projected Date' in row.index and pd.notna(row.get('Projected Date')):
                 if q4_start <= row['Projected Date'] <= q4_end:
                     return True
             return False
         
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
         
-        # Check External/Internal flag - simplified approach
+        # Check External/Internal flag - check both renamed column and raw column AB
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
-            # Convert to string and check - handles boolean True and string "True"/"true"/"TRUE"
             is_ext = pf_orders['Calyx External Order'].astype(str).str.lower().str.strip() == 'true'
         
         # Categorize PF orders
         pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
         pf_date_int = pf_orders[(pf_orders['Has_Q4_Date'] == True) & ~is_ext].copy()
         
-        # No date means BOTH dates are missing
-        no_date_mask = (
-            (pf_orders['Customer Promise Date'].isna()) &
-            (pf_orders['Projected Date'].isna())
-        )
+        # No date means BOTH dates are missing (only check if columns exist)
+        has_cust_promise = 'Customer Promise Date' in pf_orders.columns
+        has_projected = 'Projected Date' in pf_orders.columns
+        
+        if has_cust_promise and has_projected:
+            no_date_mask = (
+                (pf_orders['Customer Promise Date'].isna()) &
+                (pf_orders['Projected Date'].isna())
+            )
+        elif has_cust_promise:
+            no_date_mask = pf_orders['Customer Promise Date'].isna()
+        elif has_projected:
+            no_date_mask = pf_orders['Projected Date'].isna()
+        else:
+            no_date_mask = pd.Series(True, index=pf_orders.index)  # All orders have no date
+        
         pf_nodate_ext = pf_orders[no_date_mask & is_ext].copy()
         pf_nodate_int = pf_orders[no_date_mask & ~is_ext].copy()
     else:
