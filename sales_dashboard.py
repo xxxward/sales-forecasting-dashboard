@@ -1165,6 +1165,12 @@ def load_all_data():
                 rename_dict[col] = 'Projected Date'
                 break
         
+        # TEMP DEBUG: Show what's at positions 11 and 12
+        if len(col_names) > 11:
+            st.sidebar.write(f"Column L (index 11): '{col_names[11]}'")
+        if len(col_names) > 12:
+            st.sidebar.write(f"Column M (index 12): '{col_names[12]}'")
+        
         # Fallback to position if not found by name
         if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
             rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
@@ -1189,6 +1195,18 @@ def load_all_data():
                 break
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
+        
+        # TEMP DEBUG: Check if date columns exist
+        date_cols_check = []
+        if 'Customer Promise Date' in sales_orders_df.columns:
+            date_cols_check.append('✓ Customer Promise Date')
+        else:
+            date_cols_check.append('✗ Customer Promise Date MISSING')
+        if 'Projected Date' in sales_orders_df.columns:
+            date_cols_check.append('✓ Projected Date')
+        else:
+            date_cols_check.append('✗ Projected Date MISSING')
+        st.sidebar.write("📅 Date Columns:", date_cols_check)
         
         # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
         # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
@@ -2455,6 +2473,11 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
     
     if not pf_orders.empty:
+        # TEMP DEBUG: Show what date columns are in pf_orders
+        st.sidebar.write("🔍 PF Orders columns containing 'Date':")
+        date_related = [col for col in pf_orders.columns if 'date' in col.lower()]
+        st.sidebar.write(date_related)
+        
         # Check if dates are in Q4 range
         def has_q4_date(row):
             # Check Customer Promise Date
