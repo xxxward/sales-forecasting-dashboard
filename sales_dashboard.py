@@ -1914,12 +1914,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     }
     
     hs_categories = {
-        'Expect':   {'label': 'HubSpot Expect'},
-        'Commit':   {'label': 'HubSpot Commit'},
-        'BestCase': {'label': 'HubSpot Best Case'},
-        'Opp':      {'label': 'HubSpot Opp'},
-        'Q1_EC':    {'label': 'Q1 Spillover (E/C)'},
-        'Q1_BC':    {'label': 'Q1 Spillover (BC)'},
+        'Expect':      {'label': 'HubSpot Expect'},
+        'Commit':      {'label': 'HubSpot Commit'},
+        'BestCase':    {'label': 'HubSpot Best Case'},
+        'Opp':         {'label': 'HubSpot Opp'},
+        'Q1_Expect':   {'label': 'Q1 Spillover (Expect)'},
+        'Q1_Commit':   {'label': 'Q1 Spillover (Commit)'},
+        'Q1_BestCase': {'label': 'Q1 Spillover (Best Case)'},
+        'Q1_Opp':      {'label': 'Q1 Spillover (Opp)'},
     }
 
     # --- 3. CREATE DISPLAY DATAFRAMES ---
@@ -1970,8 +1972,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         hs_dfs['Commit'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Commit')])
         hs_dfs['BestCase'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Best Case')])
         hs_dfs['Opp'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Opportunity')])
-        hs_dfs['Q1_EC'] = format_hs_view(hs_data[q1 & hs_data['Status'].isin(['Expect', 'Commit'])])
-        hs_dfs['Q1_BC'] = format_hs_view(hs_data[q1 & hs_data['Status'].isin(['Best Case', 'Opportunity'])])
+        hs_dfs['Q1_Expect'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Expect')])
+        hs_dfs['Q1_Commit'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Commit')])
+        hs_dfs['Q1_BestCase'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Best Case')])
+        hs_dfs['Q1_Opp'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Opportunity')])
 
     # --- 4. RENDER UI & CAPTURE SELECTIONS ---
     
@@ -2093,7 +2097,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     # Calculate totals from export buckets (which reflect custom selections)
     def safe_sum(df):
-        return df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+        if df.empty:
+            return 0
+        # Handle both Amount and Amount_Numeric columns (NS uses Amount, HS uses Amount_Numeric)
+        if 'Amount_Numeric' in df.columns:
+            return df['Amount_Numeric'].sum()
+        elif 'Amount' in df.columns:
+            return df['Amount'].sum()
+        else:
+            return 0
     
     selected_pending = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
     selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
