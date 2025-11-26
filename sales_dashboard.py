@@ -2451,18 +2451,11 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
         
-        # Check External/Internal flag - handle multiple formats (boolean, string, legacy)
+        # Check External/Internal flag - simplified approach
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
-            ext_col = pf_orders['Calyx External Order']
-            # Check for True as boolean, "TRUE" as string, "True" as string, or legacy "YES"
-            is_ext = (
-                (ext_col == True) |  # Actual boolean True
-                (ext_col == 'TRUE') |  # String TRUE
-                (ext_col == 'True') |  # String True
-                (ext_col.astype(str).str.strip().str.upper() == 'TRUE') |  # Any case TRUE
-                (ext_col.astype(str).str.strip().str.upper() == 'YES')  # Legacy YES
-            )
+            # Convert to string and check - handles boolean True and string "True"/"true"/"TRUE"
+            is_ext = pf_orders['Calyx External Order'].astype(str).str.lower().str.strip() == 'true'
         
         # Categorize PF orders
         pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
