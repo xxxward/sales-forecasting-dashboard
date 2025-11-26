@@ -635,12 +635,10 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         
-        # Fetch data - use UNFORMATTED_VALUE to get raw values (date serial numbers)
+        # Fetch data
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"{sheet_name}!{range_name}",
-            valueRenderOption='UNFORMATTED_VALUE',
-            dateTimeRenderOption='SERIAL_NUMBER'
+            range=f"{sheet_name}!{range_name}"
         ).execute()
         
         values = result.get('values', [])
@@ -658,21 +656,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
-        
-        # Convert Google Sheets serial numbers to dates
-        # Google Sheets uses days since December 30, 1899 (same as Excel)
-        def convert_serial_to_date(val):
-            if isinstance(val, (int, float)) and val > 40000:  # Likely a date serial (40000 = ~2009)
-                try:
-                    # Google Sheets epoch: December 30, 1899
-                    return pd.Timestamp('1899-12-30') + pd.Timedelta(days=val)
-                except:
-                    return val
-            return val
-        
-        # Apply conversion to all columns
-        for col in df.columns:
-            df[col] = df[col].apply(convert_serial_to_date)
         
         return df
         
@@ -797,19 +780,8 @@ def load_all_data():
     # Load invoice data from NetSuite - EXTEND to include Columns T:U (Corrected Customer Name, Rep Master)
     invoices_df = load_google_sheets_data("NS Invoices", "A:U", version=CACHE_VERSION)
     
-    # Load sales orders data from NetSuite - EXTEND to include Columns through AE (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
-    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AE", version=CACHE_VERSION)
-    
-    # TEMP DEBUG: Check raw data in columns L and M before processing
-    if not sales_orders_df.empty and len(sales_orders_df.columns) > 12:
-        st.sidebar.write("🔍 RAW DATA CHECK:")
-        st.sidebar.write(f"Column L (index 11) name: '{sales_orders_df.columns[11]}'")
-        st.sidebar.write(f"Column M (index 12) name: '{sales_orders_df.columns[12]}'")
-        st.sidebar.write(f"Column L non-null: {sales_orders_df.iloc[:, 11].notna().sum()} of {len(sales_orders_df)}")
-        st.sidebar.write(f"Column M non-null: {sales_orders_df.iloc[:, 12].notna().sum()} of {len(sales_orders_df)}")
-        st.sidebar.write(f"Column L sample values: {sales_orders_df.iloc[:, 11].dropna().head(3).tolist()}")
-        st.sidebar.write(f"Column M sample values: {sales_orders_df.iloc[:, 12].dropna().head(3).tolist()}")
-        st.sidebar.write("---")
+    # Load sales orders data from NetSuite - EXTEND to include Columns through AF (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
+    sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
     
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -1178,43 +1150,20 @@ def load_all_data():
         # Map specific columns by position (0-indexed) - be more careful
         if len(col_names) > 8 and 'Order Start Date' not in rename_dict.values():
             rename_dict[col_names[8]] = 'Order Start Date'  # Column I
-        
-        # Smart map Customer Promise column (handles "Customer Promise Date" or "Customer Promise Last Date to Ship")
-        for idx, col in enumerate(col_names):
-            col_lower = str(col).lower()
-            if 'customer' in col_lower and 'promise' in col_lower and 'Customer Promise Date' not in rename_dict.values():
-                rename_dict[col] = 'Customer Promise Date'
-                break
-        
-        # Smart map Projected Date column
-        for idx, col in enumerate(col_names):
-            col_lower = str(col).lower()
-            if 'projected' in col_lower and 'date' in col_lower and 'Projected Date' not in rename_dict.values():
-                rename_dict[col] = 'Projected Date'
-                break
-        
-        # TEMP DEBUG: Show what's at positions 11 and 12
-        if len(col_names) > 11:
-            st.sidebar.write(f"Column L (index 11): '{col_names[11]}'")
-        if len(col_names) > 12:
-            st.sidebar.write(f"Column M (index 12): '{col_names[12]}'")
-        st.sidebar.write("---")
-        
-        # Fallback to position if not found by name
         if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
             rename_dict[col_names[11]] = 'Customer Promise Date'  # Column L
         if len(col_names) > 12 and 'Projected Date' not in rename_dict.values():
             rename_dict[col_names[12]] = 'Projected Date'  # Column M
         
-        # NEW COLUMN POSITIONS after adding Calyx | External Order in column AB
-        if len(col_names) > 27:
-            rename_dict[col_names[27]] = 'Calyx External Order'  # Column AB - NEW!
-        if len(col_names) > 28 and 'Pending Approval Date' not in rename_dict.values():
-            rename_dict[col_names[28]] = 'Pending Approval Date'  # Column AC (was AD)
-        if len(col_names) > 29:
-            rename_dict[col_names[29]] = 'Corrected Customer Name'  # Column AD (was AE)
+        # NEW COLUMN POSITIONS after adding Calyx | External Order in column AC
+        if len(col_names) > 28:
+            rename_dict[col_names[28]] = 'Calyx External Order'  # Column AC - NEW!
+        if len(col_names) > 29 and 'Pending Approval Date' not in rename_dict.values():
+            rename_dict[col_names[29]] = 'Pending Approval Date'  # Column AD (was AB)
         if len(col_names) > 30:
-            rename_dict[col_names[30]] = 'Rep Master'  # Column AE (was AF)
+            rename_dict[col_names[30]] = 'Corrected Customer Name'  # Column AE (was AC)
+        if len(col_names) > 31:
+            rename_dict[col_names[31]] = 'Rep Master'  # Column AF (was AD)
         
         # NEW: Map PI || CSM column (Column G based on screenshot)
         for idx, col in enumerate(col_names):
@@ -1224,19 +1173,6 @@ def load_all_data():
                 break
         
         sales_orders_df = sales_orders_df.rename(columns=rename_dict)
-        
-        # TEMP DEBUG: Check if date columns exist
-        date_cols_check = []
-        if 'Customer Promise Date' in sales_orders_df.columns:
-            date_cols_check.append('✓ Customer Promise Date')
-        else:
-            date_cols_check.append('✗ Customer Promise Date MISSING')
-        if 'Projected Date' in sales_orders_df.columns:
-            date_cols_check.append('✓ Projected Date')
-        else:
-            date_cols_check.append('✗ Projected Date MISSING')
-        st.sidebar.write("📅 Date Columns:", date_cols_check)
-        st.sidebar.write("---")
         
         # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
         # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
@@ -2503,61 +2439,32 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
     
     if not pf_orders.empty:
-        # TEMP DEBUG: Show what date columns are in pf_orders
-        st.sidebar.write("🔍 Date Column Analysis:")
-        if 'Customer Promise Date' in pf_orders.columns:
-            st.sidebar.write(f"Customer Promise Date dtype: {pf_orders['Customer Promise Date'].dtype}")
-            st.sidebar.write(f"Non-null count: {pf_orders['Customer Promise Date'].notna().sum()} of {len(pf_orders)}")
-            sample_dates = pf_orders['Customer Promise Date'].dropna().head(3).tolist()
-            st.sidebar.write(f"Sample values: {sample_dates}")
-        if 'Projected Date' in pf_orders.columns:
-            st.sidebar.write(f"Projected Date dtype: {pf_orders['Projected Date'].dtype}")
-            st.sidebar.write(f"Non-null count: {pf_orders['Projected Date'].notna().sum()} of {len(pf_orders)}")
-            sample_dates = pf_orders['Projected Date'].dropna().head(3).tolist()
-            st.sidebar.write(f"Sample values: {sample_dates}")
-        
         # Check if dates are in Q4 range
         def has_q4_date(row):
-            # Check Customer Promise Date
-            if 'Customer Promise Date' in row.index and pd.notna(row.get('Customer Promise Date')):
+            if pd.notna(row.get('Customer Promise Date')):
                 if q4_start <= row['Customer Promise Date'] <= q4_end:
                     return True
-            # Check Projected Date
-            if 'Projected Date' in row.index and pd.notna(row.get('Projected Date')):
+            if pd.notna(row.get('Projected Date')):
                 if q4_start <= row['Projected Date'] <= q4_end:
                     return True
             return False
         
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
         
-        # TEMP DEBUG: Check Q4 date results
-        st.sidebar.write(f"🎯 Orders with Q4 dates: {pf_orders['Has_Q4_Date'].sum()} of {len(pf_orders)}")
-        
-        # Check External/Internal flag - check both renamed column and raw column AB
+        # Check External/Internal flag
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
-            is_ext = pf_orders['Calyx External Order'].astype(str).str.lower().str.strip() == 'true'
+            is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
         
         # Categorize PF orders
         pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
         pf_date_int = pf_orders[(pf_orders['Has_Q4_Date'] == True) & ~is_ext].copy()
         
-        # No date means BOTH dates are missing (only check if columns exist)
-        has_cust_promise = 'Customer Promise Date' in pf_orders.columns
-        has_projected = 'Projected Date' in pf_orders.columns
-        
-        if has_cust_promise and has_projected:
-            no_date_mask = (
-                (pf_orders['Customer Promise Date'].isna()) &
-                (pf_orders['Projected Date'].isna())
-            )
-        elif has_cust_promise:
-            no_date_mask = pf_orders['Customer Promise Date'].isna()
-        elif has_projected:
-            no_date_mask = pf_orders['Projected Date'].isna()
-        else:
-            no_date_mask = pd.Series(True, index=pf_orders.index)  # All orders have no date
-        
+        # No date means BOTH dates are missing
+        no_date_mask = (
+            (pf_orders['Customer Promise Date'].isna()) &
+            (pf_orders['Projected Date'].isna())
+        )
         pf_nodate_ext = pf_orders[no_date_mask & is_ext].copy()
         pf_nodate_int = pf_orders[no_date_mask & ~is_ext].copy()
     else:
