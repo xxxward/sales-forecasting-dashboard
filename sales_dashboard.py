@@ -2454,7 +2454,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         # Check External/Internal flag
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
-            is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
+            is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'TRUE'
         
         # Categorize PF orders
         pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
