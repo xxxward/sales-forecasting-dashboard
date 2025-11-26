@@ -635,10 +635,12 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         
-        # Fetch data
+        # Fetch data - use UNFORMATTED_VALUE to get raw values (date serial numbers)
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range=f"{sheet_name}!{range_name}"
+            range=f"{sheet_name}!{range_name}",
+            valueRenderOption='UNFORMATTED_VALUE',
+            dateTimeRenderOption='SERIAL_NUMBER'
         ).execute()
         
         values = result.get('values', [])
@@ -656,6 +658,21 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         # Convert to DataFrame
         df = pd.DataFrame(values[1:], columns=values[0])
+        
+        # Convert Google Sheets serial numbers to dates
+        # Google Sheets uses days since December 30, 1899 (same as Excel)
+        def convert_serial_to_date(val):
+            if isinstance(val, (int, float)) and val > 40000:  # Likely a date serial (40000 = ~2009)
+                try:
+                    # Google Sheets epoch: December 30, 1899
+                    return pd.Timestamp('1899-12-30') + pd.Timedelta(days=val)
+                except:
+                    return val
+            return val
+        
+        # Apply conversion to all columns
+        for col in df.columns:
+            df[col] = df[col].apply(convert_serial_to_date)
         
         return df
         
