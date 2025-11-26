@@ -1170,6 +1170,7 @@ def load_all_data():
             st.sidebar.write(f"Column L (index 11): '{col_names[11]}'")
         if len(col_names) > 12:
             st.sidebar.write(f"Column M (index 12): '{col_names[12]}'")
+        st.sidebar.write("---")
         
         # Fallback to position if not found by name
         if len(col_names) > 11 and 'Customer Promise Date' not in rename_dict.values():
@@ -1207,6 +1208,7 @@ def load_all_data():
         else:
             date_cols_check.append('✗ Projected Date MISSING')
         st.sidebar.write("📅 Date Columns:", date_cols_check)
+        st.sidebar.write("---")
         
         # CRITICAL: Replace Sales Rep with Rep Master and Customer with Corrected Customer Name
         # This fixes the Shopify eCommerce orders that weren't being applied to reps correctly
@@ -2474,9 +2476,17 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     
     if not pf_orders.empty:
         # TEMP DEBUG: Show what date columns are in pf_orders
-        st.sidebar.write("🔍 PF Orders columns containing 'Date':")
-        date_related = [col for col in pf_orders.columns if 'date' in col.lower()]
-        st.sidebar.write(date_related)
+        st.sidebar.write("🔍 Date Column Analysis:")
+        if 'Customer Promise Date' in pf_orders.columns:
+            st.sidebar.write(f"Customer Promise Date dtype: {pf_orders['Customer Promise Date'].dtype}")
+            st.sidebar.write(f"Non-null count: {pf_orders['Customer Promise Date'].notna().sum()} of {len(pf_orders)}")
+            sample_dates = pf_orders['Customer Promise Date'].dropna().head(3).tolist()
+            st.sidebar.write(f"Sample values: {sample_dates}")
+        if 'Projected Date' in pf_orders.columns:
+            st.sidebar.write(f"Projected Date dtype: {pf_orders['Projected Date'].dtype}")
+            st.sidebar.write(f"Non-null count: {pf_orders['Projected Date'].notna().sum()} of {len(pf_orders)}")
+            sample_dates = pf_orders['Projected Date'].dropna().head(3).tolist()
+            st.sidebar.write(f"Sample values: {sample_dates}")
         
         # Check if dates are in Q4 range
         def has_q4_date(row):
@@ -2491,6 +2501,9 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             return False
         
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
+        
+        # TEMP DEBUG: Check Q4 date results
+        st.sidebar.write(f"🎯 Orders with Q4 dates: {pf_orders['Has_Q4_Date'].sum()} of {len(pf_orders)}")
         
         # Check External/Internal flag - check both renamed column and raw column AB
         is_ext = pd.Series(False, index=pf_orders.index)
