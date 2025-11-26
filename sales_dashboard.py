@@ -3926,7 +3926,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
    
     # Display key metrics with two breakdowns
     st.markdown("### 📊 Team Scorecard")
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
    
     with col1:
         st.metric(
@@ -3953,16 +3953,6 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         )
     
     with col4:
-        adjusted_forecast = full_forecast - team_q1_spillover_total
-        adjusted_attainment = (adjusted_forecast / team_quota * 100) if team_quota > 0 else 0
-        st.metric(
-            label="🎯 Q4 Adjusted Forecast",
-            value=f"${adjusted_forecast/1000:.0f}K" if adjusted_forecast < 1000000 else f"${adjusted_forecast/1000000:.1f}M",
-            delta=f"{adjusted_attainment:.1f}% of quota",
-            help="Invoiced + PF (with date) + PA (with date) + HS Expect/Commit + PF (without date) + PA (without date) + PA (>2 weeks old) - Q1 Spillover"
-        )
-   
-    with col5:
         st.metric(
             label="📉 Gap to Quota",
             value=f"${base_gap/1000:.0f}K" if abs(base_gap) < 1000000 else f"${base_gap/1000000:.1f}M",
@@ -3971,7 +3961,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             help="Quota - (Invoiced + PF (with date) + PA (with date) + HS Expect/Commit)"
         )
     
-    with col6:
+    with col5:
         st.metric(
             label="📈 Optimistic Gap",
             value=f"${optimistic_gap/1000:.0f}K" if abs(optimistic_gap) < 1000000 else f"${optimistic_gap/1000000:.1f}M",
@@ -3980,7 +3970,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             help="Quota - (High Confidence + HS Best Case + PF (no date) + PA (no date) + PA >2 weeks)"
         )
 
-    with col7:
+    with col6:
         st.metric(
             label="🌟 Potential Attainment",
             value=f"{potential_attainment:.1f}%",
@@ -3992,7 +3982,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     with st.expander("🔍 View Calculation Breakdowns", expanded=False):
         st.markdown("#### Detailed Component Breakdown")
         
-        breakdown_col1, breakdown_col2, breakdown_col3 = st.columns(3)
+        breakdown_col1, breakdown_col2 = st.columns(2)
         
         with breakdown_col1:
             st.markdown("##### 💪 High Confidence Forecast")
@@ -4023,17 +4013,13 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
             - **% of Quota:** {full_attainment_pct:.1f}%
             """)
         
+        st.markdown("---")
+        
+        breakdown_col3, breakdown_col4 = st.columns(2)
+        
         with breakdown_col3:
-            st.markdown("##### 🎯 Q4 Adjusted Forecast")
+            st.markdown("##### 📈 Optimistic Scenario")
             st.markdown(f"""
-            - **Full Forecast:** ${full_forecast:,.0f}
-            - **Less: Q1 Spillover:** -${team_q1_spillover_total:,.0f}
-            - **Q4 Adjusted Total:** ${adjusted_forecast:,.0f}
-            - **% of Quota:** {adjusted_attainment:.1f}%
-            
-            ---
-            
-            ##### 📈 Optimistic Scenario
             - **High Confidence:** ${base_forecast:,.0f}
             - **Plus: HS Best Case:** ${team_best_case:,.0f}
             - **Plus: PF (no date):** ${team_pf_no_date:,.0f}
@@ -4253,7 +4239,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     # NEW: Top Metrics Row (mirroring Team Scorecard)
     st.markdown("### 📊 Rep Scorecard")
     
-    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5, metric_col6 = st.columns(6)
+    metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
     
     with metric_col1:
         st.metric(
@@ -4281,18 +4267,6 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         )
     
     with metric_col4:
-        # Q4 Adjusted should SUBTRACT Q1 spillover, not add it
-        q1_spillover_total = metrics.get('q1_spillover_total', 0)
-        q4_adjusted = full_forecast - q1_spillover_total
-        q4_adjusted_pct = (q4_adjusted / metrics['quota'] * 100) if metrics['quota'] > 0 else 0
-        st.metric(
-            label="🎯 Q4 Adjusted Forecast",
-            value=f"${q4_adjusted/1000:.0f}K" if q4_adjusted < 1000000 else f"${q4_adjusted/1000000:.1f}M",
-            delta=f"{q4_adjusted_pct:.1f}% of quota",
-            help="Full Forecast minus Q1 Spillover (deals closing in Q4 but shipping in Q1 2026)"
-        )
-    
-    with metric_col5:
         st.metric(
             label="📉 Gap to Quota",
             value=f"${gap_to_quota/1000:.0f}K" if abs(gap_to_quota) < 1000000 else f"${gap_to_quota/1000000:.1f}M",
@@ -4301,7 +4275,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
             help="Quota - (Invoiced & Shipped + PF (with date) + PA (with date) + HS Expect/Commit)"
         )
     
-    with metric_col6:
+    with metric_col5:
         upside = potential_attainment_pct - high_conf_pct
         st.metric(
             label="⭐ Potential Attainment",
@@ -4468,50 +4442,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     st.markdown("---")
     
-    # SECTION 3: Q4 Adjusted Forecast
-    st.markdown(f"""
-    <div class="progress-breakdown">
-        <h3>📈 Section 3: Q4 Adjusted Forecast (Includes Q1 Spillover - Review Needed)</h3>
-        <div class="progress-item">
-            <span class="progress-label">✅ Invoiced & Shipped</span>
-            <span class="progress-value">${metrics['orders']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">📦 Pending Fulfillment (with date)</span>
-            <span class="progress-value">${metrics['pending_fulfillment']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">⏳ Pending Approval (with date)</span>
-            <span class="progress-value">${metrics['pending_approval']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">🎯 HubSpot Expect/Commit</span>
-            <span class="progress-value">${metrics['expect_commit']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">📦 Pending Fulfillment (without date)</span>
-            <span class="progress-value">${metrics['pending_fulfillment_no_date']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">⏳ Pending Approval (without date)</span>
-            <span class="progress-value">${metrics['pending_approval_no_date']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">⏱️ Pending Approval (>2 weeks old)</span>
-            <span class="progress-value">${metrics['pending_approval_old']:,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">🦘 Q1 Spillover - Expect/Commit (⚠️ Review)</span>
-            <span class="progress-value">${metrics.get('q1_spillover_expect_commit', 0):,.0f}</span>
-        </div>
-        <div class="progress-item">
-            <span class="progress-label">📈 Q4 ADJUSTED TOTAL</span>
-            <span class="progress-value">${q4_adjusted:,.0f}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Drill-down for Section 3 (Q1 Spillover)
+    # Q1 2026 Spillover Details (moved from Section 3)
     st.markdown("#### 🦘 Q1 2026 Spillover Details")
     st.caption("⚠️ These deals close in Q4 2025 but will ship in Q1 2026 due to lead times")
     
