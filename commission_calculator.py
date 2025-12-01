@@ -1,192 +1,385 @@
 """
 Commission Calculator Module for Calyx Containers
-Updated: Google Sheets Integration ('NS Invoices' Logic)
-Focus: Brad Sherman (Oct 2025) - Paid In Full / Date Closed Logic
+Integrated with Google Sheets (NS Invoices & NS Sales Orders)
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
+import hashlib
+import re
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 
 # ==========================================
-# ⚙️ COLUMN MAPPING CONFIGURATION
-# Updated based on user feedback:
-# Col O = Sales Rep (for Shopify exclusion)
-# Col R = Amount Tax (for Math)
-# Col U = Rep Master (for Brad filtering)
+# GOOGLE SHEETS CONFIGURATION
 # ==========================================
-COLS = {
-    "STATUS": "Status",                     # Col B
-    "TRANS_TOTAL": "Amount Transaction Total", # Col K
-    "DATE_CLOSED": "Date Closed",           # Col N
-    "SALES_REP": "Sales Rep",               # Col O (Filter OUT Shopify)
-    "TAX": "Amount Tax",                    # Col R (Math)
-    "REP_MASTER": "Rep Master",             # Col U (Filter FOR Rep)
-    "SHIPPING": "Amount Shipping"           # Needed for Net Revenue calc
-}
+SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
+SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+
+# ==========================================
+# PASSWORD CONFIGURATION (Xander Only)
+# ==========================================
+ADMIN_EMAIL = "xward@calyxcontainers.com"
+ADMIN_PASSWORD_HASH = hashlib.sha256("Secret2025!".encode()).hexdigest()
 
 # ==========================================
 # COMMISSION CONFIGURATION
 # ==========================================
+COMMISSION_REPS = ["Dave Borkowski", "Jake Lynch", "Brad Sherman", "Lance Mitton"]
 
-TARGET_REP = "Brad Sherman"
-TARGET_RATE = 0.07 
-TARGET_MONTH = 10 # October
-TARGET_YEAR = 2025
+# Commission rates by rep
+REP_COMMISSION_RATES = {
+    "Dave Borkowski": 0.05,      # 5% flat rate
+    "Jake Lynch": 0.07,          # 7% flat rate
+    "Brad Sherman": 0.07,        # 7% flat rate
+    "Lance Mitton": 0.07,        # 7% flat rate
+}
+
+BRAD_OVERRIDE_RATE = 0.01
+COMMISSION_MONTHS = ['2025-09', '2025-10'] 
 
 # ==========================================
-# HELPER FUNCTIONS
+# EXCLUSION RULES
+# ==========================================
+EXCLUDED_ITEMS = [
+    "Convenience Fee 3.5%", "SHIPPING", "UPS", "FEDEX", "AVATAX", "TAX"
+]
+
+# ==========================================
+# DATA LOADING FUNCTIONS (Google Sheets)
 # ==========================================
 
-def load_google_sheet(sheet_url):
+@st.cache_data(ttl=3600)
+def fetch_google_sheet_data(sheet_name, range_name):
     """
-    Loads data from a Google Sheet CSV export link.
+    Fetch data from Google Sheets using Streamlit Secrets
     """
     try:
-        # Auto-convert edit links to export links if user mistakes them
-        if '/edit' in sheet_url:
-            sheet_url = sheet_url.replace('/edit#gid=', '/export?format=csv&gid=')
-            sheet_url = sheet_url.replace('/edit?gid=', '/export?format=csv&gid=')
+        # Check for secrets
+        if "gcp_service_account" not in st.secrets:
+            st.error("❌ Missing 'gcp_service_account' in Streamlit secrets.")
+            return pd.DataFrame()
+
+        # Create credentials
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
         
-        df = pd.read_csv(sheet_url)
+        # Build service
+        service = build('sheets', 'v4', credentials=creds)
+        
+        # Fetch data
+        result = service.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"{sheet_name}!{range_name}"
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values:
+            return pd.DataFrame()
+        
+        # Handle headers and data
+        headers = values[0]
+        data = values[1:]
+        
+        # Create DataFrame
+        df = pd.DataFrame(data, columns=headers)
         return df
+
     except Exception as e:
-        st.error(f"Error loading Google Sheet: {e}")
-        return None
-
-def process_brad_logic(df):
-    """
-    Logic:
-    1. Filter Rep Master (Col U) == Brad Sherman
-    2. Filter Status (Col B) == Paid In Full
-    3. Filter Date Closed (Col N) == October 2025
-    4. Exclude Sales Rep (Col O) == Shopify Ecommerce
-    5. Math: Total (Col K) - Shipping - Tax (Col R)
-    """
-    if df.empty:
+        st.error(f"Error loading {sheet_name}: {str(e)}")
         return pd.DataFrame()
 
-    # Clean Column Names
-    df.columns = df.columns.str.strip()
-
-    # Check for required columns
-    missing_cols = [c for c in COLS.values() if c not in df.columns]
-    if missing_cols:
-        st.error(f"❌ Missing columns: {missing_cols}")
-        st.write("Columns found in file:", df.columns.tolist())
-        return pd.DataFrame()
-
-    # ==========================================
-    # 🔍 FILTERING
-    # ==========================================
-
-    # 1. Filter by Rep Master (Col U) -> Brad Sherman
-    mask_rep = df[COLS['REP_MASTER']].astype(str).str.strip().str.upper() == TARGET_REP.upper()
-    df = df[mask_rep].copy()
-    
-    # 2. Filter by Status (Col B) -> Paid In Full
-    mask_status = df[COLS['STATUS']].astype(str).str.strip().str.upper() == "PAID IN FULL"
-    df = df[mask_status].copy()
-
-    # 3. Filter by Date Closed (Col N) -> Oct 2025
-    df['Date_Closed_DT'] = pd.to_datetime(df[COLS['DATE_CLOSED']], errors='coerce')
-    mask_date = (df['Date_Closed_DT'].dt.month == TARGET_MONTH) & \
-                (df['Date_Closed_DT'].dt.year == TARGET_YEAR)
-    df = df[mask_date].copy()
-
-    # 4. Filter OUT Shopify (Col O)
-    # We look at 'Sales Rep' column (O) and exclude if it contains 'Shopify'
-    df[COLS['SALES_REP']] = df[COLS['SALES_REP']].fillna('')
-    mask_shopify = df[COLS['SALES_REP']].astype(str).str.upper().str.contains("SHOPIFY", na=False)
-    df = df[~mask_shopify].copy()
-
+def process_ns_invoices(df):
+    """
+    Clean NS Invoices data and map to Calculator standard columns
+    """
     if df.empty:
         return df
 
-    # ==========================================
-    # 🧮 CALCULATION
-    # ==========================================
+    # 1. Clean Column Names
+    df.columns = df.columns.str.strip()
     
-    def clean_currency(series):
-        # Remove '$' and ',' and convert to float
-        return pd.to_numeric(series.astype(str).str.replace('$','').str.replace(',',''), errors='coerce').fillna(0)
-
-    # Use Col K (Total), Col R (Tax), and Shipping
-    df['Calc_Total'] = clean_currency(df[COLS['TRANS_TOTAL']])
-    df['Calc_Shipping'] = clean_currency(df[COLS['SHIPPING']])
-    df['Calc_Tax'] = clean_currency(df[COLS['TAX']])
-
-    # Net Revenue = Total - Shipping - Tax
-    df['Commissionable_Revenue'] = df['Calc_Total'] - df['Calc_Shipping'] - df['Calc_Tax']
+    # 2. Map Columns (Google Sheet Header -> Calculator Internal Name)
+    # Based on your previous requests:
+    # "Rep Master" (Col U) -> "Sales Rep"
+    # "Amount Transaction Total" (Col K) -> "Amount"
+    # "Date Closed" (Col N) -> "Date"
+    # "Amount Tax" -> "Tax"
+    # "Amount Shipping" -> "Shipping"
     
-    # Commission = Net Revenue * 7%
-    df['Commission_Amount'] = df['Commissionable_Revenue'] * TARGET_RATE
+    rename_map = {
+        'Rep Master': 'Sales Rep',
+        'Amount Transaction Total': 'Amount',
+        'Date Closed': 'Date',
+        'Item': 'Item',
+        'Document Number': 'Document Number',
+        'Status': 'Status',
+        'Amount Tax': 'Tax Amount',
+        'Amount Shipping': 'Shipping Amount',
+        'Sales Rep': 'Original Sales Rep' # Keep the original (Col O) to filter Shopify
+    }
+    
+    # Only rename columns that exist
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+
+    # 3. Specific Logic: Use Rep Master as the true Sales Rep
+    # But first, filter out Shopify based on the ORIGINAL Sales Rep column if needed
+    if 'Original Sales Rep' in df.columns:
+        # Optional: You can filter shopify here or in the main logic
+        pass
+
+    # 4. Clean Numeric Columns
+    numeric_cols = ['Amount', 'Tax Amount', 'Shipping Amount']
+    for col in numeric_cols:
+        if col in df.columns:
+            # Remove $, commas, whitespace
+            df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # 5. Calculate Net Commissionable Amount (Total - Tax - Shipping)
+    if 'Amount' in df.columns:
+        df['Subtotal'] = df['Amount']
+        if 'Tax Amount' in df.columns:
+            df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
+        if 'Shipping Amount' in df.columns:
+            df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
+
+    return df
+
+def process_ns_sales_orders(df):
+    """
+    Clean NS Sales Orders data
+    """
+    if df.empty:
+        return df
+        
+    df.columns = df.columns.str.strip()
+    
+    # Map Rep Master to Sales Rep
+    if 'Rep Master' in df.columns:
+        df['Sales Rep'] = df['Rep Master']
+        
+    # Clean Amount
+    if 'Amount' in df.columns:
+        df['Amount'] = df['Amount'].astype(str).str.replace(r'[$,]', '', regex=True)
+        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
+        
+    return df
+
+# ==========================================
+# AUTH & HELPERS
+# ==========================================
+
+def verify_admin(email, password):
+    if email != ADMIN_EMAIL:
+        return False
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return password_hash == ADMIN_PASSWORD_HASH
+
+def parse_invoice_month(date_value):
+    if pd.isna(date_value): return None
+    try:
+        date_obj = pd.to_datetime(date_value, errors='coerce')
+        if pd.isna(date_obj): return None
+        return date_obj.strftime('%Y-%m')
+    except: return None
+
+def calculate_payout_date(invoice_month_str):
+    try:
+        year, month = map(int, invoice_month_str.split('-'))
+        if month == 12:
+            month_end = datetime(year, 12, 31)
+        else:
+            month_end = datetime(year, month + 1, 1) - timedelta(days=1)
+        return month_end + timedelta(weeks=4)
+    except: return None
+
+# ==========================================
+# MAIN CALCULATION ENGINE
+# ==========================================
+
+def process_commission_data_fast(df):
+    """
+    Main logic to filter rows and calculate commission
+    """
+    if df.empty: return pd.DataFrame()
+
+    # 1. Filter to 4 Reps Only
+    df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
+    
+    # 2. Filter: Status = Paid In Full
+    if 'Status' in df.columns:
+        df = df[df['Status'].astype(str).str.upper().str.strip() == "PAID IN FULL"]
+
+    # 3. Filter: Exclude Shopify (Column O in sheet, mapped to Original Sales Rep)
+    if 'Original Sales Rep' in df.columns:
+        df = df[~df['Original Sales Rep'].astype(str).str.upper().str.contains("SHOPIFY", na=False)]
+
+    # 4. Date Parsing
+    st.caption("📅 Using 'Date Closed' to determine commission month")
+    df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
+    df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
+
+    # 5. Exclude non-commissionable items (Shipping, Tax labels, etc)
+    # Note: We already mathematically subtracted tax/shipping, but this filters out line items
+    # that are PURELY shipping/tax if they exist as separate rows.
+    df['Item Upper'] = df['Item'].astype(str).str.upper()
+    def is_excluded(item_upper):
+        if 'TOOLING' in item_upper: return False
+        return any(excl in item_upper for excl in EXCLUDED_ITEMS)
+    
+    df = df[~df['Item Upper'].apply(is_excluded)]
+
+    # 6. Apply Commission Rates
+    # Assign Base Rate
+    df['Commission Rate'] = df['Sales Rep'].map(REP_COMMISSION_RATES).fillna(0.0)
+    
+    # Calculate Commission (Subtotal * Rate)
+    # Ensure Subtotal exists (Calculated in process_ns_invoices)
+    if 'Subtotal' not in df.columns:
+        df['Subtotal'] = df['Amount'] # Fallback
+        
+    df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
+
+    # 7. Brad's Override (1% on Lance)
+    df['Brad Override'] = 0.0
+    lance_mask = df['Sales Rep'] == 'Lance Mitton'
+    df.loc[lance_mask, 'Brad Override'] = df.loc[lance_mask, 'Subtotal'] * BRAD_OVERRIDE_RATE
+
+    # 8. Payout Date
+    df['Payout Date'] = df['Invoice Month'].apply(calculate_payout_date)
 
     return df
 
 # ==========================================
-# UI
+# UI COMPONENTS
 # ==========================================
 
-def main():
-    st.set_page_config(page_title="Brad Commission Calc", layout="wide")
-    
-    st.title(f"💰 Commission: {TARGET_REP} (Oct 2025)")
+def display_password_gate():
     st.markdown("""
-    **Rules:**
-    1. **Rep Master (Col U):** Must be 'Brad Sherman'
-    2. **Status (Col B):** Must be 'Paid In Full'
-    3. **Date Closed (Col N):** Must be October
-    4. **Sales Rep (Col O):** Cannot be 'Shopify Ecommerce'
-    5. **Math:** Trans Total (K) - Shipping - Tax (R)
-    """)
-
-    sheet_url = st.text_input("Paste Google Sheet CSV URL (from 'NS Invoices' tab):")
-
-    if sheet_url:
-        df = load_google_sheet(sheet_url)
-
-        if df is not None:
-            results = process_brad_logic(df)
-
-            if not results.empty:
-                # Top Level Metrics
-                col1, col2, col3 = st.columns(3)
-                total_rev = results['Commissionable_Revenue'].sum()
-                total_comm = results['Commission_Amount'].sum()
-                
-                col1.metric("Commissionable Revenue", f"${total_rev:,.2f}")
-                col2.metric("Total Commission (7%)", f"${total_comm:,.2f}")
-                col3.metric("Deal Count", len(results))
-
-                st.divider()
-
-                # Detailed Table
-                st.subheader("Transaction Details")
-                
-                # Select columns to display
-                display_cols = [
-                    COLS['DATE_CLOSED'], 
-                    COLS['SALES_REP'], # Show Col O to prove Shopify is gone
-                    COLS['TRANS_TOTAL'], 
-                    COLS['SHIPPING'], 
-                    COLS['TAX'], 
-                    'Commissionable_Revenue', 
-                    'Commission_Amount'
-                ]
-                
-                # Format for readability
-                display_df = results[display_cols].copy()
-                money_cols = ['Commissionable_Revenue', 'Commission_Amount', COLS['TRANS_TOTAL'], COLS['TAX']]
-                
-                for c in money_cols:
-                    if c in display_df.columns:
-                        display_df[c] = display_df[c].apply(lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) else x)
-
-                st.dataframe(display_df, use_container_width=True)
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                 padding: 20px; border-radius: 10px; color: white; margin-bottom: 20px;'>
+        <h2 style='color: white; margin: 0;'>🔒 Commission Calculator</h2>
+        <p style='margin: 5px 0 0 0;'>Admin access required</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        email = st.text_input("Email:", key="commission_email")
+        password = st.text_input("Password:", type="password", key="commission_password")
+        if st.button("🔓 Login", use_container_width=True):
+            if verify_admin(email, password):
+                st.session_state.commission_authenticated = True
+                st.rerun()
             else:
-                st.warning("No transactions matched criteria (Brad Sherman / Paid in Full / Oct 2025 / Not Shopify).")
+                st.error("❌ Invalid credentials")
+
+def display_commission_dashboard(invoice_df):
+    """Display the commission dashboard"""
+    # Header
+    col1, col2 = st.columns([4, 1])
+    with col1:
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                      padding: 15px; border-radius: 10px; color: white;'>
+            <h2 style='color: white; margin: 0;'>💰 Commission Dashboard</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.commission_authenticated = False
+            st.rerun()
+
+    # Process Data
+    with st.spinner("Calculating commissions from live Sheet data..."):
+        commission_df = process_commission_data_fast(invoice_df)
+
+    if commission_df.empty:
+        st.warning("⚠️ No commissionable transactions found for the selected months.")
+        return
+
+    # Overall Metrics
+    st.markdown("### 📊 Summary")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Sales", f"${commission_df['Subtotal'].sum():,.2f}")
+    c2.metric("Total Commission", f"${commission_df['Commission Amount'].sum():,.2f}")
+    c3.metric("Brad Override", f"${commission_df['Brad Override'].sum():,.2f}")
+    c4.metric("Line Items", len(commission_df))
+
+    st.markdown("---")
+
+    # Group by Rep
+    st.markdown("### 👤 By Sales Rep")
+    rep_summary = commission_df.groupby('Sales Rep').agg({
+        'Subtotal': 'sum',
+        'Commission Amount': 'sum',
+        'Brad Override': 'sum'
+    }).reset_index()
+    
+    # Add Total Override Row for Brad
+    total_override = commission_df['Brad Override'].sum()
+    if total_override > 0:
+        brad_row = pd.DataFrame([{
+            'Sales Rep': 'Brad Sherman (Override)', 
+            'Subtotal': 0, 
+            'Commission Amount': 0, 
+            'Brad Override': total_override
+        }])
+        rep_summary = pd.concat([rep_summary, brad_row], ignore_index=True)
+
+    # Format for display
+    display_rep = rep_summary.copy()
+    display_rep['Subtotal'] = display_rep['Subtotal'].apply(lambda x: f"${x:,.2f}")
+    display_rep['Commission Amount'] = display_rep['Commission Amount'].apply(lambda x: f"${x:,.2f}")
+    display_rep['Brad Override'] = display_rep['Brad Override'].apply(lambda x: f"${x:,.2f}")
+
+    st.dataframe(display_rep, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    
+    # Detailed Data
+    with st.expander("📋 View Detailed Transactions"):
+        st.dataframe(commission_df)
+
+# ==========================================
+# MAIN ENTRY POINT
+# ==========================================
+
+def display_commission_section(invoices_df=None, sales_orders_df=None):
+    """
+    Main function called by the dashboard. 
+    Ignores passed dfs if they aren't processed correctly, loads fresh from Sheets.
+    """
+    
+    # Check Auth
+    if not st.session_state.get('commission_authenticated', False):
+        display_password_gate()
+        return
+
+    # Load Data Directly from Google Sheets (Fresh Pull)
+    with st.spinner("🔄 Fetching live data from 'NS Invoices' and 'NS Sales Orders'..."):
+        raw_invoices = fetch_google_sheet_data("NS Invoices", "A:U")
+        raw_orders = fetch_google_sheet_data("NS Sales Orders", "A:AF")
+        
+        if raw_invoices.empty:
+            st.error("Could not load 'NS Invoices' from Google Sheet.")
+            return
+
+        # Clean and Prepare
+        clean_invoices = process_ns_invoices(raw_invoices)
+        clean_orders = process_ns_sales_orders(raw_orders)
+        
+        st.success(f"✅ Loaded {len(clean_invoices)} Invoices and {len(clean_orders)} Sales Orders")
+
+    # Display Dashboard
+    display_commission_dashboard(clean_invoices)
 
 if __name__ == "__main__":
-    main()
+    st.set_page_config(page_title="Commission Calc", layout="wide")
+    display_commission_section()
