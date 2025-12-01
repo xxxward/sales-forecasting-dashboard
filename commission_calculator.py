@@ -83,28 +83,35 @@ def load_custom_css():
         color: white !important;
     }
     
-    section[data-testid="stSidebar"] .stMultiSelect > div {
+    /* Make all sidebar inputs visible with solid backgrounds */
+    section[data-testid="stSidebar"] [data-baseweb="select"],
+    section[data-testid="stSidebar"] [data-baseweb="input"],
+    section[data-testid="stSidebar"] .stMultiSelect > div > div,
+    section[data-testid="stSidebar"] .stDateInput > div > div {
         background-color: white !important;
+        border: 2px solid white !important;
+        border-radius: 8px !important;
     }
     
-    section[data-testid="stSidebar"] .stMultiSelect label {
-        color: white !important;
-        font-weight: 600 !important;
-    }
-    
-    section[data-testid="stSidebar"] .stDateInput > div {
-        background-color: white !important;
-    }
-    
+    section[data-testid="stSidebar"] .stMultiSelect label,
     section[data-testid="stSidebar"] .stDateInput label {
         color: white !important;
-        font-weight: 600 !important;
+        font-weight: 700 !important;
+        font-size: 16px !important;
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
     }
     
+    /* Make multiselect text visible */
+    section[data-testid="stSidebar"] [data-baseweb="select"] span {
+        color: #333 !important;
+    }
+    
+    /* Style sidebar buttons */
     section[data-testid="stSidebar"] .stButton > button {
         background-color: white !important;
         color: #667eea !important;
-        border: none !important;
+        border: 2px solid white !important;
+        font-weight: 700 !important;
     }
     
     section[data-testid="stSidebar"] .stButton > button:hover {
@@ -319,10 +326,13 @@ def display_dashboard():
             return
     
     with st.sidebar:
-        st.markdown("### 🎛️ Filters & Controls")
-        st.markdown("---")
+        st.markdown("""
+        <div style='background: rgba(255,255,255,0.2); padding: 15px; border-radius: 10px; margin-bottom: 20px; text-align: center;'>
+            <h2 style='color: white; margin: 0;'>🎛️ Filters</h2>
+        </div>
+        """, unsafe_allow_html=True)
         
-        st.markdown("**📅 Date Range**")
+        st.markdown("<div style='margin: 20px 0 10px 0;'><strong style='color: white; font-size: 18px;'>📅 Date Range</strong></div>", unsafe_allow_html=True)
         if 'Close Date' in df.columns and not df['Close Date'].isna().all():
             min_date = df['Close Date'].min()
             max_date = df['Close Date'].max()
@@ -337,9 +347,9 @@ def display_dashboard():
         else:
             date_range = None
         
-        st.markdown("---")
+        st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.3); margin: 20px 0;'>", unsafe_allow_html=True)
         
-        st.markdown("**📊 Status**")
+        st.markdown("<div style='margin: 20px 0 10px 0;'><strong style='color: white; font-size: 18px;'>📊 Status</strong></div>", unsafe_allow_html=True)
         if 'Status' in df.columns:
             unique_statuses = df['Status'].unique().tolist()
             selected_statuses = st.multiselect(
@@ -351,9 +361,9 @@ def display_dashboard():
         else:
             selected_statuses = []
         
-        st.markdown("---")
+        st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.3); margin: 20px 0;'>", unsafe_allow_html=True)
         
-        st.markdown("**👤 Sales Reps**")
+        st.markdown("<div style='margin: 20px 0 10px 0;'><strong style='color: white; font-size: 18px;'>👤 Sales Reps</strong></div>", unsafe_allow_html=True)
         selected_reps = st.multiselect(
             "Select reps to view",
             options=COMMISSION_REPS,
@@ -361,9 +371,9 @@ def display_dashboard():
             label_visibility="collapsed"
         )
         
-        st.markdown("---")
+        st.markdown("<hr style='border: 1px solid rgba(255,255,255,0.3); margin: 20px 0;'>", unsafe_allow_html=True)
         
-        st.markdown("**⚡ Quick Actions**")
+        st.markdown("<div style='margin: 20px 0 10px 0;'><strong style='color: white; font-size: 18px;'>⚡ Quick Actions</strong></div>", unsafe_allow_html=True)
         if st.button("✅ Select All", use_container_width=True):
             st.session_state.selected_rows = set(df['Row_ID'].tolist()) if 'Row_ID' in df.columns else set()
             st.rerun()
@@ -568,6 +578,17 @@ def display_dashboard():
 # ==========================================
 
 def display_commission_section(invoices_df=None, sales_orders_df=None):
+    # Ensure page config is set
+    try:
+        st.set_page_config(
+            page_title="Elite Commission Tracker",
+            page_icon="💎",
+            layout="wide",
+            initial_sidebar_state="expanded"
+        )
+    except:
+        pass  # Page config already set
+    
     if not st.session_state.get('authenticated', False):
         display_login()
     else:
