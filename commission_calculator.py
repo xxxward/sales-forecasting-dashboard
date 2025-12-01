@@ -97,6 +97,7 @@ def fetch_google_sheet_data(sheet_name, range_name):
 def process_ns_invoices(df):
     """
     Clean NS Invoices data and map to Calculator standard columns
+    Fixed to handle duplicate 'Date' column collision
     """
     if df.empty:
         return df
@@ -104,14 +105,19 @@ def process_ns_invoices(df):
     # 1. Clean Column Names
     df.columns = df.columns.str.strip()
     
-    # 2. Map Columns (Google Sheet Header -> Calculator Internal Name)
-    # Based on your previous requests:
-    # "Rep Master" (Col U) -> "Sales Rep"
-    # "Amount Transaction Total" (Col K) -> "Amount"
-    # "Date Closed" (Col N) -> "Date"
-    # "Amount Tax" -> "Tax"
-    # "Amount Shipping" -> "Shipping"
+    # 2. Handle Column Name Collisions BEFORE Renaming
+    # We want 'Date Closed' to become 'Date'.
+    # But 'Date' likely already exists (Col C). We must drop the old 'Date' first.
+    if 'Date' in df.columns and 'Date Closed' in df.columns:
+        df = df.drop(columns=['Date'])
+        
+    # We want 'Rep Master' to become 'Sales Rep'.
+    # But 'Sales Rep' likely already exists (Col O). 
+    # We want to keep Col O as 'Original Sales Rep' for Shopify filtering.
+    if 'Sales Rep' in df.columns:
+        df = df.rename(columns={'Sales Rep': 'Original Sales Rep'})
     
+    # 3. Map Columns (Google Sheet Header -> Calculator Internal Name)
     rename_map = {
         'Rep Master': 'Sales Rep',
         'Amount Transaction Total': 'Amount',
@@ -120,18 +126,11 @@ def process_ns_invoices(df):
         'Document Number': 'Document Number',
         'Status': 'Status',
         'Amount Tax': 'Tax Amount',
-        'Amount Shipping': 'Shipping Amount',
-        'Sales Rep': 'Original Sales Rep' # Keep the original (Col O) to filter Shopify
+        'Amount Shipping': 'Shipping Amount'
     }
     
     # Only rename columns that exist
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
-
-    # 3. Specific Logic: Use Rep Master as the true Sales Rep
-    # But first, filter out Shopify based on the ORIGINAL Sales Rep column if needed
-    if 'Original Sales Rep' in df.columns:
-        # Optional: You can filter shopify here or in the main logic
-        pass
 
     # 4. Clean Numeric Columns
     numeric_cols = ['Amount', 'Tax Amount', 'Shipping Amount']
@@ -182,7 +181,8 @@ def verify_admin(email, password):
     return password_hash == ADMIN_PASSWORD_HASH
 
 def parse_invoice_month(date_value):
-    if pd.isna(date_value): return None
+    if pd.isna(date_value) or str(date_value).strip() == '': 
+        return None
     try:
         date_obj = pd.to_datetime(date_value, errors='coerce')
         if pd.isna(date_obj): return None
@@ -191,6 +191,7 @@ def parse_invoice_month(date_value):
 
 def calculate_payout_date(invoice_month_str):
     try:
+        if not invoice_month_str: return None
         year, month = map(int, invoice_month_str.split('-'))
         if month == 12:
             month_end = datetime(year, 12, 31)
@@ -210,6 +211,10 @@ def process_commission_data_fast(df):
     if df.empty: return pd.DataFrame()
 
     # 1. Filter to 4 Reps Only
+    if 'Sales Rep' not in df.columns:
+        st.error("❌ 'Sales Rep' column missing after processing. Check 'Rep Master' column in Sheet.")
+        return pd.DataFrame()
+        
     df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
     
     # 2. Filter: Status = Paid In Full
@@ -221,26 +226,28 @@ def process_commission_data_fast(df):
         df = df[~df['Original Sales Rep'].astype(str).str.upper().str.contains("SHOPIFY", na=False)]
 
     # 4. Date Parsing
+    if 'Date' not in df.columns:
+        st.error("❌ 'Date' column missing. Check 'Date Closed' column in Sheet.")
+        return pd.DataFrame()
+
     st.caption("📅 Using 'Date Closed' to determine commission month")
     df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
 
     # 5. Exclude non-commissionable items (Shipping, Tax labels, etc)
-    # Note: We already mathematically subtracted tax/shipping, but this filters out line items
-    # that are PURELY shipping/tax if they exist as separate rows.
-    df['Item Upper'] = df['Item'].astype(str).str.upper()
-    def is_excluded(item_upper):
-        if 'TOOLING' in item_upper: return False
-        return any(excl in item_upper for excl in EXCLUDED_ITEMS)
-    
-    df = df[~df['Item Upper'].apply(is_excluded)]
+    if 'Item' in df.columns:
+        df['Item Upper'] = df['Item'].astype(str).str.upper()
+        def is_excluded(item_upper):
+            if 'TOOLING' in item_upper: return False
+            return any(excl in item_upper for excl in EXCLUDED_ITEMS)
+        
+        df = df[~df['Item Upper'].apply(is_excluded)]
 
     # 6. Apply Commission Rates
     # Assign Base Rate
     df['Commission Rate'] = df['Sales Rep'].map(REP_COMMISSION_RATES).fillna(0.0)
     
     # Calculate Commission (Subtotal * Rate)
-    # Ensure Subtotal exists (Calculated in process_ns_invoices)
     if 'Subtotal' not in df.columns:
         df['Subtotal'] = df['Amount'] # Fallback
         
@@ -301,7 +308,7 @@ def display_commission_dashboard(invoice_df):
         commission_df = process_commission_data_fast(invoice_df)
 
     if commission_df.empty:
-        st.warning("⚠️ No commissionable transactions found for the selected months.")
+        st.warning("⚠️ No commissionable transactions found for the selected months (Sep/Oct 2025).")
         return
 
     # Overall Metrics
