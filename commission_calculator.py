@@ -1,6 +1,6 @@
 """
 Commission Calculator Module for Calyx Containers
-Integrated with Google Sheets (NS Invoices & NS Sales Orders)
+Integrated with Google Sheets - NS Invoices Tab Only
 """
 
 import streamlit as st
@@ -149,26 +149,6 @@ def process_ns_invoices(df):
         st.write("Available columns:", list(df.columns))
         return pd.DataFrame()
 
-    return df
-
-def process_ns_sales_orders(df):
-    """
-    Clean NS Sales Orders data
-    """
-    if df.empty:
-        return df
-        
-    df.columns = df.columns.str.strip()
-    
-    # Map Rep Master to Sales Rep
-    if 'Rep Master' in df.columns:
-        df['Sales Rep'] = df['Rep Master']
-        
-    # Clean Amount
-    if 'Amount' in df.columns:
-        df['Amount'] = df['Amount'].astype(str).str.replace(r'[$,]', '', regex=True)
-        df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0)
-        
     return df
 
 # ==========================================
@@ -357,7 +337,8 @@ def display_commission_dashboard(invoice_df):
 def display_commission_section(invoices_df=None, sales_orders_df=None):
     """
     Main function called by the dashboard. 
-    Ignores passed dfs if they aren't processed correctly, loads fresh from Sheets.
+    Loads data directly from NS Invoices tab only.
+    Note: Both parameters are ignored - always loads fresh from Sheets.
     """
     
     # Check Auth
@@ -366,9 +347,8 @@ def display_commission_section(invoices_df=None, sales_orders_df=None):
         return
 
     # Load Data Directly from Google Sheets (Fresh Pull)
-    with st.spinner("🔄 Fetching live data from 'NS Invoices' and 'NS Sales Orders'..."):
+    with st.spinner("🔄 Fetching live data from 'NS Invoices' tab..."):
         raw_invoices = fetch_google_sheet_data("NS Invoices", "A:U")
-        raw_orders = fetch_google_sheet_data("NS Sales Orders", "A:AF")
         
         if raw_invoices.empty:
             st.error("Could not load 'NS Invoices' from Google Sheet.")
@@ -376,13 +356,12 @@ def display_commission_section(invoices_df=None, sales_orders_df=None):
 
         # Clean and Prepare
         clean_invoices = process_ns_invoices(raw_invoices)
-        clean_orders = process_ns_sales_orders(raw_orders)
         
         if clean_invoices.empty:
             st.error("❌ No data after processing invoices. Check column mappings.")
             return
         
-        st.success(f"✅ Loaded {len(clean_invoices)} Invoices and {len(clean_orders)} Sales Orders")
+        st.success(f"✅ Loaded {len(clean_invoices)} Invoices from NS Invoices tab")
 
     # Display Dashboard
     display_commission_dashboard(clean_invoices)
