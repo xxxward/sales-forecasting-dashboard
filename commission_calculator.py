@@ -89,30 +89,39 @@ def process_ns_invoices(df):
     """
     if df.empty:
         return df
-
-    # Store original columns for display
-    original_df = df.copy()
     
     # Clean Column Names
     df.columns = df.columns.str.strip()
     
     # Handle Column Name Collisions
+    # There's a 'Date' column (Col C) and 'Date Closed' column (Col N)
     if 'Date' in df.columns and 'Date Closed' in df.columns:
         df = df.drop(columns=['Date'])
-        
+    
+    # There's a 'Sales Rep' column (Col O) - preserve it as 'Original Sales Rep' for Shopify filter
     if 'Sales Rep' in df.columns:
         df = df.rename(columns={'Sales Rep': 'Original Sales Rep'})
     
-    # Map Columns
+    # Map Columns - preserve all display columns
     rename_map = {
-        'Rep Master': 'Sales Rep',
         'Amount (Transaction Total)': 'Amount',
         'Date Closed': 'Date',
         'Document Number': 'Document Number',
         'Status': 'Status',
         'Amount (Transaction Tax Total)': 'Tax Amount',
-        'Amount (Shipping)': 'Shipping Amount'
+        'Amount (Shipping)': 'Shipping Amount',
+        'Corrected Customer Name': 'Customer',
+        'Created From': 'Created From',
+        'CSM': 'CSM',
+        'HubSpot Pipeline': 'HubSpot Pipeline',
+        'Rep Master': 'Rep Master'
     }
+    
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    
+    # Add Sales Rep as a separate field for filtering (from Rep Master)
+    if 'Rep Master' in df.columns:
+        df['Sales Rep'] = df['Rep Master']
     
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
@@ -359,88 +368,149 @@ def display_commission_dashboard(invoice_df):
     st.markdown("---")
     
     # Detailed Transactions by Rep
-    st.markdown("### 📋 Detailed Transactions - Select to Include/Exclude")
+    st.markdown("### 📋 Transaction Details - Select to Include/Exclude")
     
     for rep in selected_reps:
         rep_data = filtered_df[filtered_df['Sales Rep'] == rep].copy()
         
         if rep_data.empty:
             continue
+        
+        # Calculate rep totals
+        rep_total_sales = rep_data['Subtotal'].sum()
+        rep_included = included_df[included_df['Sales Rep'] == rep]
+        rep_included_total = rep_included['Subtotal'].sum() if not rep_included.empty else 0
+        rep_included_commission = rep_included['Commission Amount'].sum() if not rep_included.empty else 0
+        
+        # Header checkbox and expander
+        col_check, col_expand = st.columns([0.5, 9.5])
+        
+        with col_check:
+            all_rep_selected = all(row_id in st.session_state.selected_rows for row_id in rep_data['Row_ID'].tolist())
+            select_all = st.checkbox(
+                f"select_all_{rep}",
+                value=all_rep_selected,
+                key=f"select_all_check_{rep}",
+                label_visibility="collapsed"
+            )
             
-        with st.expander(f"**{rep}** ({len(rep_data)} transactions)", expanded=(len(selected_reps) == 1)):
-            
-            # Select/Deselect All buttons
-            col1, col2, col3 = st.columns([1, 1, 4])
-            with col1:
-                if st.button(f"✅ Select All", key=f"select_all_{rep}"):
-                    st.session_state.selected_rows.update(rep_data['Row_ID'].tolist())
-                    st.rerun()
-            with col2:
-                if st.button(f"❌ Deselect All", key=f"deselect_all_{rep}"):
-                    st.session_state.selected_rows -= set(rep_data['Row_ID'].tolist())
-                    st.rerun()
-            
-            # Display columns
-            display_cols = [
-                'Document Number', 'Date', 'Customer', 'Status', 
-                'Amount', 'Subtotal', 'Commission Rate', 'Commission Amount'
-            ]
-            
-            # Only show columns that exist
-            display_cols = [col for col in display_cols if col in rep_data.columns]
-            
-            # Create display dataframe
-            display_df = rep_data[display_cols + ['Row_ID']].copy()
-            
-            # Format currency columns
-            for col in ['Amount', 'Subtotal', 'Commission Amount']:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: f"${x:,.2f}")
-            
-            # Format percentage
-            if 'Commission Rate' in display_df.columns:
-                display_df['Commission Rate'] = display_df['Commission Rate'].apply(lambda x: f"{x:.1%}")
-            
-            # Add checkboxes
-            for idx, row in display_df.iterrows():
-                row_id = row['Row_ID']
-                is_selected = row_id in st.session_state.selected_rows
+            if select_all and not all_rep_selected:
+                st.session_state.selected_rows.update(rep_data['Row_ID'].tolist())
+                st.rerun()
+            elif not select_all and all_rep_selected:
+                st.session_state.selected_rows -= set(rep_data['Row_ID'].tolist())
+                st.rerun()
+        
+        with col_expand:
+            with st.expander(
+                f"**{rep}** - Commission: ${rep_included_commission:,.2f} ({len(rep_included)}/{len(rep_data)} transactions)",
+                expanded=False
+            ):
+                # Table header row
+                header_cols = st.columns([0.4, 1.0, 0.7, 0.9, 1.2, 0.8, 1.5, 0.8, 0.8, 1.0])
+                with header_cols[0]:
+                    st.markdown("**☑️**")
+                with header_cols[1]:
+                    st.markdown("**Doc #**")
+                with header_cols[2]:
+                    st.markdown("**Status**")
+                with header_cols[3]:
+                    st.markdown("**Created From**")
+                with header_cols[4]:
+                    st.markdown("**Customer**")
+                with header_cols[5]:
+                    st.markdown("**CSM**")
+                with header_cols[6]:
+                    st.markdown("**Pipeline**")
+                with header_cols[7]:
+                    st.markdown("**Amount**")
+                with header_cols[8]:
+                    st.markdown("**Rep**")
+                with header_cols[9]:
+                    st.markdown("**Commission**")
                 
-                col_check, col_data = st.columns([0.5, 9.5])
+                st.markdown("---")
                 
-                with col_check:
-                    selected = st.checkbox(
-                        "Include",
-                        value=is_selected,
-                        key=f"check_{row_id}",
-                        label_visibility="collapsed"
-                    )
+                # Data rows
+                for idx, row in rep_data.iterrows():
+                    row_id = row['Row_ID']
+                    is_selected = row_id in st.session_state.selected_rows
                     
-                    if selected and row_id not in st.session_state.selected_rows:
-                        st.session_state.selected_rows.add(row_id)
-                        st.rerun()
-                    elif not selected and row_id in st.session_state.selected_rows:
-                        st.session_state.selected_rows.remove(row_id)
-                        st.rerun()
-                
-                with col_data:
-                    # Create a compact display
-                    row_display = display_df.loc[idx].drop('Row_ID').to_dict()
-                    st.write(f"**{row_display.get('Document Number', 'N/A')}** | {row_display.get('Date', 'N/A')} | {row_display.get('Customer', 'N/A')} | Commission: {row_display.get('Commission Amount', '$0.00')}")
-            
-            # Rep Summary
-            rep_included = included_df[included_df['Sales Rep'] == rep]
-            if not rep_included.empty:
-                st.markdown(f"**{rep} Total:** ${rep_included['Subtotal'].sum():,.2f} Sales | ${rep_included['Commission Amount'].sum():,.2f} Commission")
+                    cols = st.columns([0.4, 1.0, 0.7, 0.9, 1.2, 0.8, 1.5, 0.8, 0.8, 1.0])
+                    
+                    with cols[0]:
+                        selected = st.checkbox(
+                            "sel",
+                            value=is_selected,
+                            key=f"check_{row_id}",
+                            label_visibility="collapsed"
+                        )
+                        
+                        if selected != is_selected:
+                            if selected:
+                                st.session_state.selected_rows.add(row_id)
+                            else:
+                                st.session_state.selected_rows.discard(row_id)
+                            st.rerun()
+                    
+                    with cols[1]:
+                        st.text(str(row.get('Document Number', 'N/A')))
+                    
+                    with cols[2]:
+                        status = str(row.get('Status', 'N/A'))
+                        st.text(status[:12])
+                    
+                    with cols[3]:
+                        created_from = str(row.get('Created From', 'N/A'))
+                        st.text(created_from[:12])
+                    
+                    with cols[4]:
+                        customer_name = str(row.get('Customer', 'N/A'))
+                        if customer_name == 'N/A' or pd.isna(customer_name) or customer_name.strip() == '':
+                            customer_name = 'No Customer Name'
+                        st.text(customer_name[:18])
+                    
+                    with cols[5]:
+                        csm = str(row.get('CSM', 'N/A'))
+                        st.text(csm[:10])
+                    
+                    with cols[6]:
+                        pipeline = str(row.get('HubSpot Pipeline', 'N/A'))
+                        st.text(pipeline[:20])
+                    
+                    with cols[7]:
+                        st.text(f"${row.get('Amount', 0):,.0f}")
+                    
+                    with cols[8]:
+                        rep_master = str(row.get('Rep Master', 'N/A'))
+                        st.text(rep_master[:10])
+                    
+                    with cols[9]:
+                        st.text(f"${row.get('Commission Amount', 0):,.2f}")
 
     st.markdown("---")
     
     # Export Options
     with st.expander("📥 Export Selected Data"):
         if not included_df.empty:
-            csv = included_df.to_csv(index=False)
+            # Select columns for export
+            export_cols = [
+                'Document Number', 'Status', 'Created From', 'Customer', 'CSM', 
+                'Rep Master', 'HubSpot Pipeline', 'Date', 'Amount', 'Subtotal',
+                'Commission Rate', 'Commission Amount', 'Brad Override'
+            ]
+            # Only include columns that exist
+            export_cols = [col for col in export_cols if col in included_df.columns]
+            
+            export_df = included_df[export_cols].copy()
+            
+            # Format for export
+            if 'Commission Rate' in export_df.columns:
+                export_df['Commission Rate'] = export_df['Commission Rate'].apply(lambda x: f"{x:.1%}")
+            
+            csv = export_df.to_csv(index=False)
             st.download_button(
-                label="Download as CSV",
+                label="Download Selected Transactions as CSV",
                 data=csv,
                 file_name=f"commission_report_{'-'.join(selected_months)}.csv",
                 mime="text/csv"
