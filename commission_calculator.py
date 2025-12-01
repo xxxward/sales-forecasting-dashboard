@@ -40,12 +40,9 @@ REP_COMMISSION_RATES = {
 BRAD_OVERRIDE_RATE = 0.01
 COMMISSION_MONTHS = ['2025-09', '2025-10'] 
 
-# ==========================================
-# EXCLUSION RULES
-# ==========================================
-EXCLUDED_ITEMS = [
-    "Convenience Fee 3.5%", "SHIPPING", "UPS", "FEDEX", "AVATAX", "TAX"
-]
+# NOTE: Simplified commission calculation
+# Commissionable Amount = Total - Shipping - Tax
+# (No item-level filtering - applies to all invoice lines)
 
 # ==========================================
 # DATA LOADING FUNCTIONS (Google Sheets)
@@ -97,7 +94,7 @@ def fetch_google_sheet_data(sheet_name, range_name):
 def process_ns_invoices(df):
     """
     Clean NS Invoices data and map to Calculator standard columns
-    Fixed to handle duplicate 'Date' column collision
+    Simplified: Total - Shipping - Tax = Commissionable Subtotal
     """
     if df.empty:
         return df
@@ -118,15 +115,15 @@ def process_ns_invoices(df):
         df = df.rename(columns={'Sales Rep': 'Original Sales Rep'})
     
     # 3. Map Columns (Google Sheet Header -> Calculator Internal Name)
+    # FIXED: Added parentheses to match actual column names
     rename_map = {
         'Rep Master': 'Sales Rep',
-        'Amount Transaction Total': 'Amount',
+        'Amount (Transaction Total)': 'Amount',
         'Date Closed': 'Date',
-        'Item': 'Item',
         'Document Number': 'Document Number',
         'Status': 'Status',
-        'Amount Tax': 'Tax Amount',
-        'Amount Shipping': 'Shipping Amount'
+        'Amount (Transaction Tax Total)': 'Tax Amount',
+        'Amount (Shipping)': 'Shipping Amount'
     }
     
     # Only rename columns that exist
@@ -147,6 +144,9 @@ def process_ns_invoices(df):
             df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
         if 'Shipping Amount' in df.columns:
             df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
+    else:
+        # If Amount column still missing, return empty to trigger error
+        return pd.DataFrame()
 
     return df
 
@@ -234,14 +234,8 @@ def process_commission_data_fast(df):
     df['Invoice Month'] = df['Date'].apply(parse_invoice_month)
     df = df[df['Invoice Month'].isin(COMMISSION_MONTHS)].copy()
 
-    # 5. Exclude non-commissionable items (Shipping, Tax labels, etc)
-    if 'Item' in df.columns:
-        df['Item Upper'] = df['Item'].astype(str).str.upper()
-        def is_excluded(item_upper):
-            if 'TOOLING' in item_upper: return False
-            return any(excl in item_upper for excl in EXCLUDED_ITEMS)
-        
-        df = df[~df['Item Upper'].apply(is_excluded)]
+    # 5. REMOVED: Item-based exclusion (no Item column available)
+    # Subtotal already calculated as: Total - Tax - Shipping
 
     # 6. Apply Commission Rates
     # Assign Base Rate
@@ -249,7 +243,11 @@ def process_commission_data_fast(df):
     
     # Calculate Commission (Subtotal * Rate)
     if 'Subtotal' not in df.columns:
-        df['Subtotal'] = df['Amount'] # Fallback
+        if 'Amount' in df.columns:
+            df['Subtotal'] = df['Amount']  # Fallback if Subtotal wasn't created
+        else:
+            st.error("❌ Critical Error: Neither 'Subtotal' nor 'Amount' column found after processing.")
+            return pd.DataFrame()
         
     df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
 
@@ -382,7 +380,22 @@ def display_commission_section(invoices_df=None, sales_orders_df=None):
         clean_invoices = process_ns_invoices(raw_invoices)
         clean_orders = process_ns_sales_orders(raw_orders)
         
+        if clean_invoices.empty:
+            st.error("❌ No data after processing invoices. Check column mappings.")
+            return
+        
         st.success(f"✅ Loaded {len(clean_invoices)} Invoices and {len(clean_orders)} Sales Orders")
+        
+        # Debug: Show key columns
+        with st.expander("🔍 Debug: Column Info"):
+            st.write("**Available columns:**", list(clean_invoices.columns))
+            if 'Amount' in clean_invoices.columns:
+                st.write("✅ 'Amount' column exists")
+            if 'Subtotal' in clean_invoices.columns:
+                st.write("✅ 'Subtotal' column exists")
+            if 'Sales Rep' in clean_invoices.columns:
+                st.write("✅ 'Sales Rep' column exists")
+                st.write("**Unique Sales Reps:**", clean_invoices['Sales Rep'].unique().tolist())
 
     # Display Dashboard
     display_commission_dashboard(clean_invoices)
