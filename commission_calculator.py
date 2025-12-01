@@ -83,6 +83,35 @@ def load_custom_css():
         color: white !important;
     }
     
+    section[data-testid="stSidebar"] .stMultiSelect > div {
+        background-color: white !important;
+    }
+    
+    section[data-testid="stSidebar"] .stMultiSelect label {
+        color: white !important;
+        font-weight: 600 !important;
+    }
+    
+    section[data-testid="stSidebar"] .stDateInput > div {
+        background-color: white !important;
+    }
+    
+    section[data-testid="stSidebar"] .stDateInput label {
+        color: white !important;
+        font-weight: 600 !important;
+    }
+    
+    section[data-testid="stSidebar"] .stButton > button {
+        background-color: white !important;
+        color: #667eea !important;
+        border: none !important;
+    }
+    
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background-color: rgba(255, 255, 255, 0.9) !important;
+        transform: scale(1.05) !important;
+    }
+    
     .stButton>button {
         border-radius: 10px;
         font-weight: 600;
