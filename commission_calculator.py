@@ -160,14 +160,26 @@ def process_ns_invoices(df):
     if 'Rep Master' in df.columns:
         df['Sales Rep'] = df['Rep Master']
     
-    if 'Customer' in df.columns:
-        df['Customer'] = df['Customer'].astype(str).str.replace('^Customer ', '', regex=True)
+    # Clean customer names - defensive approach
+    try:
+        if 'Customer' in df.columns:
+            df['Customer'] = df['Customer'].astype(str).str.replace('^Customer ', '', regex=True)
+    except:
+        pass
     
-    if 'SO Number' in df.columns:
-        df['SO Number'] = df['SO Number'].astype(str).str.replace('Sales Order', '').str.strip()
+    # Clean SO Number - defensive approach
+    try:
+        if 'SO Number' in df.columns:
+            df['SO Number'] = df['SO Number'].astype(str).str.replace('Sales Order', '').str.strip()
+    except:
+        pass
     
-    if 'Close Date' in df.columns:
-        df['Close Date'] = pd.to_datetime(df['Close Date'], errors='coerce')
+    # Parse dates - defensive approach
+    try:
+        if 'Close Date' in df.columns:
+            df['Close Date'] = pd.to_datetime(df['Close Date'], errors='coerce')
+    except:
+        pass
     
     numeric_cols = ['Amount', 'Tax Amount', 'Shipping Amount']
     for col in numeric_cols:
@@ -175,12 +187,18 @@ def process_ns_invoices(df):
             df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    if 'Amount' in df.columns:
-        df['Subtotal'] = df['Amount']
-        if 'Tax Amount' in df.columns:
-            df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
-        if 'Shipping Amount' in df.columns:
-            df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
+    # Calculate subtotal - defensive approach
+    try:
+        if 'Amount' in df.columns:
+            df['Subtotal'] = df['Amount']
+            if 'Tax Amount' in df.columns:
+                df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
+            if 'Shipping Amount' in df.columns:
+                df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
+        else:
+            df['Subtotal'] = 0
+    except:
+        df['Subtotal'] = 0
     
     return df
 
