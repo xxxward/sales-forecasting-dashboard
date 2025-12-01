@@ -112,6 +112,7 @@ def process_ns_invoices(df):
         'Amount (Shipping)': 'Shipping Amount',
         'Corrected Customer Name': 'Customer',
         'Created From': 'Created From',
+        'External ID': 'External ID',  # May contain SO number
         'CSM': 'CSM',
         'HubSpot Pipeline': 'HubSpot Pipeline',
         'Rep Master': 'Rep Master'
@@ -407,15 +408,15 @@ def display_commission_dashboard(invoice_df):
                 expanded=False
             ):
                 # Table header row
-                header_cols = st.columns([0.4, 1.3, 0.6, 0.8, 2.2, 0.7, 1.3, 0.8, 0.7, 1.0])
+                header_cols = st.columns([0.4, 1.1, 1.1, 0.6, 2.0, 0.7, 1.2, 0.8, 0.7, 1.0])
                 with header_cols[0]:
                     st.markdown("**☑️**")
                 with header_cols[1]:
                     st.markdown("**Doc #**")
                 with header_cols[2]:
-                    st.markdown("**Status**")
+                    st.markdown("**SO #**")
                 with header_cols[3]:
-                    st.markdown("**Created From**")
+                    st.markdown("**Status**")
                 with header_cols[4]:
                     st.markdown("**Customer**")
                 with header_cols[5]:
@@ -436,57 +437,87 @@ def display_commission_dashboard(invoice_df):
                     row_id = row['Row_ID']
                     is_selected = row_id in st.session_state.selected_rows
                     
-                    cols = st.columns([0.4, 1.3, 0.6, 0.8, 2.2, 0.7, 1.3, 0.8, 0.7, 1.0])
+                    cols = st.columns([0.4, 1.1, 1.1, 0.6, 2.0, 0.7, 1.2, 0.8, 0.7, 1.0])
                     
                     with cols[0]:
+                        # Track if this specific checkbox changed
+                        checkbox_key = f"check_{row_id}"
                         selected = st.checkbox(
                             "sel",
                             value=is_selected,
-                            key=f"check_{row_id}",
+                            key=checkbox_key,
                             label_visibility="collapsed"
                         )
                         
-                        if selected != is_selected:
-                            if selected:
-                                st.session_state.selected_rows.add(row_id)
-                            else:
-                                st.session_state.selected_rows.discard(row_id)
+                        # Update session state if changed
+                        if selected and row_id not in st.session_state.selected_rows:
+                            st.session_state.selected_rows.add(row_id)
+                            st.rerun()
+                        elif not selected and row_id in st.session_state.selected_rows:
+                            st.session_state.selected_rows.remove(row_id)
                             st.rerun()
                     
                     with cols[1]:
-                        st.text(str(row.get('Document Number', 'N/A')))
+                        doc_num = row.get('Document Number', 'N/A')
+                        if isinstance(doc_num, (pd.Series, list)):
+                            doc_num = str(doc_num.iloc[0]) if hasattr(doc_num, 'iloc') else str(doc_num[0])
+                        st.text(str(doc_num))
                     
                     with cols[2]:
-                        status = str(row.get('Status', 'N/A'))
-                        st.text(status[:10])
+                        external_id = row.get('External ID', 'N/A')
+                        if isinstance(external_id, (pd.Series, list)):
+                            external_id = str(external_id.iloc[0]) if hasattr(external_id, 'iloc') else str(external_id[0])
+                        st.text(str(external_id))
                     
                     with cols[3]:
-                        created_from = str(row.get('Created From', 'N/A'))
-                        st.text(created_from[:10])
+                        status = row.get('Status', 'N/A')
+                        if isinstance(status, (pd.Series, list)):
+                            status = str(status.iloc[0]) if hasattr(status, 'iloc') else str(status[0])
+                        st.text(str(status)[:12])
                     
                     with cols[4]:
-                        customer_name = str(row.get('Customer', 'N/A'))
-                        if customer_name == 'N/A' or pd.isna(customer_name) or customer_name.strip() == '':
+                        customer_name = row.get('Customer', 'N/A')
+                        if isinstance(customer_name, (pd.Series, list)):
+                            customer_name = str(customer_name.iloc[0]) if hasattr(customer_name, 'iloc') else str(customer_name[0])
+                        customer_name = str(customer_name)
+                        
+                        # Strip "Customer " prefix if present
+                        if customer_name.startswith('Customer '):
+                            customer_name = customer_name[9:]  # Remove "Customer " (9 characters)
+                        
+                        if customer_name == 'N/A' or pd.isna(customer_name) or customer_name.strip() == '' or customer_name == 'nan':
                             customer_name = 'No Customer Name'
-                        st.text(customer_name)  # Show full customer name
+                        st.text(customer_name)
                     
                     with cols[5]:
-                        csm = str(row.get('CSM', 'N/A'))
-                        st.text(csm[:8])
+                        csm = row.get('CSM', 'N/A')
+                        if isinstance(csm, (pd.Series, list)):
+                            csm = str(csm.iloc[0]) if hasattr(csm, 'iloc') else str(csm[0])
+                        st.text(str(csm)[:10])
                     
                     with cols[6]:
-                        pipeline = str(row.get('HubSpot Pipeline', 'N/A'))
-                        st.text(pipeline[:15])
+                        pipeline = row.get('HubSpot Pipeline', 'N/A')
+                        if isinstance(pipeline, (pd.Series, list)):
+                            pipeline = str(pipeline.iloc[0]) if hasattr(pipeline, 'iloc') else str(pipeline[0])
+                        st.text(str(pipeline)[:18])
                     
                     with cols[7]:
-                        st.text(f"${row.get('Amount', 0):,.0f}")
+                        amount = row.get('Amount', 0)
+                        if isinstance(amount, (pd.Series, list)):
+                            amount = float(amount.iloc[0]) if hasattr(amount, 'iloc') else float(amount[0])
+                        st.text(f"${float(amount):,.0f}")
                     
                     with cols[8]:
-                        rep_master = str(row.get('Rep Master', 'N/A'))
-                        st.text(rep_master[:8])
+                        rep_master = row.get('Rep Master', 'N/A')
+                        if isinstance(rep_master, (pd.Series, list)):
+                            rep_master = str(rep_master.iloc[0]) if hasattr(rep_master, 'iloc') else str(rep_master[0])
+                        st.text(str(rep_master)[:10])
                     
                     with cols[9]:
-                        st.text(f"${row.get('Commission Amount', 0):,.2f}")
+                        commission = row.get('Commission Amount', 0)
+                        if isinstance(commission, (pd.Series, list)):
+                            commission = float(commission.iloc[0]) if hasattr(commission, 'iloc') else float(commission[0])
+                        st.text(f"${float(commission):,.2f}")
 
     st.markdown("---")
     
@@ -495,7 +526,7 @@ def display_commission_dashboard(invoice_df):
         if not included_df.empty:
             # Select columns for export
             export_cols = [
-                'Document Number', 'Status', 'Created From', 'Customer', 'CSM', 
+                'Document Number', 'External ID', 'Status', 'Customer', 'CSM', 
                 'Rep Master', 'HubSpot Pipeline', 'Date', 'Amount', 'Subtotal',
                 'Commission Rate', 'Commission Amount', 'Brad Override'
             ]
