@@ -407,7 +407,7 @@ def display_commission_dashboard(invoice_df):
                 expanded=False
             ):
                 # Table header row
-                header_cols = st.columns([0.4, 1.0, 0.7, 0.9, 1.2, 0.8, 1.5, 0.8, 0.8, 1.0])
+                header_cols = st.columns([0.4, 1.3, 0.6, 0.8, 2.2, 0.7, 1.3, 0.8, 0.7, 1.0])
                 with header_cols[0]:
                     st.markdown("**☑️**")
                 with header_cols[1]:
@@ -436,7 +436,7 @@ def display_commission_dashboard(invoice_df):
                     row_id = row['Row_ID']
                     is_selected = row_id in st.session_state.selected_rows
                     
-                    cols = st.columns([0.4, 1.0, 0.7, 0.9, 1.2, 0.8, 1.5, 0.8, 0.8, 1.0])
+                    cols = st.columns([0.4, 1.3, 0.6, 0.8, 2.2, 0.7, 1.3, 0.8, 0.7, 1.0])
                     
                     with cols[0]:
                         selected = st.checkbox(
@@ -458,32 +458,32 @@ def display_commission_dashboard(invoice_df):
                     
                     with cols[2]:
                         status = str(row.get('Status', 'N/A'))
-                        st.text(status[:12])
+                        st.text(status[:10])
                     
                     with cols[3]:
                         created_from = str(row.get('Created From', 'N/A'))
-                        st.text(created_from[:12])
+                        st.text(created_from[:10])
                     
                     with cols[4]:
                         customer_name = str(row.get('Customer', 'N/A'))
                         if customer_name == 'N/A' or pd.isna(customer_name) or customer_name.strip() == '':
                             customer_name = 'No Customer Name'
-                        st.text(customer_name[:18])
+                        st.text(customer_name)  # Show full customer name
                     
                     with cols[5]:
                         csm = str(row.get('CSM', 'N/A'))
-                        st.text(csm[:10])
+                        st.text(csm[:8])
                     
                     with cols[6]:
                         pipeline = str(row.get('HubSpot Pipeline', 'N/A'))
-                        st.text(pipeline[:20])
+                        st.text(pipeline[:15])
                     
                     with cols[7]:
                         st.text(f"${row.get('Amount', 0):,.0f}")
                     
                     with cols[8]:
                         rep_master = str(row.get('Rep Master', 'N/A'))
-                        st.text(rep_master[:10])
+                        st.text(rep_master[:8])
                     
                     with cols[9]:
                         st.text(f"${row.get('Commission Amount', 0):,.2f}")
