@@ -145,7 +145,8 @@ def process_ns_invoices(df):
         if 'Shipping Amount' in df.columns:
             df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
     else:
-        # If Amount column still missing, return empty to trigger error
+        st.error("❌ Critical Error: 'Amount' column not found after column mapping.")
+        st.write("Available columns:", list(df.columns))
         return pd.DataFrame()
 
     return df
@@ -243,11 +244,8 @@ def process_commission_data_fast(df):
     
     # Calculate Commission (Subtotal * Rate)
     if 'Subtotal' not in df.columns:
-        if 'Amount' in df.columns:
-            df['Subtotal'] = df['Amount']  # Fallback if Subtotal wasn't created
-        else:
-            st.error("❌ Critical Error: Neither 'Subtotal' nor 'Amount' column found after processing.")
-            return pd.DataFrame()
+        st.error("❌ Critical Error: 'Subtotal' column missing. Check process_ns_invoices function.")
+        return pd.DataFrame()
         
     df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
 
@@ -385,17 +383,6 @@ def display_commission_section(invoices_df=None, sales_orders_df=None):
             return
         
         st.success(f"✅ Loaded {len(clean_invoices)} Invoices and {len(clean_orders)} Sales Orders")
-        
-        # Debug: Show key columns
-        with st.expander("🔍 Debug: Column Info"):
-            st.write("**Available columns:**", list(clean_invoices.columns))
-            if 'Amount' in clean_invoices.columns:
-                st.write("✅ 'Amount' column exists")
-            if 'Subtotal' in clean_invoices.columns:
-                st.write("✅ 'Subtotal' column exists")
-            if 'Sales Rep' in clean_invoices.columns:
-                st.write("✅ 'Sales Rep' column exists")
-                st.write("**Unique Sales Reps:**", clean_invoices['Sales Rep'].unique().tolist())
 
     # Display Dashboard
     display_commission_dashboard(clean_invoices)
