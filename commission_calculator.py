@@ -99,8 +99,16 @@ def process_ns_invoices(df):
     if df.empty:
         return df
 
+    # DIAGNOSTIC: Show raw columns
+    st.write("🔍 **RAW COLUMNS FROM SHEET:**")
+    for i, col in enumerate(df.columns):
+        st.write(f"  Column {i}: '{col}' (length: {len(col)})")
+    
     # 1. Clean Column Names
     df.columns = df.columns.str.strip()
+    
+    st.write("🔍 **AFTER STRIP:**")
+    st.write(df.columns.tolist())
     
     # 2. Handle Column Name Collisions BEFORE Renaming
     # We want 'Date Closed' to become 'Date'.
@@ -126,8 +134,18 @@ def process_ns_invoices(df):
         'Amount (Shipping)': 'Shipping Amount'
     }
     
+    st.write("🔍 **CHECKING RENAME MAP:**")
+    for old_name, new_name in rename_map.items():
+        if old_name in df.columns:
+            st.write(f"  ✅ Found '{old_name}' → will rename to '{new_name}'")
+        else:
+            st.write(f"  ❌ MISSING '{old_name}'")
+    
     # Only rename columns that exist
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+    
+    st.write("🔍 **AFTER RENAME:**")
+    st.write(df.columns.tolist())
 
     # 4. Clean Numeric Columns
     numeric_cols = ['Amount', 'Tax Amount', 'Shipping Amount']
@@ -139,6 +157,7 @@ def process_ns_invoices(df):
 
     # 5. Calculate Net Commissionable Amount (Total - Tax - Shipping)
     if 'Amount' in df.columns:
+        st.write("✅ 'Amount' column found! Calculating Subtotal...")
         df['Subtotal'] = df['Amount']
         if 'Tax Amount' in df.columns:
             df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
