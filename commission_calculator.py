@@ -8,50 +8,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ==========================================
-# 1. APP CONFIG & STYLING
-# ==========================================
-st.set_page_config(
-    page_title="Calyx Commissions",
-    page_icon="💸",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# Custom CSS for that "Sexy" Look
-st.markdown("""
-<style>
-    /* Gradient Headers */
-    .stApp header {background-color: transparent;}
-    .main-header {
-        background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
-    .main-header h1 { color: white; margin:0; font-family: 'Helvetica Neue', sans-serif; font-weight: 700; }
-    .main-header p { color: #e0e0e0; margin:0; font-size: 1.1rem; }
-    
-    /* Metrics Styling */
-    div[data-testid="stMetric"] {
-        background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    div[data-testid="stMetric"]:hover {
-        border-color: #4b6cb7;
-        transform: translateY(-2px);
-        transition: all 0.3s ease;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================
-# 2. CONFIGURATION
+# 1. CONFIGURATION
 # ==========================================
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -62,20 +19,21 @@ ADMIN_PASSWORD_HASH = hashlib.sha256("Secret2025!".encode()).hexdigest()
 COMMISSION_REPS = ["Dave Borkowski", "Jake Lynch", "Brad Sherman", "Lance Mitton"]
 
 REP_COMMISSION_RATES = {
-    "Dave Borkowski": 0.05,
-    "Jake Lynch": 0.07,
-    "Brad Sherman": 0.07,
-    "Lance Mitton": 0.07,
+    "Dave Borkowski": 0.05,      # 5% flat rate
+    "Jake Lynch": 0.07,          # 7% flat rate
+    "Brad Sherman": 0.07,        # 7% flat rate
+    "Lance Mitton": 0.07,        # 7% flat rate
 }
 
 BRAD_OVERRIDE_RATE = 0.01
 
 # ==========================================
-# 3. DATA LOADING
+# 2. DATA LOADING & PROCESSING
 # ==========================================
 
 @st.cache_data(ttl=3600)
 def fetch_google_sheet_data(sheet_name, range_name):
+    """Fetch data from Google Sheets using Streamlit Secrets"""
     try:
         if "gcp_service_account" not in st.secrets:
             st.error("❌ Missing 'gcp_service_account' in Streamlit secrets.")
@@ -104,7 +62,11 @@ def fetch_google_sheet_data(sheet_name, range_name):
         return pd.DataFrame()
 
 def process_ns_invoices(df):
-    if df.empty: return df
+    """Clean and standardize invoice data"""
+    if df is None or df.empty: return pd.DataFrame()
+    
+    # Avoid modifying the original dataframe from cache/parent
+    df = df.copy()
     
     # Basic Cleanup
     df.columns = df.columns.str.strip()
@@ -123,10 +85,17 @@ def process_ns_invoices(df):
         'Amount (Shipping)': 'Shipping Amount',
         'Corrected Customer Name': 'Customer',
         'HubSpot Pipeline': 'Pipeline',
-        'Rep Master': 'Sales Rep'
+        'Rep Master': 'Sales Rep',
+        'Sales Rep': 'Original Sales Rep' # Preserve original if needed
     }
+    
+    # Only rename columns that actually exist
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     
+    # If Sales Rep is still missing, check if it was mapped correctly
+    if 'Sales Rep' not in df.columns and 'Rep Master' in df.columns:
+         df['Sales Rep'] = df['Rep Master']
+
     # Handle Customer Name Prefix
     if 'Customer' in df.columns:
         df['Customer'] = df['Customer'].astype(str).str.replace('^Customer ', '', regex=True)
@@ -151,12 +120,13 @@ def process_ns_invoices(df):
     
     return df
 
-# ==========================================
-# 4. COMMISSION ENGINE
-# ==========================================
-
 def calculate_commissions(df, status_filter, month_filter):
+    """Core logic to calculate commissions"""
     # 1. Filter Reps
+    if 'Sales Rep' not in df.columns:
+        st.error("Missing 'Sales Rep' column in data.")
+        return pd.DataFrame()
+        
     df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
     
     # 2. Filter Status (Dynamic)
@@ -183,60 +153,117 @@ def calculate_commissions(df, status_filter, month_filter):
     return df
 
 # ==========================================
-# 5. UI COMPONENTS
+# 3. UI HELPERS
 # ==========================================
 
-def login_screen():
+def display_password_gate():
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
         st.markdown("""
-        <div style='background-color: #1e1e1e; padding: 30px; border-radius: 15px; text-align: center; border: 1px solid #333;'>
-            <h2>🔒 Restricted Access</h2>
-            <p>Please log in to view commissions.</p>
+        <div style='background-color: #262730; padding: 20px; border-radius: 10px; border: 1px solid #464b5c; margin-bottom: 20px;'>
+            <h3 style='margin-top:0;'>🔒 Commission Access</h3>
         </div>
         """, unsafe_allow_html=True)
         
-        email = st.text_input("Email", key="login_email")
-        password = st.text_input("Password", type="password", key="login_pass")
+        email = st.text_input("Email", key="comm_login_email")
+        password = st.text_input("Password", type="password", key="comm_login_pass")
         
-        if st.button("Unlock Dashboard", use_container_width=True, type="primary"):
+        if st.button("Unlock Calculator", use_container_width=True, type="primary"):
             if email == ADMIN_EMAIL and hashlib.sha256(password.encode()).hexdigest() == ADMIN_PASSWORD_HASH:
-                st.session_state.authenticated = True
+                st.session_state.commission_authenticated = True
                 st.rerun()
             else:
                 st.error("Invalid Credentials")
 
-def main_dashboard(raw_df):
-    # --- Sidebar Filters ---
-    with st.sidebar:
-        st.title("⚙️ Filters")
+# ==========================================
+# 4. MAIN MODULE ENTRY POINT
+# ==========================================
+
+def display_commission_section(invoices_df=None, sales_orders_df=None):
+    """
+    Main function called by sales_dashboard.py
+    """
+    
+    # --- Custom CSS ---
+    st.markdown("""
+    <style>
+        /* Gradient Headers */
+        .main-header {
+            background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
+            padding: 20px;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .main-header h2 { color: white; margin:0; }
         
-        # Date Filter
-        available_months = sorted(raw_df['Month_Str'].dropna().unique(), reverse=True)
-        selected_months = st.multiselect("📅 Close Month", available_months, default=available_months[:1])
-        
-        # Status Filter
-        all_statuses = raw_df['Status'].unique()
-        # Default to Paid In Full if available, otherwise first item
-        default_status = ["Paid In Full"] if "Paid In Full" in all_statuses else [all_statuses[0]]
-        selected_status = st.multiselect("🏷️ Status", all_statuses, default=default_status)
-        
-        st.divider()
-        st.caption(f"Admin: {ADMIN_EMAIL}")
-        if st.button("Logout"):
-            st.session_state.authenticated = False
+        /* Metrics Styling */
+        div[data-testid="stMetric"] {
+            background-color: #f0f2f6;
+            border: 1px solid #e0e0e0;
+            padding: 15px;
+            border-radius: 10px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # --- Authentication Gate ---
+    if 'commission_authenticated' not in st.session_state:
+        st.session_state.commission_authenticated = False
+
+    if not st.session_state.commission_authenticated:
+        display_password_gate()
+        return
+
+    # --- Data Handling ---
+    # If invoices_df is passed from parent, use it, otherwise fetch
+    if invoices_df is None or invoices_df.empty:
+        with st.spinner("Fetching invoice data..."):
+            raw_data = fetch_google_sheet_data("NS Invoices", "A:Z")
+    else:
+        raw_data = invoices_df
+
+    # Process Data
+    clean_data = process_ns_invoices(raw_data)
+    
+    if clean_data.empty:
+        st.error("No data available to process.")
+        return
+
+    # --- Header with Logout ---
+    c1, c2 = st.columns([6, 1])
+    with c1:
+        st.markdown("""
+        <div class="main-header">
+            <h2>💰 Commission Calculator</h2>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        if st.button("Logout", key="comm_logout"):
+            st.session_state.commission_authenticated = False
             st.rerun()
 
-    # --- Processing ---
-    processed_df = calculate_commissions(raw_df, selected_status, selected_months)
+    # --- Filters (Sidebar or Top) ---
+    # Use columns for filters to avoid clashing with main app sidebar
+    st.subheader("⚙️ Filters")
+    f1, f2 = st.columns(2)
+    
+    with f1:
+        available_months = sorted(clean_data['Month_Str'].dropna().unique(), reverse=True)
+        selected_months = st.multiselect("📅 Close Month", available_months, default=available_months[:1])
+    
+    with f2:
+        all_statuses = clean_data['Status'].unique()
+        # Default to Paid In Full if available
+        default_status = ["Paid In Full"] if "Paid In Full" in all_statuses else [all_statuses[0]]
+        selected_status = st.multiselect("🏷️ Status", all_statuses, default=default_status)
 
-    # --- Main Header ---
-    st.markdown(f"""
-    <div class="main-header">
-        <h1>💰 Commission Calculator</h1>
-        <p>Period: {", ".join(selected_months) if selected_months else "All Time"}</p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("---")
+
+    # --- Calculation ---
+    processed_df = calculate_commissions(clean_data, selected_status, selected_months)
 
     if processed_df.empty:
         st.warning("⚠️ No transactions found matching these filters.")
@@ -256,9 +283,7 @@ def main_dashboard(raw_df):
 
     # --- Visualization ---
     with st.expander("📊 Performance Visuals", expanded=True):
-        # Prepare data for plotting
         chart_data = processed_df.groupby('Sales Rep')[['Commission Amount', 'Brad Override']].sum().reset_index()
-        chart_data['Total Earnings'] = chart_data['Commission Amount'] + chart_data['Brad Override']
         
         fig = px.bar(
             chart_data, 
@@ -278,7 +303,6 @@ def main_dashboard(raw_df):
     with tabs[0]:
         st.subheader("Master Ledger")
         
-        # Configure the big table
         column_cfg = {
             "Subtotal": st.column_config.NumberColumn("Net Sales", format="$%d"),
             "Commission Amount": st.column_config.NumberColumn("Comm.", format="$%.2f"),
@@ -313,7 +337,6 @@ def main_dashboard(raw_df):
             is_brad = (rep == "Brad Sherman")
             rep_override = 0
             if is_brad:
-                # Brad gets override from ALL Lance rows in the main dataframe, not just Brad's rows
                 lance_df = processed_df[processed_df['Sales Rep'] == "Lance Mitton"]
                 rep_override = lance_df['Brad Override'].sum()
 
@@ -363,23 +386,7 @@ def main_dashboard(raw_df):
                     }
                 )
 
-# ==========================================
-# 6. APP EXECUTION
-# ==========================================
-
+# Standalone execution for testing
 if __name__ == "__main__":
-    if 'authenticated' not in st.session_state:
-        st.session_state.authenticated = False
-
-    if not st.session_state.authenticated:
-        login_screen()
-    else:
-        # Load Data once authenticated
-        with st.spinner("🔄 Fetching live data from Netsuite Invoices..."):
-            raw_data = fetch_google_sheet_data("NS Invoices", "A:Z")
-            
-            if not raw_data.empty:
-                clean_data = process_ns_invoices(raw_data)
-                main_dashboard(clean_data)
-            else:
-                st.error("Unable to load data. Please check Google Sheets connection.")
+    st.set_page_config(layout="wide")
+    display_commission_section()
