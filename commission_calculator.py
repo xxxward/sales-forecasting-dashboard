@@ -1,14 +1,18 @@
+"""
+Calyx Containers - Elite Commission Calculator
+The most powerful commission tracking system ever built
+"""
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import hashlib
-import plotly.express as px
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ==========================================
-# 1. CONFIGURATION
+# CONFIGURATION
 # ==========================================
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
@@ -19,374 +23,514 @@ ADMIN_PASSWORD_HASH = hashlib.sha256("Secret2025!".encode()).hexdigest()
 COMMISSION_REPS = ["Dave Borkowski", "Jake Lynch", "Brad Sherman", "Lance Mitton"]
 
 REP_COMMISSION_RATES = {
-    "Dave Borkowski": 0.05,      # 5% flat rate
-    "Jake Lynch": 0.07,          # 7% flat rate
-    "Brad Sherman": 0.07,        # 7% flat rate
-    "Lance Mitton": 0.07,        # 7% flat rate
+    "Dave Borkowski": 0.05,
+    "Jake Lynch": 0.07,
+    "Brad Sherman": 0.07,
+    "Lance Mitton": 0.07,
 }
 
 BRAD_OVERRIDE_RATE = 0.01
 
+REP_COLORS = {
+    "Dave Borkowski": "#667eea",
+    "Jake Lynch": "#f093fb",
+    "Brad Sherman": "#4facfe",
+    "Lance Mitton": "#43e97b"
+}
+
 # ==========================================
-# 2. DATA LOADING & PROCESSING
+# CUSTOM CSS
+# ==========================================
+def load_custom_css():
+    st.markdown("""
+    <style>
+    .main {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+        color: white !important;
+    }
+    
+    .metric-card {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 15px;
+        padding: 20px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        margin: 10px 0;
+    }
+    
+    .rep-card {
+        background: white;
+        border-radius: 20px;
+        padding: 25px;
+        margin: 15px 0;
+        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+        border-left: 5px solid;
+        transition: transform 0.2s;
+    }
+    
+    .rep-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 15px 50px rgba(0, 0, 0, 0.2);
+    }
+    
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+    }
+    
+    section[data-testid="stSidebar"] .stMarkdown {
+        color: white !important;
+    }
+    
+    .stButton>button {
+        border-radius: 10px;
+        font-weight: 600;
+        transition: all 0.3s;
+    }
+    
+    .stButton>button:hover {
+        transform: scale(1.05);
+    }
+    
+    [data-testid="stMetricValue"] {
+        font-size: 28px;
+        font-weight: 700;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ==========================================
+# DATA LOADING
 # ==========================================
 
 @st.cache_data(ttl=3600)
 def fetch_google_sheet_data(sheet_name, range_name):
-    """Fetch data from Google Sheets using Streamlit Secrets"""
     try:
         if "gcp_service_account" not in st.secrets:
-            st.error("❌ Missing 'gcp_service_account' in Streamlit secrets.")
             return pd.DataFrame()
 
         creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=SCOPES
-        )
-        
+        creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
         service = build('sheets', 'v4', credentials=creds)
+        
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID,
             range=f"{sheet_name}!{range_name}"
         ).execute()
         
         values = result.get('values', [])
-        if not values: return pd.DataFrame()
+        if not values:
+            return pd.DataFrame()
         
-        headers = values[0]
-        data = values[1:]
-        return pd.DataFrame(data, columns=headers)
+        df = pd.DataFrame(values[1:], columns=values[0])
+        return df
 
     except Exception as e:
-        st.error(f"Error loading {sheet_name}: {str(e)}")
+        st.error(f"Error: {str(e)}")
         return pd.DataFrame()
 
 def process_ns_invoices(df):
-    """Clean and standardize invoice data"""
-    if df is None or df.empty: return pd.DataFrame()
+    if df.empty:
+        return df
     
-    # Avoid modifying the original dataframe from cache/parent
-    df = df.copy()
-    
-    # Basic Cleanup
     df.columns = df.columns.str.strip()
     
-    # Handle Date Columns
     if 'Date' in df.columns and 'Date Closed' in df.columns:
         df = df.drop(columns=['Date'])
+    if 'Sales Rep' in df.columns:
+        df = df.rename(columns={'Sales Rep': 'Original Sales Rep'})
     
-    # Mappings
     rename_map = {
         'Amount (Transaction Total)': 'Amount',
-        'Date Closed': 'Date',
-        'Document Number': 'Document Number',
+        'Date Closed': 'Close Date',
+        'Document Number': 'Invoice',
         'Status': 'Status',
         'Amount (Transaction Tax Total)': 'Tax Amount',
         'Amount (Shipping)': 'Shipping Amount',
         'Corrected Customer Name': 'Customer',
+        'Created From': 'SO Number',
+        'CSM': 'CSM',
         'HubSpot Pipeline': 'Pipeline',
-        'Rep Master': 'Sales Rep',
-        'Sales Rep': 'Original Sales Rep' # Preserve original if needed
+        'Rep Master': 'Rep Master'
     }
     
-    # Only rename columns that actually exist
     df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
     
-    # If Sales Rep is still missing, check if it was mapped correctly
-    if 'Sales Rep' not in df.columns and 'Rep Master' in df.columns:
-         df['Sales Rep'] = df['Rep Master']
-
-    # Handle Customer Name Prefix
+    if 'Rep Master' in df.columns:
+        df['Sales Rep'] = df['Rep Master']
+    
     if 'Customer' in df.columns:
         df['Customer'] = df['Customer'].astype(str).str.replace('^Customer ', '', regex=True)
-
-    # Numeric Cleanup
+    
+    if 'SO Number' in df.columns:
+        df['SO Number'] = df['SO Number'].astype(str).str.replace('Sales Order', '').str.strip()
+    
+    if 'Close Date' in df.columns:
+        df['Close Date'] = pd.to_datetime(df['Close Date'], errors='coerce')
+    
     numeric_cols = ['Amount', 'Tax Amount', 'Shipping Amount']
     for col in numeric_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(r'[$,]', '', regex=True)
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    # Date Cleanup
-    if 'Date' in df.columns:
-        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-        df['Month_Str'] = df['Date'].dt.strftime('%Y-%m')
-
-    # Calculate Net
+    
     if 'Amount' in df.columns:
         df['Subtotal'] = df['Amount']
-        if 'Tax Amount' in df.columns: df['Subtotal'] -= df['Tax Amount']
-        if 'Shipping Amount' in df.columns: df['Subtotal'] -= df['Shipping Amount']
+        if 'Tax Amount' in df.columns:
+            df['Subtotal'] = df['Subtotal'] - df['Tax Amount']
+        if 'Shipping Amount' in df.columns:
+            df['Subtotal'] = df['Subtotal'] - df['Shipping Amount']
     
     return df
 
-def calculate_commissions(df, status_filter, month_filter):
-    """Core logic to calculate commissions"""
-    # 1. Filter Reps
-    if 'Sales Rep' not in df.columns:
-        st.error("Missing 'Sales Rep' column in data.")
-        return pd.DataFrame()
-        
-    df = df[df['Sales Rep'].isin(COMMISSION_REPS)].copy()
+def calculate_commissions(df):
+    if df.empty:
+        return df
     
-    # 2. Filter Status (Dynamic)
-    if status_filter:
-        # Normalize status for comparison
-        df['Status_Clean'] = df['Status'].astype(str).str.upper().str.strip()
-        status_clean = [s.upper().strip() for s in status_filter]
-        df = df[df['Status_Clean'].isin(status_clean)]
-    
-    # 3. Filter Month
-    if month_filter:
-        df = df[df['Month_Str'].isin(month_filter)]
-
-    # 4. Calculate Rates
     df['Commission Rate'] = df['Sales Rep'].map(REP_COMMISSION_RATES).fillna(0.0)
-    df['Commission Amount'] = df['Subtotal'] * df['Commission Rate']
+    df['Commission'] = df['Subtotal'] * df['Commission Rate']
     
-    # 5. Brad's Override Calculation
-    # Brad gets override on Lance's deals
     df['Brad Override'] = 0.0
     lance_mask = df['Sales Rep'] == 'Lance Mitton'
     df.loc[lance_mask, 'Brad Override'] = df.loc[lance_mask, 'Subtotal'] * BRAD_OVERRIDE_RATE
     
+    df['Row_ID'] = range(len(df))
+    
     return df
 
 # ==========================================
-# 3. UI HELPERS
+# AUTH
 # ==========================================
 
-def display_password_gate():
-    col1, col2, col3 = st.columns([1, 1, 1])
+def verify_admin(email, password):
+    if email != ADMIN_EMAIL:
+        return False
+    password_hash = hashlib.sha256(password.encode()).hexdigest()
+    return password_hash == ADMIN_PASSWORD_HASH
+
+def display_login():
+    load_custom_css()
+    
+    st.markdown("""
+    <div style='text-align: center; padding: 100px 20px;'>
+        <h1 style='font-size: 48px; margin-bottom: 10px;'>💎 Elite Commission Tracker</h1>
+        <p style='font-size: 20px; color: rgba(255,255,255,0.9); margin-bottom: 50px;'>
+            The most powerful commission calculator ever built
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
+        st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+        email = st.text_input("Email", placeholder="your@email.com")
+        password = st.text_input("Password", type="password", placeholder="Enter password")
+        
+        if st.button("🚀 Launch Dashboard", use_container_width=True):
+            if verify_admin(email, password):
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("❌ Invalid credentials")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ==========================================
+# MAIN DASHBOARD
+# ==========================================
+
+def display_dashboard():
+    load_custom_css()
+    
+    if 'selected_rows' not in st.session_state:
+        st.session_state.selected_rows = set()
+    
+    col1, col2 = st.columns([5, 1])
+    with col1:
         st.markdown("""
-        <div style='background-color: #262730; padding: 20px; border-radius: 10px; border: 1px solid #464b5c; margin-bottom: 20px;'>
-            <h3 style='margin-top:0;'>🔒 Commission Access</h3>
+        <div style='padding: 20px; margin-bottom: 30px;'>
+            <h1 style='font-size: 42px; margin: 0;'>💎 Elite Commission Tracker</h1>
+            <p style='font-size: 18px; color: rgba(255,255,255,0.9); margin: 5px 0 0 0;'>
+                Real-time commission analytics & management
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    with col2:
+        if st.button("🚪 Logout", use_container_width=True):
+            st.session_state.authenticated = False
+            st.rerun()
+    
+    with st.spinner("🔄 Loading commission data..."):
+        raw_data = fetch_google_sheet_data("NS Invoices", "A:U")
+        if raw_data.empty:
+            st.error("❌ Could not load data")
+            return
+        
+        df = process_ns_invoices(raw_data)
+        if df.empty:
+            st.error("❌ No data after processing")
+            return
+    
+    with st.sidebar:
+        st.markdown("### 🎛️ Filters & Controls")
+        st.markdown("---")
+        
+        st.markdown("**📅 Date Range**")
+        if 'Close Date' in df.columns and not df['Close Date'].isna().all():
+            min_date = df['Close Date'].min()
+            max_date = df['Close Date'].max()
+            
+            date_range = st.date_input(
+                "Select date range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                label_visibility="collapsed"
+            )
+        else:
+            date_range = None
+        
+        st.markdown("---")
+        
+        st.markdown("**📊 Status**")
+        if 'Status' in df.columns:
+            unique_statuses = df['Status'].unique().tolist()
+            selected_statuses = st.multiselect(
+                "Filter by status",
+                options=unique_statuses,
+                default=["Paid In Full"] if "Paid In Full" in unique_statuses else unique_statuses,
+                label_visibility="collapsed"
+            )
+        else:
+            selected_statuses = []
+        
+        st.markdown("---")
+        
+        st.markdown("**👤 Sales Reps**")
+        selected_reps = st.multiselect(
+            "Select reps to view",
+            options=COMMISSION_REPS,
+            default=COMMISSION_REPS,
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("---")
+        
+        st.markdown("**⚡ Quick Actions**")
+        if st.button("✅ Select All", use_container_width=True):
+            st.session_state.selected_rows = set(df['Row_ID'].tolist()) if 'Row_ID' in df.columns else set()
+            st.rerun()
+        if st.button("❌ Clear All", use_container_width=True):
+            st.session_state.selected_rows = set()
+            st.rerun()
+    
+    filtered_df = df.copy()
+    
+    if 'Sales Rep' in filtered_df.columns:
+        filtered_df = filtered_df[filtered_df['Sales Rep'].isin(COMMISSION_REPS)]
+        filtered_df = filtered_df[filtered_df['Sales Rep'].isin(selected_reps)]
+    
+    if 'Status' in filtered_df.columns and selected_statuses:
+        filtered_df = filtered_df[filtered_df['Status'].isin(selected_statuses)]
+    
+    if 'Original Sales Rep' in filtered_df.columns:
+        filtered_df = filtered_df[~filtered_df['Original Sales Rep'].astype(str).str.upper().str.contains("SHOPIFY", na=False)]
+    
+    if date_range and len(date_range) == 2 and 'Close Date' in filtered_df.columns:
+        start_date = pd.to_datetime(date_range[0])
+        end_date = pd.to_datetime(date_range[1]) + timedelta(days=1)
+        filtered_df = filtered_df[(filtered_df['Close Date'] >= start_date) & (filtered_df['Close Date'] < end_date)]
+    
+    filtered_df = calculate_commissions(filtered_df)
+    
+    if filtered_df.empty:
+        st.warning("⚠️ No transactions match filters")
+        return
+    
+    if not st.session_state.selected_rows:
+        st.session_state.selected_rows = set(filtered_df['Row_ID'].tolist())
+    
+    included_df = filtered_df[filtered_df['Row_ID'].isin(st.session_state.selected_rows)]
+    
+    st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "💰 Total Sales",
+            f"${included_df['Subtotal'].sum():,.0f}",
+            delta=f"{len(included_df)} transactions"
+        )
+    
+    with col2:
+        st.metric(
+            "💵 Total Commission",
+            f"${included_df['Commission'].sum():,.2f}",
+            delta=f"{included_df['Commission'].sum() / included_df['Subtotal'].sum() * 100:.1f}% avg" if included_df['Subtotal'].sum() > 0 else "0%"
+        )
+    
+    with col3:
+        st.metric(
+            "🎯 Brad Override",
+            f"${included_df['Brad Override'].sum():,.2f}",
+            delta="1% on Lance"
+        )
+    
+    with col4:
+        st.metric(
+            "📊 Selection",
+            f"{len(included_df)} / {len(filtered_df)}",
+            delta=f"{len(included_df)/len(filtered_df)*100:.0f}%" if len(filtered_df) > 0 else "0%"
+        )
+    
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    for rep in selected_reps:
+        rep_data = filtered_df[filtered_df['Sales Rep'] == rep].copy()
+        if rep_data.empty:
+            continue
+        
+        rep_included = included_df[included_df['Sales Rep'] == rep]
+        rep_color = REP_COLORS.get(rep, "#667eea")
+        
+        st.markdown(f"""
+        <div class='rep-card' style='border-left-color: {rep_color};'>
+            <h2 style='color: {rep_color}; margin: 0 0 10px 0;'>👤 {rep}</h2>
+            <div style='display: flex; gap: 20px; margin-bottom: 20px;'>
+                <div>
+                    <span style='color: #666; font-size: 14px;'>Sales</span>
+                    <div style='font-size: 24px; font-weight: 700; color: {rep_color};'>${rep_included['Subtotal'].sum():,.0f}</div>
+                </div>
+                <div>
+                    <span style='color: #666; font-size: 14px;'>Commission</span>
+                    <div style='font-size: 24px; font-weight: 700; color: {rep_color};'>${rep_included['Commission'].sum():,.2f}</div>
+                </div>
+                <div>
+                    <span style='color: #666; font-size: 14px;'>Transactions</span>
+                    <div style='font-size: 24px; font-weight: 700; color: {rep_color};'>{len(rep_included)} / {len(rep_data)}</div>
+                </div>
+                <div>
+                    <span style='color: #666; font-size: 14px;'>Rate</span>
+                    <div style='font-size: 24px; font-weight: 700; color: {rep_color};'>{REP_COMMISSION_RATES.get(rep, 0):.0%}</div>
+                </div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
-        email = st.text_input("Email", key="comm_login_email")
-        password = st.text_input("Password", type="password", key="comm_login_pass")
-        
-        if st.button("Unlock Calculator", use_container_width=True, type="primary"):
-            if email == ADMIN_EMAIL and hashlib.sha256(password.encode()).hexdigest() == ADMIN_PASSWORD_HASH:
-                st.session_state.commission_authenticated = True
+        with st.expander(f"📋 View {rep}'s Transactions ({len(rep_data)})", expanded=False):
+            all_selected = all(row_id in st.session_state.selected_rows for row_id in rep_data['Row_ID'].tolist())
+            
+            master_check = st.checkbox(
+                f"Select all {rep}'s transactions",
+                value=all_selected,
+                key=f"master_{rep}"
+            )
+            
+            if master_check and not all_selected:
+                st.session_state.selected_rows.update(rep_data['Row_ID'].tolist())
                 st.rerun()
-            else:
-                st.error("Invalid Credentials")
+            elif not master_check and all_selected:
+                st.session_state.selected_rows -= set(rep_data['Row_ID'].tolist())
+                st.rerun()
+            
+            st.markdown("---")
+            
+            cols = st.columns([0.5, 1.2, 1.2, 0.7, 2.0, 0.8, 1.0, 0.9, 1.0])
+            headers = ["☑️", "Invoice", "SO #", "Status", "Customer", "Close Date", "Pipeline", "Amount", "Commission"]
+            for col, header in zip(cols, headers):
+                col.markdown(f"**{header}**")
+            
+            st.markdown("---")
+            
+            for _, row in rep_data.iterrows():
+                row_id = row['Row_ID']
+                is_selected = row_id in st.session_state.selected_rows
+                
+                cols = st.columns([0.5, 1.2, 1.2, 0.7, 2.0, 0.8, 1.0, 0.9, 1.0])
+                
+                with cols[0]:
+                    if st.checkbox("", value=is_selected, key=f"cb_{row_id}", label_visibility="collapsed"):
+                        if row_id not in st.session_state.selected_rows:
+                            st.session_state.selected_rows.add(row_id)
+                            st.rerun()
+                    else:
+                        if row_id in st.session_state.selected_rows:
+                            st.session_state.selected_rows.remove(row_id)
+                            st.rerun()
+                
+                with cols[1]:
+                    st.text(str(row.get('Invoice', 'N/A')))
+                
+                with cols[2]:
+                    st.text(str(row.get('SO Number', 'N/A')))
+                
+                with cols[3]:
+                    st.text(str(row.get('Status', 'N/A'))[:12])
+                
+                with cols[4]:
+                    customer = str(row.get('Customer', 'N/A'))
+                    if customer in ['N/A', 'nan', '']:
+                        customer = 'No Customer'
+                    st.text(customer)
+                
+                with cols[5]:
+                    close_date = row.get('Close Date')
+                    if pd.notna(close_date):
+                        st.text(close_date.strftime('%Y-%m-%d'))
+                    else:
+                        st.text('N/A')
+                
+                with cols[6]:
+                    st.text(str(row.get('Pipeline', 'N/A'))[:15])
+                
+                with cols[7]:
+                    st.text(f"${row.get('Subtotal', 0):,.0f}")
+                
+                with cols[8]:
+                    st.text(f"${row.get('Commission', 0):,.2f}")
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown("<div class='metric-card'>", unsafe_allow_html=True)
+    st.markdown("### 📥 Export Data")
+    
+    if not included_df.empty:
+        export_cols = ['Invoice', 'SO Number', 'Status', 'Customer', 'Close Date', 'CSM', 
+                       'Rep Master', 'Pipeline', 'Amount', 'Subtotal', 'Commission Rate', 
+                       'Commission', 'Brad Override']
+        export_cols = [col for col in export_cols if col in included_df.columns]
+        
+        export_df = included_df[export_cols].copy()
+        
+        if 'Close Date' in export_df.columns:
+            export_df['Close Date'] = export_df['Close Date'].dt.strftime('%Y-%m-%d')
+        
+        csv = export_df.to_csv(index=False)
+        st.download_button(
+            "📥 Download Selected Transactions (CSV)",
+            data=csv,
+            file_name=f"commission_report_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+    
+    st.markdown("</div>", unsafe_allow_html=True)
 
 # ==========================================
-# 4. MAIN MODULE ENTRY POINT
+# MAIN APP
 # ==========================================
 
 def display_commission_section(invoices_df=None, sales_orders_df=None):
-    """
-    Main function called by sales_dashboard.py
-    """
-    
-    # --- Custom CSS ---
-    st.markdown("""
-    <style>
-        /* Gradient Headers */
-        .main-header {
-            background: linear-gradient(90deg, #4b6cb7 0%, #182848 100%);
-            padding: 20px;
-            border-radius: 10px;
-            color: white;
-            text-align: center;
-            margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .main-header h2 { color: white; margin:0; }
-        
-        /* Metrics Styling */
-        div[data-testid="stMetric"] {
-            background-color: #f0f2f6;
-            border: 1px solid #e0e0e0;
-            padding: 15px;
-            border-radius: 10px;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # --- Authentication Gate ---
-    if 'commission_authenticated' not in st.session_state:
-        st.session_state.commission_authenticated = False
-
-    if not st.session_state.commission_authenticated:
-        display_password_gate()
-        return
-
-    # --- Data Handling ---
-    # If invoices_df is passed from parent, use it, otherwise fetch
-    if invoices_df is None or invoices_df.empty:
-        with st.spinner("Fetching invoice data..."):
-            raw_data = fetch_google_sheet_data("NS Invoices", "A:Z")
+    if not st.session_state.get('authenticated', False):
+        display_login()
     else:
-        raw_data = invoices_df
+        display_dashboard()
 
-    # Process Data
-    clean_data = process_ns_invoices(raw_data)
-    
-    if clean_data.empty:
-        st.error("No data available to process.")
-        return
-
-    # --- Header with Logout ---
-    c1, c2 = st.columns([6, 1])
-    with c1:
-        st.markdown("""
-        <div class="main-header">
-            <h2>💰 Commission Calculator</h2>
-        </div>
-        """, unsafe_allow_html=True)
-    with c2:
-        if st.button("Logout", key="comm_logout"):
-            st.session_state.commission_authenticated = False
-            st.rerun()
-
-    # --- Filters (Sidebar or Top) ---
-    # Use columns for filters to avoid clashing with main app sidebar
-    st.subheader("⚙️ Filters")
-    f1, f2 = st.columns(2)
-    
-    with f1:
-        available_months = sorted(clean_data['Month_Str'].dropna().unique(), reverse=True)
-        selected_months = st.multiselect("📅 Close Month", available_months, default=available_months[:1])
-    
-    with f2:
-        all_statuses = clean_data['Status'].unique()
-        # Default to Paid In Full if available
-        default_status = ["Paid In Full"] if "Paid In Full" in all_statuses else [all_statuses[0]]
-        selected_status = st.multiselect("🏷️ Status", all_statuses, default=default_status)
-
-    st.markdown("---")
-
-    # --- Calculation ---
-    processed_df = calculate_commissions(clean_data, selected_status, selected_months)
-
-    if processed_df.empty:
-        st.warning("⚠️ No transactions found matching these filters.")
-        return
-
-    # --- Global KPI Row ---
-    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-    
-    total_comm = processed_df['Commission Amount'].sum()
-    total_override = processed_df['Brad Override'].sum()
-    total_payout = total_comm + total_override
-    
-    kpi1.metric("Total Payout", f"${total_payout:,.2f}", delta="Includes Overrides")
-    kpi2.metric("Total Sales Volume", f"${processed_df['Subtotal'].sum():,.2f}")
-    kpi3.metric("Deals Closed", len(processed_df))
-    kpi4.metric("Avg Deal Size", f"${processed_df['Subtotal'].mean():,.2f}")
-
-    # --- Visualization ---
-    with st.expander("📊 Performance Visuals", expanded=True):
-        chart_data = processed_df.groupby('Sales Rep')[['Commission Amount', 'Brad Override']].sum().reset_index()
-        
-        fig = px.bar(
-            chart_data, 
-            x='Sales Rep', 
-            y=['Commission Amount', 'Brad Override'], 
-            title="Commission Breakdown by Rep",
-            labels={'value': 'USD ($)', 'variable': 'Type'},
-            color_discrete_sequence=['#4b6cb7', '#182848'],
-            template="plotly_white"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    # --- Rep Sections (Tabs) ---
-    tabs = st.tabs(["📋 Overview"] + COMMISSION_REPS)
-
-    # 1. OVERVIEW TAB
-    with tabs[0]:
-        st.subheader("Master Ledger")
-        
-        column_cfg = {
-            "Subtotal": st.column_config.NumberColumn("Net Sales", format="$%d"),
-            "Commission Amount": st.column_config.NumberColumn("Comm.", format="$%.2f"),
-            "Brad Override": st.column_config.NumberColumn("Override", format="$%.2f"),
-            "Date": st.column_config.DateColumn("Close Date", format="YYYY-MM-DD"),
-            "Status": st.column_config.TextColumn("Status"),
-            "Sales Rep": st.column_config.TextColumn("Rep"),
-        }
-        
-        display_cols = ['Date', 'Document Number', 'Customer', 'Sales Rep', 'Status', 'Subtotal', 'Commission Amount', 'Brad Override']
-        st.dataframe(
-            processed_df[display_cols].sort_values(by='Date', ascending=False),
-            use_container_width=True,
-            column_config=column_cfg,
-            hide_index=True
-        )
-
-    # 2. INDIVIDUAL REP TABS
-    for i, rep in enumerate(COMMISSION_REPS):
-        with tabs[i+1]:
-            rep_df = processed_df[processed_df['Sales Rep'] == rep].copy()
-            
-            if rep_df.empty:
-                st.info(f"No transactions for {rep} in this period.")
-                continue
-
-            # Rep Metrics
-            rep_sales = rep_df['Subtotal'].sum()
-            rep_comm = rep_df['Commission Amount'].sum()
-            
-            # Special Logic for Brad (Show his override earnings separately)
-            is_brad = (rep == "Brad Sherman")
-            rep_override = 0
-            if is_brad:
-                lance_df = processed_df[processed_df['Sales Rep'] == "Lance Mitton"]
-                rep_override = lance_df['Brad Override'].sum()
-
-            c1, c2, c3 = st.columns(3)
-            c1.metric(f"{rep} Sales", f"${rep_sales:,.2f}")
-            c2.metric(f"Direct Commission", f"${rep_comm:,.2f}")
-            if is_brad:
-                c3.metric("Override Earnings", f"${rep_override:,.2f}", help="1% of Lance's Sales")
-            else:
-                c3.metric("Deal Count", len(rep_df))
-
-            st.divider()
-            
-            # Rep Data Table
-            st.subheader(f"📄 {rep}'s Deal Sheet")
-            
-            rep_display_cols = ['Date', 'Document Number', 'Customer', 'Pipeline', 'Status', 'Subtotal', 'Commission Amount']
-            
-            st.dataframe(
-                rep_df[rep_display_cols].sort_values('Date', ascending=False),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Subtotal": st.column_config.ProgressColumn(
-                        "Deal Value",
-                        format="$%f",
-                        min_value=0,
-                        max_value=max(processed_df['Subtotal'].max(), 1000)
-                    ),
-                    "Commission Amount": st.column_config.NumberColumn("Commission", format="$%.2f"),
-                    "Date": st.column_config.DateColumn("Date", format="MM/DD/YYYY"),
-                }
-            )
-            
-            # If Brad, show the Override Source Table
-            if is_brad and rep_override > 0:
-                st.divider()
-                st.subheader("🕵️ Override Source (Lance's Deals)")
-                lance_source = processed_df[processed_df['Sales Rep'] == "Lance Mitton"][['Date', 'Customer', 'Subtotal', 'Brad Override']]
-                st.dataframe(
-                    lance_source, 
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Subtotal": st.column_config.NumberColumn("Lance Sales", format="$%d"),
-                        "Brad Override": st.column_config.NumberColumn("Brad Cut (1%)", format="$%.2f")
-                    }
-                )
-
-# Standalone execution for testing
 if __name__ == "__main__":
-    st.set_page_config(layout="wide")
+    st.set_page_config(
+        page_title="Elite Commission Tracker",
+        page_icon="💎",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
     display_commission_section()
