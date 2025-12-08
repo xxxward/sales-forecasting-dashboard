@@ -172,7 +172,7 @@ def load_sales_order_line_items(version=CACHE_VERSION):
         return pd.DataFrame()
 
 
-def create_calyx_cure_rep_analysis(df, sales_order_df, hubspot_df, start_date='2024-09-15'):
+def create_calyx_cure_rep_analysis(df, sales_order_df, hubspot_df, start_date='2025-09-15'):
     """
     Analyze Calyx Cure sales by rep from September 15th to present
     
@@ -185,7 +185,7 @@ def create_calyx_cure_rep_analysis(df, sales_order_df, hubspot_df, start_date='2
         df: Invoice line items dataframe
         sales_order_df: Sales order line items dataframe
         hubspot_df: HubSpot pipeline dataframe
-        start_date: Starting date for analysis (default: 2024-09-15)
+        start_date: Starting date for analysis (default: 2025-09-15)
     
     Returns:
         DataFrame with rep performance breakdown
@@ -3835,7 +3835,7 @@ def main():
     
     with tab8:
         st.markdown("### 🌿 Calyx Cure Sales Tracker")
-        st.markdown("*Tracking Calyx Cure performance by sales rep since September 15th, 2024*")
+        st.markdown("*Tracking Calyx Cure performance by sales rep since September 15th, 2025*")
         
         try:
             # Date range selector
@@ -3843,11 +3843,66 @@ def main():
             with col1:
                 start_date = st.date_input(
                     "Start Date",
-                    value=datetime(2024, 9, 15).date(),
+                    value=datetime(2025, 9, 15).date(),
+                    min_value=datetime(2020, 1, 1).date(),
+                    max_value=datetime.now().date(),
                     help="Filter Calyx Cure orders from this date forward"
                 )
             with col2:
                 st.info(f"📊 Analyzing data from {start_date.strftime('%B %d, %Y')} to present")
+            
+            # Diagnostic information
+            with st.expander("🔍 Data Diagnostic", expanded=False):
+                st.markdown("#### Debug Information")
+                
+                # Check Invoice data
+                if not df.empty and 'Item' in df.columns:
+                    all_calyx = df[df['Item'].str.contains('Calyx Cure', case=False, na=False)]
+                    st.write(f"**Invoice Data:**")
+                    st.write(f"- Total Calyx Cure items (all time): {len(all_calyx)}")
+                    if len(all_calyx) > 0:
+                        st.write(f"- Unique Calyx Cure SKUs: {all_calyx['Item'].nunique()}")
+                        st.write("- Sample Item names:")
+                        for item in all_calyx['Item'].unique()[:5]:
+                            st.caption(f"  • {item}")
+                        
+                        if 'Date' in df.columns:
+                            all_calyx_dated = all_calyx.copy()
+                            all_calyx_dated['Date'] = pd.to_datetime(all_calyx_dated['Date'], errors='coerce')
+                            all_calyx_dated = all_calyx_dated.dropna(subset=['Date'])
+                            if len(all_calyx_dated) > 0:
+                                st.write(f"- Date range: {all_calyx_dated['Date'].min().strftime('%Y-%m-%d')} to {all_calyx_dated['Date'].max().strftime('%Y-%m-%d')}")
+                                
+                                # Check if any data in selected range
+                                start_dt = pd.to_datetime(start_date)
+                                in_range = all_calyx_dated[all_calyx_dated['Date'] >= start_dt]
+                                st.write(f"- Items since {start_date}: {len(in_range)}")
+                else:
+                    st.warning("No invoice data or Item column not found")
+                
+                st.markdown("---")
+                
+                # Check Sales Order data
+                if not sales_order_df.empty and 'Item' in sales_order_df.columns:
+                    so_calyx = sales_order_df[sales_order_df['Item'].str.contains('Calyx Cure', case=False, na=False)]
+                    st.write(f"**Sales Order Data:**")
+                    st.write(f"- Total Calyx Cure items: {len(so_calyx)}")
+                    if 'Status' in sales_order_df.columns:
+                        st.write(f"- Unique statuses: {', '.join(sales_order_df['Status'].unique()[:10])}")
+                else:
+                    st.info("No sales order data loaded")
+                
+                st.markdown("---")
+                
+                # Check HubSpot data
+                if not hubspot_df.empty and 'Product Name' in hubspot_df.columns:
+                    hs_calyx = hubspot_df[hubspot_df['Product Name'].str.contains('Calyx Cure', case=False, na=False)]
+                    st.write(f"**HubSpot Data:**")
+                    st.write(f"- Total Calyx Cure deals: {len(hs_calyx)}")
+                    if 'Deal Stage' in hubspot_df.columns:
+                        st.write(f"- Unique stages: {', '.join(hubspot_df['Deal Stage'].unique()[:10])}")
+                else:
+                    st.info("No HubSpot data loaded")
             
             st.markdown("---")
             
@@ -4005,10 +4060,14 @@ def main():
                 - Verify that items contain 'Calyx Cure' in the Item name
                 - Check that orders exist from the selected start date
                 - Ensure Sales Rep data is properly assigned
+                - **Click the "🔍 Data Diagnostic" expander above to see what data exists**
                 """)
         
         except Exception as e:
             st.error(f"❌ Error loading Calyx Cure tracker: {str(e)}")
+            import traceback
+            with st.expander("View Error Details"):
+                st.code(traceback.format_exc())
             st.info("Please ensure all required columns are present in your data sources")
 
 
