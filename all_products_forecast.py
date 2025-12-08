@@ -172,6 +172,134 @@ def load_sales_order_line_items(version=CACHE_VERSION):
         return pd.DataFrame()
 
 
+def create_calyx_cure_rep_analysis(df, sales_order_df, hubspot_df, start_date='2024-09-15'):
+    """
+    Analyze Calyx Cure sales by rep from September 15th to present
+    
+    Includes:
+    - Invoices (shipped orders)
+    - Sales Orders (pending fulfillment, partially fulfilled, pending approval)
+    - HubSpot Pipeline (forecasted orders, excluding closed/NCR stages)
+    
+    Args:
+        df: Invoice line items dataframe
+        sales_order_df: Sales order line items dataframe
+        hubspot_df: HubSpot pipeline dataframe
+        start_date: Starting date for analysis (default: 2024-09-15)
+    
+    Returns:
+        DataFrame with rep performance breakdown
+    """
+    try:
+        start_dt = pd.to_datetime(start_date)
+        results = []
+        
+        # === INVOICES (Shipped Orders) ===
+        if not df.empty and 'Date' in df.columns and 'Sales Rep' in df.columns:
+            invoice_df = df.copy()
+            invoice_df['Date'] = pd.to_datetime(invoice_df['Date'], errors='coerce')
+            invoice_df['Amount'] = pd.to_numeric(invoice_df['Amount'], errors='coerce')
+            
+            # Filter for Calyx Cure items and date range
+            calyx_cure_invoices = invoice_df[
+                (invoice_df['Date'] >= start_dt) &
+                (invoice_df['Item'].str.contains('Calyx Cure', case=False, na=False))
+            ].copy()
+            
+            # Group by sales rep
+            invoice_by_rep = calyx_cure_invoices.groupby('Sales Rep').agg({
+                'Amount': 'sum',
+                'Document Number': 'nunique'
+            }).reset_index()
+            invoice_by_rep.columns = ['Sales Rep', 'Invoice Revenue', 'Invoice Count']
+            
+            results.append(invoice_by_rep)
+        
+        # === SALES ORDERS (Active Orders) ===
+        if not sales_order_df.empty and 'Date Created' in sales_order_df.columns:
+            so_df = sales_order_df.copy()
+            so_df['Date Created'] = pd.to_datetime(so_df['Date Created'], errors='coerce')
+            so_df['Amount'] = pd.to_numeric(so_df['Amount'], errors='coerce')
+            
+            # Filter for active statuses
+            active_statuses = ['Pending Fulfillment', 'Pending Approval', 'Partially Fulfilled']
+            
+            # Filter for Calyx Cure items, date range, and active statuses
+            calyx_cure_so = so_df[
+                (so_df['Date Created'] >= start_dt) &
+                (so_df['Item'].str.contains('Calyx Cure', case=False, na=False)) &
+                (so_df['Status'].isin(active_statuses))
+            ].copy()
+            
+            # Need to get Sales Rep - might need to merge with customer or use Class field
+            # Class often contains sales rep info in NetSuite
+            if 'Class' in calyx_cure_so.columns and not calyx_cure_so.empty:
+                so_by_rep = calyx_cure_so.groupby('Class').agg({
+                    'Amount': 'sum',
+                    'Document Number': 'nunique'
+                }).reset_index()
+                so_by_rep.columns = ['Sales Rep', 'SO Revenue', 'SO Count']
+                results.append(so_by_rep)
+        
+        # === HUBSPOT PIPELINE (Forecasted Orders) ===
+        if not hubspot_df.empty and 'Deal Created Date' in hubspot_df.columns:
+            hs_df = hubspot_df.copy()
+            hs_df['Deal Created Date'] = pd.to_datetime(hs_df['Deal Created Date'], errors='coerce')
+            hs_df['Amount'] = pd.to_numeric(hs_df['Amount'], errors='coerce')
+            
+            # Exclude these stages
+            excluded_stages = ['Closed Lost', 'Closed Won', 'NCR', 'Sales Order Created in NS']
+            
+            # Filter for Calyx Cure items and valid stages
+            calyx_cure_hs = hs_df[
+                (hs_df['Deal Created Date'] >= start_dt) &
+                (hs_df['Product Name'].str.contains('Calyx Cure', case=False, na=False)) &
+                (~hs_df['Deal Stage'].isin(excluded_stages))
+            ].copy()
+            
+            # Apply probability weighting based on Close Status
+            if 'Close Status' in calyx_cure_hs.columns and not calyx_cure_hs.empty:
+                calyx_cure_hs['Weighted Amount'] = calyx_cure_hs.apply(
+                    lambda row: row['Amount'] * HUBSPOT_CLOSE_STATUS_PROBABILITY.get(row['Close Status'], 0.25),
+                    axis=1
+                )
+            else:
+                calyx_cure_hs['Weighted Amount'] = calyx_cure_hs['Amount'] * 0.5 if not calyx_cure_hs.empty else 0
+            
+            if 'Deal Owner' in calyx_cure_hs.columns and not calyx_cure_hs.empty:
+                hs_by_rep = calyx_cure_hs.groupby('Deal Owner').agg({
+                    'Weighted Amount': 'sum',
+                    'Deal Name': 'nunique'
+                }).reset_index()
+                hs_by_rep.columns = ['Sales Rep', 'Pipeline Revenue', 'Pipeline Count']
+                results.append(hs_by_rep)
+        
+        # === COMBINE ALL SOURCES ===
+        if results:
+            # Merge all dataframes
+            combined = results[0]
+            for i in range(1, len(results)):
+                combined = combined.merge(results[i], on='Sales Rep', how='outer')
+            
+            # Fill NaN with 0
+            combined = combined.fillna(0)
+            
+            # Calculate totals
+            revenue_cols = [col for col in combined.columns if 'Revenue' in col]
+            combined['Total Revenue'] = combined[revenue_cols].sum(axis=1)
+            
+            # Sort by total revenue
+            combined = combined.sort_values('Total Revenue', ascending=False)
+            
+            return combined
+        
+        return pd.DataFrame()
+        
+    except Exception as e:
+        st.error(f"Error in Calyx Cure analysis: {str(e)}")
+        return pd.DataFrame()
+
+
 def load_hubspot_data(version=CACHE_VERSION):
     """
     Load data from Hubspot Data tab in Google Sheets
@@ -2873,14 +3001,15 @@ def main():
     # TABS FOR DIFFERENT VIEWS
     # =========================
     
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
         "📈 Forecast Overview",
         "🎯 Goal Planning",
         "👥 Sales Rep Planning",
         "📊 Product Breakdown",
         "🏆 Customer Analysis",
         "📋 Detailed Data",
-        "📖 Methodology"
+        "📖 Methodology",
+        "🌿 Calyx Cure Tracker"
     ])
     
     with tab1:
@@ -3703,6 +3832,185 @@ def main():
                 if only_in_hs:
                     st.warning(f"⚠️ HubSpot contains {len(only_in_hs)} product types not in invoices: {', '.join(sorted(only_in_hs))}")
                     st.info("💡 **Tip:** Product names in HubSpot may need mapping to match Invoice Product Types. Edit lines 590-604 in the code to add custom mappings.")
+    
+    with tab8:
+        st.markdown("### 🌿 Calyx Cure Sales Tracker")
+        st.markdown("*Tracking Calyx Cure performance by sales rep since September 15th, 2024*")
+        
+        try:
+            # Date range selector
+            col1, col2 = st.columns(2)
+            with col1:
+                start_date = st.date_input(
+                    "Start Date",
+                    value=datetime(2024, 9, 15).date(),
+                    help="Filter Calyx Cure orders from this date forward"
+                )
+            with col2:
+                st.info(f"📊 Analyzing data from {start_date.strftime('%B %d, %Y')} to present")
+            
+            st.markdown("---")
+            
+            # Get Calyx Cure analysis
+            calyx_cure_data = create_calyx_cure_rep_analysis(
+                df, 
+                sales_order_df, 
+                hubspot_df, 
+                start_date=start_date.strftime('%Y-%m-%d')
+            )
+            
+            if not calyx_cure_data.empty:
+                # Summary metrics
+                st.markdown("#### 📈 Performance Summary")
+                
+                # Top performer
+                top_rep = calyx_cure_data.iloc[0]['Sales Rep']
+                top_revenue = calyx_cure_data.iloc[0]['Total Revenue']
+                
+                col1, col2, col3, col4 = st.columns(4)
+                
+                with col1:
+                    st.metric(
+                        "🏆 Top Performer",
+                        top_rep,
+                        f"${top_revenue:,.0f}"
+                    )
+                
+                with col2:
+                    total_invoice = calyx_cure_data['Invoice Revenue'].sum() if 'Invoice Revenue' in calyx_cure_data.columns else 0
+                    st.metric(
+                        "📄 Total Invoiced",
+                        f"${total_invoice:,.0f}",
+                        "Shipped orders"
+                    )
+                
+                with col3:
+                    total_so = calyx_cure_data['SO Revenue'].sum() if 'SO Revenue' in calyx_cure_data.columns else 0
+                    st.metric(
+                        "📦 Active Sales Orders",
+                        f"${total_so:,.0f}",
+                        "Pending fulfillment"
+                    )
+                
+                with col4:
+                    total_pipeline = calyx_cure_data['Pipeline Revenue'].sum() if 'Pipeline Revenue' in calyx_cure_data.columns else 0
+                    st.metric(
+                        "🔮 Pipeline (Weighted)",
+                        f"${total_pipeline:,.0f}",
+                        "Forecasted deals"
+                    )
+                
+                st.markdown("---")
+                
+                # Detailed breakdown table
+                st.markdown("#### 📊 Detailed Rep Breakdown")
+                
+                # Create display dataframe
+                display_data = calyx_cure_data.copy()
+                
+                # Format currency columns
+                for col in display_data.columns:
+                    if 'Revenue' in col and col in display_data.columns:
+                        display_data[col] = display_data[col].apply(lambda x: f"${x:,.0f}")
+                
+                # Format count columns
+                for col in display_data.columns:
+                    if 'Count' in col and col in display_data.columns:
+                        display_data[col] = display_data[col].astype(int)
+                
+                st.dataframe(display_data, use_container_width=True, hide_index=True)
+                
+                # Visualization
+                st.markdown("---")
+                st.markdown("#### 📊 Revenue Comparison by Source")
+                
+                # Create stacked bar chart
+                fig = go.Figure()
+                
+                if 'Invoice Revenue' in calyx_cure_data.columns:
+                    fig.add_trace(go.Bar(
+                        name='Invoiced',
+                        x=calyx_cure_data['Sales Rep'],
+                        y=calyx_cure_data['Invoice Revenue'],
+                        marker_color='#2E7D32'
+                    ))
+                
+                if 'SO Revenue' in calyx_cure_data.columns:
+                    fig.add_trace(go.Bar(
+                        name='Active SOs',
+                        x=calyx_cure_data['Sales Rep'],
+                        y=calyx_cure_data['SO Revenue'],
+                        marker_color='#1976D2'
+                    ))
+                
+                if 'Pipeline Revenue' in calyx_cure_data.columns:
+                    fig.add_trace(go.Bar(
+                        name='Pipeline',
+                        x=calyx_cure_data['Sales Rep'],
+                        y=calyx_cure_data['Pipeline Revenue'],
+                        marker_color='#F57C00'
+                    ))
+                
+                fig.update_layout(
+                    barmode='stack',
+                    title='Calyx Cure Revenue by Rep & Source',
+                    xaxis_title='Sales Rep',
+                    yaxis_title='Revenue ($)',
+                    height=500,
+                    showlegend=True,
+                    hovermode='x unified'
+                )
+                
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Data source explanation
+                st.markdown("---")
+                st.markdown("#### 📖 Data Sources Explained")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    st.markdown("""
+                    **📄 Invoiced**
+                    - Completed, shipped orders
+                    - Revenue already realized
+                    - Historical performance
+                    """)
+                
+                with col2:
+                    st.markdown("""
+                    **📦 Active Sales Orders**
+                    - Pending Fulfillment
+                    - Partially Fulfilled
+                    - Pending Approval
+                    - High confidence (95%)
+                    """)
+                
+                with col3:
+                    st.markdown("""
+                    **🔮 Pipeline (Weighted)**
+                    - HubSpot deals in progress
+                    - Excludes: Closed Lost, Closed Won, NCR, SO Created
+                    - Weighted by probability:
+                      - Commit: 90%
+                      - Expect: 75%
+                      - Best Case: 50%
+                      - Opportunity: 25%
+                    """)
+            
+            else:
+                st.warning("⚠️ No Calyx Cure data found for the selected date range")
+                st.info("""
+                **Troubleshooting:**
+                - Verify that items contain 'Calyx Cure' in the Item name
+                - Check that orders exist from the selected start date
+                - Ensure Sales Rep data is properly assigned
+                """)
+        
+        except Exception as e:
+            st.error(f"❌ Error loading Calyx Cure tracker: {str(e)}")
+            st.info("Please ensure all required columns are present in your data sources")
+
 
 
 # Entry point when called from main dashboard
