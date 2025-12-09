@@ -2563,20 +2563,33 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
             
             for _, row in df.iterrows():
+                # Get planning status for this item
+                if key in ns_categories:  # NetSuite
+                    item_id_for_status = row.get('SO #', '')
+                else:  # HubSpot
+                    item_id_for_status = row.get('Deal ID', row.get('Record ID', ''))
+                
+                planning_status = get_planning_status(item_id_for_status) if item_id_for_status else '—'
+                if not planning_status:
+                    planning_status = '—'
+                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
-                    item_id = row.get('SO#', row.get('Document Number', ''))
+                    item_id = row.get('SO #', row.get('Document Number', ''))
                     cust = row.get('Customer', '')
-                    date_val = row.get('Key Date', '')
+                    date_val = row.get('Classification Date', row.get('Key Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
+                    # NetSuite uses 'Amount' not 'Amount_Numeric'
+                    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
                     rep = row.get('Sales Rep', rep_name)
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
-                    item_id = row.get('Record ID', '')
+                    item_id = row.get('Deal ID', row.get('Record ID', ''))
                     cust = row.get('Account Name', row.get('Deal Name', '')) # Fallback to Deal Name if Account missing
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
+                    amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
                     rep = row.get('Deal Owner', rep_name)
                 
                 export_data.append({
@@ -2585,7 +2598,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Customer': cust,
                     'Order/Deal Type': deal_type,
                     'Date': str(date_val),
-                    'Amount': row.get('Amount_Numeric', 0),
+                    'Amount': amount,
+                    'Q4 Status': planning_status,
                     'Rep': rep
                 })
 
