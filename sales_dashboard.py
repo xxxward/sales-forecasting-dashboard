@@ -2092,7 +2092,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # date_col_name indicates which date field was used to classify this SO
         if date_col_name == 'Promise':
             # For PF with date: use Customer Promise Date OR Projected Date (whichever exists)
-            d['Classification Date'] = '—'
+            d['Classification Date'] = ''
             
             # Try Customer Promise Date first
             if 'Display_Promise_Date' in d.columns:
@@ -2102,7 +2102,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             # Fill in with Projected Date where Promise Date is missing
             if 'Display_Projected_Date' in d.columns:
                 projected_dates = pd.to_datetime(d['Display_Projected_Date'], errors='coerce')
-                mask = (d['Classification Date'] == '—') & projected_dates.notna()
+                mask = (d['Classification Date'] == '') & projected_dates.notna()
                 if mask.any():
                     d.loc[mask, 'Classification Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
                     
@@ -2110,12 +2110,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             # For PA with date: use Pending Approval Date
             if 'Display_PA_Date' in d.columns:
                 pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
-                d['Classification Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('—')
+                d['Classification Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
             else:
-                d['Classification Date'] = '—'
+                d['Classification Date'] = ''
         else:
-            # For PF/PA no date or other: show dash
-            d['Classification Date'] = '—'
+            # For PF/PA no date or other: show blank
+            d['Classification Date'] = ''
         
         return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
     
@@ -2147,14 +2147,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 d['Deal ID'] = d['Record ID']
             
             d['Type'] = d['Display_Type']
-            d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
+            d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
             
             # Change to Pending Approval Date
             if 'Display_PA_Date' in d.columns:
                 pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
-                d['PA Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('—')
+                d['PA Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
             else:
-                d['PA Date'] = '—'
+                d['PA Date'] = ''
             
             if 'Record ID' in d.columns:
                 d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
@@ -2582,7 +2582,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     # NetSuite uses 'Amount' not 'Amount_Numeric'
                     amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    rep = row.get('Sales Rep', rep_name if rep_name else '')
+                    # Get Sales Rep - should exist in the dataframe
+                    rep = row.get('Sales Rep', '')
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
                     item_id = row.get('Deal ID', row.get('Record ID', ''))
@@ -2590,29 +2591,36 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
-                    rep = row.get('Deal Owner', rep_name if rep_name else '')
+                    # Get Deal Owner - should exist in the dataframe
+                    rep = row.get('Deal Owner', '')
                 
-                # Clean up date value - handle timestamps and convert to simple date string
-                if pd.notna(date_val) and date_val != '':
-                    try:
-                        # If it's a timestamp, convert to date string
-                        if isinstance(date_val, pd.Timestamp):
-                            date_val = date_val.strftime('%Y-%m-%d')
-                        else:
-                            # Try to parse and format
+                # Clean up date value - handle timestamps and blank dates
+                if pd.isna(date_val) or date_val == '' or date_val == '—':
+                    date_val = ''
+                elif isinstance(date_val, pd.Timestamp):
+                    date_val = date_val.strftime('%Y-%m-%d')
+                elif isinstance(date_val, str):
+                    # If it's already a formatted date string, keep it
+                    # Otherwise try to parse it
+                    if date_val and date_val != '—':
+                        try:
                             parsed_date = pd.to_datetime(date_val, errors='coerce')
                             if pd.notna(parsed_date):
                                 date_val = parsed_date.strftime('%Y-%m-%d')
                             else:
-                                date_val = str(date_val)
-                    except:
-                        date_val = str(date_val) if date_val else ''
+                                date_val = ''
+                        except:
+                            date_val = ''
+                    else:
+                        date_val = ''
                 else:
                     date_val = ''
                 
                 # Ensure rep is a string, not NaN
                 if pd.isna(rep) or rep is None:
                     rep = ''
+                else:
+                    rep = str(rep).strip()
                 
                 export_data.append({
                     'Category': item_type,
