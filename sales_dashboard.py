@@ -1892,20 +1892,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # Map Deal Type (Column N - Index 13)
         hs_data['Display_Type'] = get_col_by_index(hs_data, 13).fillna('Standard')
         
-        # Try multiple column name variations for Pending Fulfillment Date
-        pf_date_col = None
-        possible_pf_cols = ['Pending Fulfillment Date', 'PF Date', 'Pending Fulfillment', 'Fulfillment Date']
-        for col in possible_pf_cols:
-            if col in hs_data.columns:
-                pf_date_col = col
-                break
-        
-        if pf_date_col:
-            hs_data['Display_PF_Date'] = pd.to_datetime(hs_data[pf_date_col], errors='coerce')
+        # Get Pending Approval Date from Column P (index 15)
+        if 'Pending Approval Date' in hs_data.columns:
+            hs_data['Display_PA_Date'] = pd.to_datetime(hs_data['Pending Approval Date'], errors='coerce')
         else:
-            # Fallback: try column by index if named column not found
-            # Check if there's a PF date column at a specific index (you may need to adjust this)
-            hs_data['Display_PF_Date'] = pd.NaT
+            # Fallback to column index 15 (Column P)
+            hs_data['Display_PA_Date'] = pd.to_datetime(get_col_by_index(hs_data, 15), errors='coerce')
 
         if 'Amount' in hs_data.columns:
             hs_data['Amount_Numeric'] = pd.to_numeric(hs_data['Amount'], errors='coerce').fillna(0)
@@ -2021,12 +2013,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             d['Type'] = d['Display_Type']
             d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
             
-            # Fix PF Date to show dashes when empty
-            if 'Display_PF_Date' in d.columns:
-                pf_dates = pd.to_datetime(d['Display_PF_Date'], errors='coerce')
-                d['PF Date'] = pf_dates.dt.strftime('%Y-%m-%d').fillna('—')
+            # Change to Pending Approval Date
+            if 'Display_PA_Date' in d.columns:
+                pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
+                d['PA Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('—')
             else:
-                d['PF Date'] = '—'
+                d['PA Date'] = '—'
             
             if 'Record ID' in d.columns:
                 d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
@@ -2131,7 +2123,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         with st.expander(f"🔎 View Deals ({data['label']})"):
                             if not df.empty:
                                 enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
-                                cols = ['Link', 'Deal ID', 'Deal Name', 'Type', 'Close', 'PF Date', 'Amount_Numeric']
+                                cols = ['Link', 'Deal ID', 'Deal Name', 'Type', 'Close', 'PA Date', 'Amount_Numeric']
                                 
                                 if enable_edit:
                                     df_edit = df.copy()
@@ -2144,7 +2136,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
                                             "Close": st.column_config.TextColumn("Close Date", width="small"),
-                                            "PF Date": st.column_config.TextColumn("PF Date", width="small"),
+                                            "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         disabled=cols,
@@ -2164,7 +2156,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
                                             "Close": st.column_config.TextColumn("Close Date", width="small"),
-                                            "PF Date": st.column_config.TextColumn("PF Date", width="small"),
+                                            "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         hide_index=True,
