@@ -1942,6 +1942,37 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if 'Internal ID' in d.columns:
             d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
         
+        # Add SO# column (from Display_SO_Num)
+        if 'Display_SO_Num' in d.columns:
+            d['SO #'] = d['Display_SO_Num']
+        
+        # Add Order Type column (from Display_Type)
+        if 'Display_Type' in d.columns:
+            d['Type'] = d['Display_Type']
+        
+        # Add Classification Date based on category
+        # date_col_name indicates which date field was used to classify this SO
+        if date_col_name == 'Promise':
+            # For PF with date: use Customer Promise Date or Projected Date
+            if 'Display_Promise_Date' in d.columns:
+                d['Classification Date'] = pd.to_datetime(d['Display_Promise_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
+            elif 'Display_Projected_Date' in d.columns:
+                d['Classification Date'] = pd.to_datetime(d['Display_Projected_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
+            else:
+                d['Classification Date'] = '—'
+        elif date_col_name == 'PA_Date':
+            # For PA with date: use Pending Approval Date
+            if 'Display_PA_Date' in d.columns:
+                d['Classification Date'] = pd.to_datetime(d['Display_PA_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
+            else:
+                d['Classification Date'] = '—'
+        elif date_col_name == 'PF_Date':
+            # For PF no date: show dash
+            d['Classification Date'] = '—'
+        else:
+            # For PA no date or other: show dash
+            d['Classification Date'] = '—'
+        
         return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
     
     # Map centralized categories to display dataframes
@@ -2013,9 +2044,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 # Display Columns
                                 display_cols = []
                                 if 'Link' in df.columns: display_cols.append('Link')
-                                if 'SO#' in df.columns: display_cols.append('SO#')
+                                if 'SO #' in df.columns: display_cols.append('SO #')
                                 if 'Type' in df.columns: display_cols.append('Type')
                                 if 'Customer' in df.columns: display_cols.append('Customer')
+                                if 'Classification Date' in df.columns: display_cols.append('Classification Date')
                                 if 'Amount' in df.columns: display_cols.append('Amount')
                                 
                                 if enable_edit and display_cols:
@@ -2026,6 +2058,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
+                                            "SO #": st.column_config.TextColumn("SO #", width="small"),
+                                            "Type": st.column_config.TextColumn("Type", width="small"),
+                                            "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
                                         disabled=display_cols,
@@ -2045,6 +2080,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             df[display_cols],
                                             column_config={
                                                 "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
+                                                "SO #": st.column_config.TextColumn("SO #", width="small"),
+                                                "Type": st.column_config.TextColumn("Type", width="small"),
+                                                "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                                 "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                             },
                                             hide_index=True,
@@ -3826,6 +3864,9 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     team_best_opp = basic_metrics['best_opp']
     team_q1_spillover_expect_commit = 0  # Q1 spillover Expect/Commit only
     team_q1_spillover_best_opp = 0  # Q1 spillover Best Case/Opportunity
+    
+    # Filter out unwanted reps
+    excluded_reps = ['House', 'house', 'HOUSE']
    
     team_invoiced = 0
     team_pf = 0
@@ -3834,12 +3875,23 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
     team_pf_no_date = 0
     team_pa_no_date = 0
     team_old_pa = 0
+    
+    # FIX: Calculate team_invoiced directly from invoices_df to match Invoice Detail section
+    if not invoices_df.empty and 'Amount' in invoices_df.columns:
+        # Filter out House reps if needed
+        if 'Sales Rep' in invoices_df.columns:
+            filtered_inv = invoices_df[~invoices_df['Sales Rep'].isin(excluded_reps)].copy()
+        else:
+            filtered_inv = invoices_df.copy()
+        
+        # Calculate total invoiced amount
+        filtered_inv['Amount_Numeric'] = pd.to_numeric(filtered_inv['Amount'], errors='coerce')
+        team_invoiced = filtered_inv['Amount_Numeric'].sum()
+    else:
+        team_invoiced = 0
    
     section1_data = []
     section2_data = []
-   
-    # Filter out unwanted reps
-    excluded_reps = ['House', 'house', 'HOUSE']
     
     for rep_name in dashboard_df['Rep Name']:
         # Skip excluded reps
@@ -3870,8 +3922,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
                 'Total Q4': f"${final_total:,.0f}"
             })
            
-            # Aggregate sums
-            team_invoiced += rep_metrics['orders']
+            # Aggregate sums (exclude invoiced since we calculate it directly from invoices_df now)
+            # team_invoiced += rep_metrics['orders']  # REMOVED - now calculated from raw invoices_df
             team_pf += rep_metrics['pending_fulfillment']
             team_pa += rep_metrics['pending_approval']
             team_hs += rep_metrics['expect_commit']
