@@ -2236,32 +2236,31 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         )
                                     
                                     # Pre-fill Select column based on planning status
+                                    # IMPORTANT: Only check items that have IN or MAYBE status
                                     if 'SO #' in df_edit.columns:
-                                        df_edit['Select'] = df_edit['SO #'].apply(
-                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']  # Exclude None (no status)
-                                        )
+                                        def should_select(so_num):
+                                            status = get_planning_status(so_num)
+                                            # Only select if status is explicitly IN or MAYBE
+                                            return status in ['IN', 'MAYBE']
+                                        
+                                        df_edit['Select'] = df_edit['SO #'].apply(should_select)
                                     else:
-                                        df_edit.insert(0, "Select", True)
+                                        df_edit['Select'] = True
                                     
-                                    # Move Select to first position if not already
-                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
-                                        cols = ['Select'] + [c for c in df_edit.columns if c != 'Select']
-                                        df_edit = df_edit[cols]
-                                    
-                                    # Add Status to display columns if it exists
-                                    display_with_status = ['Select']
-                                    if 'Status' in df_edit.columns:
-                                        display_with_status.append('Status')
-                                    display_with_status.extend(display_cols)
+                                    # Reorder columns: Select, Status, then display columns
+                                    cols_ordered = ['Select', 'Status'] + display_cols
+                                    # Only include columns that exist
+                                    cols_ordered = [c for c in cols_ordered if c in df_edit.columns]
                                     
                                     edited = st.data_editor(
-                                        df_edit[display_with_status],
+                                        df_edit[cols_ordered],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Status": st.column_config.SelectboxColumn(
                                                 "Q4 Status", 
                                                 width="small",
-                                                options=['IN', 'MAYBE', 'OUT', '—']
+                                                options=['IN', 'MAYBE', 'OUT', '—'],
+                                                required=False
                                             ),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "SO #": st.column_config.TextColumn("SO #", width="small"),
@@ -2269,9 +2268,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status']],
+                                        disabled=['Link', 'SO #', 'Type', 'Customer', 'Classification Date', 'Amount'],
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}",
+                                        num_rows="fixed"
                                     )
                                     
                                     # Update planning status from edited data
@@ -2374,32 +2374,31 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         )
                                     
                                     # Pre-fill Select column based on planning status
+                                    # IMPORTANT: Only check items that have IN or MAYBE status
                                     if 'Deal ID' in df_edit.columns:
-                                        df_edit['Select'] = df_edit['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']  # Exclude None (no status)
-                                        )
+                                        def should_select(deal_id):
+                                            status = get_planning_status(deal_id)
+                                            # Only select if status is explicitly IN or MAYBE
+                                            return status in ['IN', 'MAYBE']
+                                        
+                                        df_edit['Select'] = df_edit['Deal ID'].apply(should_select)
                                     else:
-                                        df_edit.insert(0, "Select", True)
+                                        df_edit['Select'] = True
                                     
-                                    # Move Select to first position if not already
-                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
-                                        cols_order = ['Select'] + [c for c in df_edit.columns if c != 'Select']
-                                        df_edit = df_edit[cols_order]
-                                    
-                                    # Add Status to display columns if it exists
-                                    display_with_status = ['Select']
-                                    if 'Status' in df_edit.columns:
-                                        display_with_status.append('Status')
-                                    display_with_status.extend(cols)
+                                    # Reorder columns: Select, Status, then display columns
+                                    cols_ordered = ['Select', 'Status'] + cols
+                                    # Only include columns that exist
+                                    cols_ordered = [c for c in cols_ordered if c in df_edit.columns]
                                     
                                     edited = st.data_editor(
-                                        df_edit[display_with_status],
+                                        df_edit[cols_ordered],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Status": st.column_config.SelectboxColumn(
                                                 "Q4 Status", 
                                                 width="small",
-                                                options=['IN', 'MAYBE', 'OUT', '—']
+                                                options=['IN', 'MAYBE', 'OUT', '—'],
+                                                required=False
                                             ),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
@@ -2408,9 +2407,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status']],
+                                        disabled=['Link', 'Deal ID', 'Deal Name', 'Type', 'Close', 'PA Date', 'Amount_Numeric'],
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}",
+                                        num_rows="fixed"
                                     )
                                     
                                     # Update planning status from edited data
