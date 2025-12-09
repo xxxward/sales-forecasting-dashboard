@@ -2569,9 +2569,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 else:  # HubSpot
                     item_id_for_status = row.get('Deal ID', row.get('Record ID', ''))
                 
-                planning_status = get_planning_status(item_id_for_status) if item_id_for_status else '—'
+                planning_status = get_planning_status(item_id_for_status) if item_id_for_status else ''
                 if not planning_status:
-                    planning_status = '—'
+                    planning_status = ''  # Use empty string instead of em dash
                 
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
@@ -2582,7 +2582,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     # NetSuite uses 'Amount' not 'Amount_Numeric'
                     amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    rep = row.get('Sales Rep', rep_name)
+                    rep = row.get('Sales Rep', rep_name if rep_name else '')
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
                     item_id = row.get('Deal ID', row.get('Record ID', ''))
@@ -2590,14 +2590,36 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
-                    rep = row.get('Deal Owner', rep_name)
+                    rep = row.get('Deal Owner', rep_name if rep_name else '')
+                
+                # Clean up date value - handle timestamps and convert to simple date string
+                if pd.notna(date_val) and date_val != '':
+                    try:
+                        # If it's a timestamp, convert to date string
+                        if isinstance(date_val, pd.Timestamp):
+                            date_val = date_val.strftime('%Y-%m-%d')
+                        else:
+                            # Try to parse and format
+                            parsed_date = pd.to_datetime(date_val, errors='coerce')
+                            if pd.notna(parsed_date):
+                                date_val = parsed_date.strftime('%Y-%m-%d')
+                            else:
+                                date_val = str(date_val)
+                    except:
+                        date_val = str(date_val) if date_val else ''
+                else:
+                    date_val = ''
+                
+                # Ensure rep is a string, not NaN
+                if pd.isna(rep) or rep is None:
+                    rep = ''
                 
                 export_data.append({
                     'Category': item_type,
                     'ID': item_id,
                     'Customer': cust,
                     'Order/Deal Type': deal_type,
-                    'Date': str(date_val),
+                    'Date': date_val,
                     'Amount': amount,
                     'Q4 Status': planning_status,
                     'Rep': rep
