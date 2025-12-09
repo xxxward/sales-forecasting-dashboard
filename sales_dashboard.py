@@ -1932,9 +1932,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         # Mark this file as processed
                         st.session_state[processed_key] = file_id
                         
-                        # Note: Checkbox states will be set when rendering the checkboxes below
-                        # We'll use the planning status to determine default values
-                        
                         # Rerun to apply the planning status to checkboxes
                         st.rerun()
                     else:
@@ -1958,26 +1955,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # Clear button
         if st.session_state[planning_key]:
             if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
-                # Clear planning status
                 st.session_state[planning_key] = {}
                 st.session_state[processed_key] = None
-                
-                # Clear all checkbox states for this rep
-                keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
-                for key in keys_to_clear:
-                    del st.session_state[key]
-                
                 st.rerun()
     
     st.markdown("---")
-    
-    # View mode toggle
-    view_mode = st.radio(
-        "View Mode",
-        options=["📂 Category View (Separate Sections)", "📋 Consolidated View (Single Table)"],
-        horizontal=True,
-        key=f"view_mode_{rep_name}"
-    )
     
     # Helper function to get planning status for an ID
     def get_planning_status(id_value):
@@ -2182,164 +2164,96 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # We use this dict to store the ACTUAL dataframes to be exported
     export_buckets = {}
     
-    # Check view mode
-    if view_mode == "📂 Category View (Separate Sections)":
-        # === ORIGINAL CATEGORY VIEW ===
-        with st.container():
-            col_ns, col_hs = st.columns(2)
+    with st.container():
+        col_ns, col_hs = st.columns(2)
+        
+        # === NETSUITE COLUMN ===
+        with col_ns:
+            st.markdown("#### 📦 NetSuite Orders")
+            st.info(f"**Invoiced (Locked):** ${invoiced_shipped:,.0f}")
             
-            # === NETSUITE COLUMN ===
-            with col_ns:
-                st.markdown("#### 📦 NetSuite Orders")
-                st.info(f"**Invoiced (Locked):** ${invoiced_shipped:,.0f}")
+            for key, data in ns_categories.items():
+                # Get value for label
+                df = ns_dfs.get(key, pd.DataFrame())
+                val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
                 
-                for key, data in ns_categories.items():
-                    # Get value for label
-                    df = ns_dfs.get(key, pd.DataFrame())
-                    val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+                # Determine default checkbox value based on planning status
+                default_checked = False
+                if not df.empty and 'SO #' in df.columns:
+                    # Check planning status for items in this category
+                    statuses = [get_planning_status(so_num) for so_num in df['SO #']]
+                    in_count = statuses.count('IN')
+                    maybe_count = statuses.count('MAYBE')
+                    out_count = statuses.count('OUT')
                     
-                    # Determine default checkbox value based on planning status
-                    checkbox_key = f"chk_{key}_{rep_name}"
+                    # Auto-check if majority are IN or MAYBE
+                    if in_count + maybe_count > out_count:
+                        default_checked = True
+                
+                # Always show PA_Date even if 0 to debug
+                if val > 0 or key == 'PA_Date':
+                    is_checked = st.checkbox(
+                        f"{data['label']}: ${val:,.0f}", 
+                        value=default_checked, 
+                        key=f"chk_{key}_{rep_name}"
+                    )
                     
-                    # Only set default if we have planning status and this key hasn't been set yet
-                    if st.session_state[planning_key] and checkbox_key not in st.session_state:
-                        if not df.empty and 'SO #' in df.columns:
-                            # Check planning status for items in this category
-                            statuses = [get_planning_status(so_num) for so_num in df['SO #']]
-                            in_count = statuses.count('IN')
-                            maybe_count = statuses.count('MAYBE')
-                            out_count = statuses.count('OUT')
-                            
-                            # Auto-check if majority are IN or MAYBE
-                            if in_count + maybe_count > out_count:
-                                st.session_state[checkbox_key] = True
-                            else:
-                                st.session_state[checkbox_key] = False
-                    
-                    # Always show PA_Date even if 0 to debug
-                    if val > 0 or key == 'PA_Date':
-                        is_checked = st.checkbox(
-                            f"{data['label']}: ${val:,.0f}", 
-                            key=checkbox_key
-                        )
-                        
-                        if is_checked:
-                            with st.expander(f"🔎 View Orders ({data['label']})", expanded=False):
-                                if not df.empty:
-                                    enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
+                    if is_checked:
+                        with st.expander(f"🔎 View Orders ({data['label']})"):
+                            if not df.empty:
+                                enable_edit = st.toggle("Customize", key=f"tgl_{key}_{rep_name}")
+                                
+                                # Display Columns
+                                display_cols = []
+                                if 'Link' in df.columns: display_cols.append('Link')
+                                if 'SO #' in df.columns: display_cols.append('SO #')
+                                if 'Type' in df.columns: display_cols.append('Type')
+                                if 'Customer' in df.columns: display_cols.append('Customer')
+                                if 'Classification Date' in df.columns: display_cols.append('Classification Date')
+                                if 'Amount' in df.columns: display_cols.append('Amount')
+                                
+                                if enable_edit and display_cols:
+                                    df_edit = df.copy()
                                     
-                                    # Display Columns
-                                    display_cols = []
-                                    if 'Link' in df.columns: display_cols.append('Link')
-                                    if 'SO #' in df.columns: display_cols.append('SO #')
-                                    if 'Type' in df.columns: display_cols.append('Type')
-                                    if 'Customer' in df.columns: display_cols.append('Customer')
-                                    if 'Classification Date' in df.columns: display_cols.append('Classification Date')
-                                    if 'Amount' in df.columns: display_cols.append('Amount')
+                                    # Pre-fill Select column based on planning status
+                                    if 'SO #' in df_edit.columns:
+                                        df_edit['Select'] = df_edit['SO #'].apply(
+                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE', None]
+                                        )
+                                    else:
+                                        df_edit.insert(0, "Select", True)
                                     
-                                    if enable_edit and display_cols:
-                                        df_edit = df.copy()
-                                        
-                                        # Add Status column based on planning status
-                                        if 'SO #' in df_edit.columns:
-                                            df_edit['Status'] = df_edit['SO #'].apply(
-                                                lambda so: get_planning_status(so) if get_planning_status(so) else '—'
-                                            )
-                                        
-                                        # Pre-fill Select column based on planning status
-                                        # IMPORTANT: Only check items that have IN or MAYBE status
-                                        if 'SO #' in df_edit.columns:
-                                            def should_select(so_num):
-                                                status = get_planning_status(so_num)
-                                                # If no planning status exists, default to True (selected)
-                                                if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
-                                                    return True
-                                                # If planning status exists, only select IN/MAYBE
-                                                return status in ['IN', 'MAYBE']
-                                            
-                                            df_edit['Select'] = df_edit['SO #'].apply(should_select)
-                                        else:
-                                            df_edit['Select'] = True
-                                        
-                                        # Reorder columns: Select, Status, then display columns
-                                        cols_ordered = ['Select', 'Status'] + display_cols
-                                        # Only include columns that exist
-                                        cols_ordered = [c for c in cols_ordered if c in df_edit.columns]
-                                        
-                                        edited = st.data_editor(
-                                            df_edit[cols_ordered],
-                                            column_config={
-                                                "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                                "Status": st.column_config.SelectboxColumn(
-                                                "Q4 Status", 
-                                                width="small",
-                                                options=['IN', 'MAYBE', 'OUT', '—'],
-                                                required=False
-                                            ),
+                                    # Move Select to first position if not already
+                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
+                                        cols = ['Select'] + [c for c in df_edit.columns if c != 'Select']
+                                        df_edit = df_edit[cols]
+                                    
+                                    edited = st.data_editor(
+                                        df_edit[['Select'] + display_cols],
+                                        column_config={
+                                            "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "SO #": st.column_config.TextColumn("SO #", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
                                             "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=['Link', 'SO #', 'Type', 'Customer', 'Classification Date', 'Amount'],
+                                        disabled=display_cols,
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}",
-                                        num_rows="fixed"
+                                        key=f"edit_{key}_{rep_name}"
                                     )
-                                
-                                        # Update planning status from edited data
-                                        if 'SO #' in edited.columns and 'Status' in edited.columns:
-                                            for idx, row in edited.iterrows():
-                                                so_num = str(row['SO #']).strip()
-                                                status = str(row['Status']).strip().upper()
-                                                if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
-                                                    st.session_state[planning_key][so_num] = status
-                                                elif status == '—' and so_num in st.session_state[planning_key]:
-                                                    # Remove from planning status if set to dash
-                                                    del st.session_state[planning_key][so_num]
-                                
-                                        # Auto-update Select checkboxes based on Status changes
-                                        if 'Status' in edited.columns and 'Select' in edited.columns:
-                                            for idx in edited.index:
-                                                status = str(edited.at[idx, 'Status']).strip().upper()
-                                                # Auto-check if Status is IN or MAYBE
-                                                if status in ['IN', 'MAYBE']:
-                                                    edited.at[idx, 'Select'] = True
-                                                # Auto-uncheck if Status is OUT or dash
-                                                elif status in ['OUT', '—']:
-                                                    edited.at[idx, 'Select'] = False
-                                
-                                        # Capture filtered rows for export
-                                        selected_rows = edited[edited['Select']].copy()
-                                        
-                                        current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
-                                        st.caption(f"Selected: ${current_total:,.0f}")
-                                        
-                                        # Helpful note about auto-check
-                                        if 'Status' in edited.columns:
-                                            st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
-                                        
-                                        # ALWAYS set export_buckets in customize mode
-                                        export_buckets[key] = selected_rows
+                                    # Capture filtered rows for export
+                                    selected_rows = edited[edited['Select']].copy()
+                                    export_buckets[key] = selected_rows
+                                    
+                                    current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
+                                    st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
-                                    # Read-only view
+                                    # Read-only
                                     if display_cols:
-                                        df_readonly = df.copy()
-                                    
-                                        # Add Status column for read-only view too
-                                        if 'SO #' in df_readonly.columns:
-                                            df_readonly['Status'] = df_readonly['SO #'].apply(
-                                                lambda so: get_planning_status(so) if get_planning_status(so) else '—'
-                                            )
-                                            display_readonly = ['Status'] + display_cols
-                                        else:
-                                            display_readonly = display_cols
-                                    
                                         st.dataframe(
-                                            df_readonly[display_readonly],
+                                            df[display_cols],
                                             column_config={
-                                                "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                                 "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                                 "SO #": st.column_config.TextColumn("SO #", width="small"),
                                                 "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2349,37 +2263,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             hide_index=True,
                                             use_container_width=True
                                         )
-                                    # Capture all rows for export (with Status column)
-                                    # BUT only include items with IN/MAYBE status IF planning status exists
-                                    if 'SO #' in df.columns:
-                                        df_export = df.copy()
-                                        df_export['Status'] = df_export['SO #'].apply(
-                                            lambda so: get_planning_status(so) if get_planning_status(so) else '—'
-                                        )
-                                        # Only filter if planning status has actual entries
-                                        if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                            df_export['_should_include'] = df_export['SO #'].apply(
-                                                lambda so: get_planning_status(so) in ['IN', 'MAYBE']
-                                            )
-                                            df_export = df_export[df_export['_should_include']].drop(columns=['_should_include'])
-                                        export_buckets[key] = df_export
-                                    else:
-                                        export_buckets[key] = df
-                            
-                            # Fallback: if export_buckets wasn't set by expander code, set default
-                            if key not in export_buckets:
-                                df_default = df.copy()
-                                if 'SO #' in df_default.columns:
-                                    df_default['Status'] = df_default['SO #'].apply(
-                                        lambda so: get_planning_status(so) if get_planning_status(so) else '—'
-                                    )
-                                    # Only filter if planning status exists
-                                    if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                        df_default['_should_include'] = df_default['SO #'].apply(
-                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']
-                                        )
-                                        df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
-                                export_buckets[key] = df_default
+                                    # Capture all rows for export
+                                    export_buckets[key] = df
 
         # === HUBSPOT COLUMN ===
         with col_hs:
@@ -2389,27 +2274,23 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 val = df['Amount_Numeric'].sum() if not df.empty else 0
                 
                 # Determine default checkbox value based on planning status
-                checkbox_key = f"chk_{key}_{rep_name}"
-                
-                # Only set default if we have planning status and this key hasn't been set yet
-                if st.session_state[planning_key] and checkbox_key not in st.session_state:
-                    if not df.empty and 'Deal ID' in df.columns:
-                        # Check planning status for items in this category
-                        statuses = [get_planning_status(deal_id) for deal_id in df['Deal ID']]
-                        in_count = statuses.count('IN')
-                        maybe_count = statuses.count('MAYBE')
-                        out_count = statuses.count('OUT')
-                        
-                        # Auto-check if majority are IN or MAYBE
-                        if in_count + maybe_count > out_count:
-                            st.session_state[checkbox_key] = True
-                        else:
-                            st.session_state[checkbox_key] = False
+                default_checked = False
+                if not df.empty and 'Deal ID' in df.columns:
+                    # Check planning status for items in this category
+                    statuses = [get_planning_status(deal_id) for deal_id in df['Deal ID']]
+                    in_count = statuses.count('IN')
+                    maybe_count = statuses.count('MAYBE')
+                    out_count = statuses.count('OUT')
+                    
+                    # Auto-check if majority are IN or MAYBE
+                    if in_count + maybe_count > out_count:
+                        default_checked = True
                 
                 if val > 0:
                     is_checked = st.checkbox(
                         f"{data['label']}: ${val:,.0f}", 
-                        key=checkbox_key
+                        value=default_checked, 
+                        key=f"chk_{key}_{rep_name}"
                     )
                     if is_checked:
                         with st.expander(f"🔎 View Deals ({data['label']})"):
@@ -2420,42 +2301,23 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 if enable_edit:
                                     df_edit = df.copy()
                                     
-                                    # Add Status column based on planning status
-                                    if 'Deal ID' in df_edit.columns:
-                                        df_edit['Status'] = df_edit['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
-                                        )
-                                    
                                     # Pre-fill Select column based on planning status
-                                    # IMPORTANT: Only check items that have IN or MAYBE status
                                     if 'Deal ID' in df_edit.columns:
-                                        def should_select(deal_id):
-                                            status = get_planning_status(deal_id)
-                                            # If no planning status exists, default to True (selected)
-                                            if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
-                                                return True
-                                            # If planning status exists, only select IN/MAYBE
-                                            return status in ['IN', 'MAYBE']
-                                        
-                                        df_edit['Select'] = df_edit['Deal ID'].apply(should_select)
+                                        df_edit['Select'] = df_edit['Deal ID'].apply(
+                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE', None]
+                                        )
                                     else:
-                                        df_edit['Select'] = True
+                                        df_edit.insert(0, "Select", True)
                                     
-                                    # Reorder columns: Select, Status, then display columns
-                                    cols_ordered = ['Select', 'Status'] + cols
-                                    # Only include columns that exist
-                                    cols_ordered = [c for c in cols_ordered if c in df_edit.columns]
+                                    # Move Select to first position if not already
+                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
+                                        cols_order = ['Select'] + [c for c in df_edit.columns if c != 'Select']
+                                        df_edit = df_edit[cols_order]
                                     
                                     edited = st.data_editor(
-                                        df_edit[cols_ordered],
+                                        df_edit[['Select'] + cols],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Status": st.column_config.SelectboxColumn(
-                                                "Q4 Status", 
-                                                width="small",
-                                                options=['IN', 'MAYBE', 'OUT', '—'],
-                                                required=False
-                                            ),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2463,62 +2325,19 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=['Link', 'Deal ID', 'Deal Name', 'Type', 'Close', 'PA Date', 'Amount_Numeric'],
+                                        disabled=cols,
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}",
-                                        num_rows="fixed"
+                                        key=f"edit_{key}_{rep_name}"
                                     )
-                                    
-                                    # Update planning status from edited data
-                                    if 'Deal ID' in edited.columns and 'Status' in edited.columns:
-                                        for idx, row in edited.iterrows():
-                                            deal_id = str(row['Deal ID']).strip()
-                                            status = str(row['Status']).strip().upper()
-                                            if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
-                                                st.session_state[planning_key][deal_id] = status
-                                            elif status == '—' and deal_id in st.session_state[planning_key]:
-                                                # Remove from planning status if set to dash
-                                                del st.session_state[planning_key][deal_id]
-                                    
-                                    # Auto-update Select checkboxes based on Status changes
-                                    if 'Status' in edited.columns and 'Select' in edited.columns:
-                                        for idx in edited.index:
-                                            status = str(edited.at[idx, 'Status']).strip().upper()
-                                            # Auto-check if Status is IN or MAYBE
-                                            if status in ['IN', 'MAYBE']:
-                                                edited.at[idx, 'Select'] = True
-                                            # Auto-uncheck if Status is OUT or dash
-                                            elif status in ['OUT', '—']:
-                                                edited.at[idx, 'Select'] = False
-                                    
                                     selected_rows = edited[edited['Select']].copy()
+                                    export_buckets[key] = selected_rows
                                     
                                     current_total = selected_rows['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${current_total:,.0f}")
-                                    
-                                    # Helpful note about auto-check
-                                    if 'Status' in edited.columns:
-                                        st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
-                                    
-                                    # ALWAYS set export_buckets in customize mode
-                                    export_buckets[key] = selected_rows
                                 else:
-                                    # Read-only view
-                                    df_readonly = df.copy()
-                                    
-                                    # Add Status column for read-only view too
-                                    if 'Deal ID' in df_readonly.columns:
-                                        df_readonly['Status'] = df_readonly['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
-                                        )
-                                        display_readonly = ['Status'] + cols
-                                    else:
-                                        display_readonly = cols
-                                    
                                     st.dataframe(
-                                        df_readonly[display_readonly],
+                                        df[cols],
                                         column_config={
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2529,205 +2348,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         hide_index=True,
                                         use_container_width=True
                                     )
-                                    # Capture all rows for export (with Status column)
-                                    # BUT only include items with IN/MAYBE status IF planning status exists
-                                    if 'Deal ID' in df.columns:
-                                        df_export = df.copy()
-                                        df_export['Status'] = df_export['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
-                                        )
-                                        # Only filter if planning status has actual entries
-                                        if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                            df_export['_should_include'] = df_export['Deal ID'].apply(
-                                                lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
-                                            )
-                                            df_export = df_export[df_export['_should_include']].drop(columns=['_should_include'])
-                                        export_buckets[key] = df_export
-                                    else:
-                                        export_buckets[key] = df
-                        
-                        # Fallback: if export_buckets wasn't set by expander code, set default
-                        if key not in export_buckets:
-                            df_default = df.copy()
-                            if 'Deal ID' in df_default.columns:
-                                df_default['Status'] = df_default['Deal ID'].apply(
-                                    lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
-                                )
-                                # Only filter if planning status exists
-                                if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                    df_default['_should_include'] = df_default['Deal ID'].apply(
-                                        lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
-                                    )
-                                    df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
-                            export_buckets[key] = df_default
-
-    else:
-        # === CONSOLIDATED VIEW ===
-        st.markdown("### 📋 All Items (Consolidated)")
-        
-        # Combine all NetSuite and HubSpot dataframes with category labels
-        all_items = []
-        
-        # Add NetSuite items
-        for key, data in ns_categories.items():
-            df = ns_dfs.get(key, pd.DataFrame())
-            if not df.empty:
-                df_with_cat = df.copy()
-                df_with_cat['Category'] = data['label']
-                df_with_cat['Source'] = 'NetSuite'
-                # Add Status and Select columns
-                if 'SO #' in df_with_cat.columns:
-                    df_with_cat['Status'] = df_with_cat['SO #'].apply(
-                        lambda so: get_planning_status(so) if get_planning_status(so) else '—'
-                    )
-                    # Default to True if no planning status, otherwise filter by IN/MAYBE
-                    if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
-                        df_with_cat['Select'] = True
-                    else:
-                        df_with_cat['Select'] = df_with_cat['SO #'].apply(
-                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']
-                        )
-                all_items.append(df_with_cat)
-        
-        # Add HubSpot items
-        for key, data in hs_categories.items():
-            df = hs_dfs.get(key, pd.DataFrame())
-            if not df.empty:
-                df_with_cat = df.copy()
-                df_with_cat['Category'] = data['label']
-                df_with_cat['Source'] = 'HubSpot'
-                # Add Status and Select columns
-                if 'Deal ID' in df_with_cat.columns:
-                    df_with_cat['Status'] = df_with_cat['Deal ID'].apply(
-                        lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
-                    )
-                    # Default to True if no planning status, otherwise filter by IN/MAYBE
-                    if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
-                        df_with_cat['Select'] = True
-                    else:
-                        df_with_cat['Select'] = df_with_cat['Deal ID'].apply(
-                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
-                        )
-                all_items.append(df_with_cat)
-        
-        if all_items:
-            # Combine all items
-            combined_df = pd.concat(all_items, ignore_index=True)
-            
-            # Display columns for consolidated view
-            display_cols_consolidated = ['Select', 'Status', 'Category', 'Source']
-            
-            # Add ID column (SO# or Deal ID)
-            if 'SO #' in combined_df.columns:
-                combined_df['ID'] = combined_df['SO #'].fillna(combined_df.get('Deal ID', ''))
-            elif 'Deal ID' in combined_df.columns:
-                combined_df['ID'] = combined_df['Deal ID']
-            display_cols_consolidated.append('ID')
-            
-            # Add common columns
-            if 'Customer' in combined_df.columns:
-                display_cols_consolidated.append('Customer')
-            if 'Deal Name' in combined_df.columns:
-                combined_df['Customer'] = combined_df['Customer'].fillna(combined_df.get('Deal Name', ''))
-                if 'Customer' not in display_cols_consolidated:
-                    display_cols_consolidated.append('Customer')
-            
-            if 'Type' in combined_df.columns:
-                display_cols_consolidated.append('Type')
-            if 'Classification Date' in combined_df.columns:
-                combined_df['Date'] = combined_df['Classification Date'].fillna(combined_df.get('Close', ''))
-            elif 'Close' in combined_df.columns:
-                combined_df['Date'] = combined_df['Close']
-            if 'Date' in combined_df.columns:
-                display_cols_consolidated.append('Date')
-            
-            # Amount column
-            if 'Amount' in combined_df.columns and 'Amount_Numeric' in combined_df.columns:
-                combined_df['Amount_Display'] = combined_df['Amount'].fillna(combined_df['Amount_Numeric'])
-            elif 'Amount' in combined_df.columns:
-                combined_df['Amount_Display'] = combined_df['Amount']
-            elif 'Amount_Numeric' in combined_df.columns:
-                combined_df['Amount_Display'] = combined_df['Amount_Numeric']
-            display_cols_consolidated.append('Amount_Display')
-            
-            # Filter to only columns that exist
-            display_cols_consolidated = [c for c in display_cols_consolidated if c in combined_df.columns]
-            
-            # Editable consolidated view
-            edited_consolidated = st.data_editor(
-                combined_df[display_cols_consolidated],
-                column_config={
-                    "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                    "Status": st.column_config.SelectboxColumn(
-                        "Q4 Status", 
-                        width="small",
-                        options=['IN', 'MAYBE', 'OUT', '—'],
-                        required=False
-                    ),
-                    "Category": st.column_config.TextColumn("Category", width="medium"),
-                    "Source": st.column_config.TextColumn("Source", width="small"),
-                    "ID": st.column_config.TextColumn("ID", width="small"),
-                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                    "Type": st.column_config.TextColumn("Type", width="small"),
-                    "Date": st.column_config.TextColumn("Date", width="small"),
-                    "Amount_Display": st.column_config.NumberColumn("Amount", format="$%d")
-                },
-                disabled=['Category', 'Source', 'ID', 'Customer', 'Type', 'Date', 'Amount_Display'],
-                hide_index=True,
-                key=f"consolidated_edit_{rep_name}",
-                num_rows="fixed",
-                height=600
-            )
-            
-            # Update planning status from edits
-            for idx, row in edited_consolidated.iterrows():
-                # Determine ID and update status
-                item_id = str(row.get('ID', '')).strip()
-                status = str(row.get('Status', '—')).strip().upper()
-                
-                if item_id and status != '—' and status in ['IN', 'MAYBE', 'OUT']:
-                    st.session_state[planning_key][item_id] = status
-                elif item_id and status == '—' and item_id in st.session_state[planning_key]:
-                    del st.session_state[planning_key][item_id]
-            
-            # Auto-update Select based on Status changes
-            if 'Status' in edited_consolidated.columns and 'Select' in edited_consolidated.columns:
-                for idx in edited_consolidated.index:
-                    status = str(edited_consolidated.at[idx, 'Status']).strip().upper()
-                    if status in ['IN', 'MAYBE']:
-                        edited_consolidated.at[idx, 'Select'] = True
-                    elif status in ['OUT', '—']:
-                        edited_consolidated.at[idx, 'Select'] = False
-            
-            # Split back into category buckets for export
-            for key in list(ns_categories.keys()) + list(hs_categories.keys()):
-                label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
-                cat_items = edited_consolidated[
-                    (edited_consolidated['Category'] == label) & 
-                    (edited_consolidated['Select'] == True)
-                ].copy()
-                
-                if not cat_items.empty:
-                    # Map back to original dataframe structure
-                    # IMPORTANT: Keep the original Amount/Amount_Numeric columns for calculations
-                    if key in ns_categories:
-                        # NetSuite - ensure 'Amount' column exists
-                        if 'Amount' not in cat_items.columns and 'Amount_Display' in cat_items.columns:
-                            cat_items['Amount'] = cat_items['Amount_Display']
-                        export_buckets[key] = cat_items
-                    else:
-                        # HubSpot - ensure 'Amount_Numeric' column exists
-                        if 'Amount_Numeric' not in cat_items.columns and 'Amount_Display' in cat_items.columns:
-                            cat_items['Amount_Numeric'] = cat_items['Amount_Display']
-                        export_buckets[key] = cat_items
-            
-            # Show selection summary
-            selected_count = edited_consolidated['Select'].sum()
-            selected_total = edited_consolidated[edited_consolidated['Select']]['Amount_Display'].sum()
-            st.caption(f"Selected: {selected_count} items = ${selected_total:,.0f}")
-            st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
-        else:
-            st.info("No items to display")
+                                    export_buckets[key] = df
 
     # --- 5. CALCULATE RESULTS ---
     
@@ -2873,37 +2494,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
             
             for _, row in df.iterrows():
-                # Get planning status for this item
-                # First try to get it from the dataframe (if it's been edited), otherwise from session state
-                if 'Status' in row and pd.notna(row['Status']) and str(row['Status']).strip() != '':
-                    planning_status = str(row['Status']).strip()
-                else:
-                    if key in ns_categories:  # NetSuite
-                        item_id_for_status = row.get('SO #', '')
-                    else:  # HubSpot
-                        item_id_for_status = row.get('Deal ID', row.get('Record ID', ''))
-                    
-                    planning_status = get_planning_status(item_id_for_status) if item_id_for_status else '—'
-                    if not planning_status:
-                        planning_status = '—'
-                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
-                    item_id = row.get('SO #', row.get('Document Number', ''))
+                    item_id = row.get('SO#', row.get('Document Number', ''))
                     cust = row.get('Customer', '')
-                    date_val = row.get('Classification Date', row.get('Key Date', ''))
+                    date_val = row.get('Key Date', '')
                     deal_type = row.get('Type', row.get('Display_Type', ''))
-                    # NetSuite uses 'Amount' not 'Amount_Numeric'
-                    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
                     rep = row.get('Sales Rep', rep_name)
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
-                    item_id = row.get('Deal ID', row.get('Record ID', ''))
+                    item_id = row.get('Record ID', '')
                     cust = row.get('Account Name', row.get('Deal Name', '')) # Fallback to Deal Name if Account missing
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
-                    amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
                     rep = row.get('Deal Owner', rep_name)
                 
                 export_data.append({
@@ -2912,8 +2516,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Customer': cust,
                     'Order/Deal Type': deal_type,
                     'Date': str(date_val),
-                    'Amount': amount,
-                    'Q4 Status': planning_status,
+                    'Amount': row.get('Amount_Numeric', 0),
                     'Rep': rep
                 })
 
