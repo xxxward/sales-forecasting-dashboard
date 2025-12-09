@@ -2238,7 +2238,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     # Pre-fill Select column based on planning status
                                     if 'SO #' in df_edit.columns:
                                         df_edit['Select'] = df_edit['SO #'].apply(
-                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE', None]
+                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']  # Exclude None (no status)
                                         )
                                     else:
                                         df_edit.insert(0, "Select", True)
@@ -2258,17 +2258,33 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                            "Status": st.column_config.SelectboxColumn(
+                                                "Q4 Status", 
+                                                width="small",
+                                                options=['IN', 'MAYBE', 'OUT', '—']
+                                            ),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "SO #": st.column_config.TextColumn("SO #", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
                                             "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c != 'Select'],
+                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status']],
                                         hide_index=True,
                                         key=f"edit_{key}_{rep_name}"
                                     )
+                                    
+                                    # Update planning status from edited data
+                                    if 'SO #' in edited.columns and 'Status' in edited.columns:
+                                        for idx, row in edited.iterrows():
+                                            so_num = str(row['SO #']).strip()
+                                            status = str(row['Status']).strip().upper()
+                                            if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
+                                                st.session_state[planning_key][so_num] = status
+                                            elif status == '—' and so_num in st.session_state[planning_key]:
+                                                # Remove from planning status if set to dash
+                                                del st.session_state[planning_key][so_num]
+                                    
                                     # Capture filtered rows for export
                                     selected_rows = edited[edited['Select']].copy()
                                     export_buckets[key] = selected_rows
@@ -2302,8 +2318,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             hide_index=True,
                                             use_container_width=True
                                         )
-                                    # Capture all rows for export
-                                    export_buckets[key] = df
+                                    # Capture all rows for export (with Status column)
+                                    if 'SO #' in df.columns:
+                                        df_export = df.copy()
+                                        df_export['Status'] = df_export['SO #'].apply(
+                                            lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                                        )
+                                        export_buckets[key] = df_export
+                                    else:
+                                        export_buckets[key] = df
 
         # === HUBSPOT COLUMN ===
         with col_hs:
@@ -2353,7 +2376,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     # Pre-fill Select column based on planning status
                                     if 'Deal ID' in df_edit.columns:
                                         df_edit['Select'] = df_edit['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE', None]
+                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']  # Exclude None (no status)
                                         )
                                     else:
                                         df_edit.insert(0, "Select", True)
@@ -2373,7 +2396,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                            "Status": st.column_config.SelectboxColumn(
+                                                "Q4 Status", 
+                                                width="small",
+                                                options=['IN', 'MAYBE', 'OUT', '—']
+                                            ),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2381,10 +2408,22 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c != 'Select'],
+                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status']],
                                         hide_index=True,
                                         key=f"edit_{key}_{rep_name}"
                                     )
+                                    
+                                    # Update planning status from edited data
+                                    if 'Deal ID' in edited.columns and 'Status' in edited.columns:
+                                        for idx, row in edited.iterrows():
+                                            deal_id = str(row['Deal ID']).strip()
+                                            status = str(row['Status']).strip().upper()
+                                            if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
+                                                st.session_state[planning_key][deal_id] = status
+                                            elif status == '—' and deal_id in st.session_state[planning_key]:
+                                                # Remove from planning status if set to dash
+                                                del st.session_state[planning_key][deal_id]
+                                    
                                     selected_rows = edited[edited['Select']].copy()
                                     export_buckets[key] = selected_rows
                                     
@@ -2417,7 +2456,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         hide_index=True,
                                         use_container_width=True
                                     )
-                                    export_buckets[key] = df
+                                    # Capture all rows for export (with Status column)
+                                    if 'Deal ID' in df.columns:
+                                        df_export = df.copy()
+                                        df_export['Status'] = df_export['Deal ID'].apply(
+                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
+                                        )
+                                        export_buckets[key] = df_export
+                                    else:
+                                        export_buckets[key] = df
 
     # --- 5. CALCULATE RESULTS ---
     
@@ -2563,20 +2610,37 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
             
             for _, row in df.iterrows():
+                # Get planning status for this item
+                # First try to get it from the dataframe (if it's been edited), otherwise from session state
+                if 'Status' in row and pd.notna(row['Status']) and str(row['Status']).strip() != '':
+                    planning_status = str(row['Status']).strip()
+                else:
+                    if key in ns_categories:  # NetSuite
+                        item_id_for_status = row.get('SO #', '')
+                    else:  # HubSpot
+                        item_id_for_status = row.get('Deal ID', row.get('Record ID', ''))
+                    
+                    planning_status = get_planning_status(item_id_for_status) if item_id_for_status else '—'
+                    if not planning_status:
+                        planning_status = '—'
+                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
-                    item_id = row.get('SO#', row.get('Document Number', ''))
+                    item_id = row.get('SO #', row.get('Document Number', ''))
                     cust = row.get('Customer', '')
-                    date_val = row.get('Key Date', '')
+                    date_val = row.get('Classification Date', row.get('Key Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
+                    # NetSuite uses 'Amount' not 'Amount_Numeric'
+                    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
                     rep = row.get('Sales Rep', rep_name)
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
-                    item_id = row.get('Record ID', '')
+                    item_id = row.get('Deal ID', row.get('Record ID', ''))
                     cust = row.get('Account Name', row.get('Deal Name', '')) # Fallback to Deal Name if Account missing
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
+                    amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
                     rep = row.get('Deal Owner', rep_name)
                 
                 export_data.append({
@@ -2585,7 +2649,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Customer': cust,
                     'Order/Deal Type': deal_type,
                     'Date': str(date_val),
-                    'Amount': row.get('Amount_Numeric', 0),
+                    'Amount': amount,
+                    'Q4 Status': planning_status,
                     'Rep': rep
                 })
 
