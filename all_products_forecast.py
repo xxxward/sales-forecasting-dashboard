@@ -12,13 +12,14 @@ Navigation: "📦 All Products Forecast" in sidebar menu
 
 Data Sources:
 -------------
-Invoice Line Item tab (A:X):
+Invoice Line Item tab (A:AA):
 A: Document Number, B: Status, C: Date, D: Due Date, E: Created From
 F: Created By, G: Customer, H: Item, I: Quantity, J: Account
 K: Period, L: Department, M: Amount, N: Amount (Transaction Total)
 O: Amount Remaining, P: CSM, Q: Date Closed, R: Sales Rep
 S: External ID, T: Amount (Shipping), U: Amount (Transaction Tax Total)
-V: Terms, W: Calyx | Item Type, X: PI || Product Type
+V: Terms, W: Calyx | Item Type, X: PI || Product Type, Y: [Reserved], Z: [Reserved]
+AA: Item Description
 
 Sales Order Line Item tab (A:W):
 A: Internal ID, B: Document Number, C: Item, D: Amount, E: Item Rate
@@ -43,7 +44,7 @@ from datetime import datetime, timedelta
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 CACHE_TTL = 3600
-CACHE_VERSION = "all_products_v3"  # Updated version for three-source
+CACHE_VERSION = "all_products_v4"  # Updated version for Item Description column (AA)
 
 # Confidence factor for active sales orders (95% typically convert to invoices)
 ACTIVE_ORDER_CONFIDENCE = 0.95
@@ -92,10 +93,10 @@ def load_invoice_line_items(version=CACHE_VERSION):
         service = build('sheets', 'v4', credentials=creds)
         sheet = service.spreadsheets()
         
-        # Load from Invoice Line Item tab - columns A:X
+        # Load from Invoice Line Item tab - columns A:AA (includes Item Description in column AA)
         result = sheet.values().get(
             spreadsheetId=SPREADSHEET_ID,
-            range="Invoice Line Item!A:X"
+            range="Invoice Line Item!A:AA"
         ).execute()
         
         values = result.get('values', [])
@@ -2555,7 +2556,7 @@ def calculate_order_cadence_planning(dates):
     return sum(gaps) / len(gaps) if gaps else None
 
 
-def generate_customer_2026_forecast(customer_df, date_col='Date', item_col='Item', qty_col='Quantity', amount_col='Amount'):
+def generate_customer_2026_forecast(customer_df, date_col='Date', item_col='Item Description', qty_col='Quantity', amount_col='Amount'):
     """Generate 2026 forecast based on customer's historical patterns"""
     
     try:
@@ -2612,11 +2613,12 @@ def render_customer_planning_tab(df):
         return
     
     # Check required columns
-    required_cols = ['Customer', 'Date', 'Item', 'Quantity', 'Amount']
+    required_cols = ['Customer', 'Date', 'Item Description', 'Quantity', 'Amount']
     missing_cols = [col for col in required_cols if col not in df.columns]
     
     if missing_cols:
         st.error(f"Missing required columns: {', '.join(missing_cols)}")
+        st.info("Note: This tab requires the 'Item Description' column (column AA) in the Invoice Line Item sheet")
         return
     
     # Clean data
@@ -2634,7 +2636,7 @@ def render_customer_planning_tab(df):
     # =========================
     st.markdown("### 🔍 Filters")
     
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2 = st.columns(2)
     
     with filter_col1:
         # Date range filter
@@ -2656,6 +2658,13 @@ def render_customer_planning_tab(df):
             start_date = end_date = date_range
     
     with filter_col2:
+        # Customer selection
+        customers = sorted(df_clean['Customer'].unique())
+        selected_customer = st.selectbox("Customer", customers, key="customer_planning_select")
+    
+    filter_col3, filter_col4 = st.columns(2)
+    
+    with filter_col3:
         # Product Type filter
         if 'Product Type' in df_clean.columns:
             product_types = ['All'] + sorted(df_clean['Product Type'].dropna().unique().tolist())
@@ -2667,10 +2676,16 @@ def render_customer_planning_tab(df):
         else:
             selected_product_type = 'All'
     
-    with filter_col3:
-        # Customer selection
-        customers = sorted(df_clean['Customer'].unique())
-        selected_customer = st.selectbox("Customer", customers, key="customer_planning_select")
+    with filter_col4:
+        # Item Description filter (multiselect for specific SKUs)
+        items = sorted(df_clean['Item Description'].dropna().unique().tolist())
+        selected_items = st.multiselect(
+            "Item Description (optional)",
+            items,
+            default=[],
+            key="customer_planning_items",
+            help="Select specific item descriptions to filter. Leave empty to show all items."
+        )
     
     # Apply filters
     df_filtered = df_clean.copy()
@@ -2685,9 +2700,9 @@ def render_customer_planning_tab(df):
     if selected_product_type != 'All' and 'Product Type' in df_filtered.columns:
         df_filtered = df_filtered[df_filtered['Product Type'] == selected_product_type]
     
-    # Apply product type filter
-    if selected_product_type != 'All' and 'Product Type' in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered['Product Type'] == selected_product_type]
+    # Apply item description filter
+    if selected_items:
+        df_filtered = df_filtered[df_filtered['Item Description'].isin(selected_items)]
     
     # Filter for selected customer
     customer_df = df_filtered[df_filtered['Customer'] == selected_customer].copy()
@@ -2695,13 +2710,18 @@ def render_customer_planning_tab(df):
     
     if customer_df.empty:
         st.warning(f"No data found for {selected_customer} with the selected filters")
-        st.info("Try adjusting the date range or product type filter")
+        st.info("Try adjusting the date range, product type, or item filters")
         return
     
     # Show active filters and record count
     filter_info = f"📅 {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
     if selected_product_type != 'All':
         filter_info += f" | 🏷️ {selected_product_type}"
+    if selected_items:
+        if len(selected_items) == 1:
+            filter_info += f" | 📦 {selected_items[0]}"
+        else:
+            filter_info += f" | 📦 {len(selected_items)} items selected"
     filter_info += f" | 📊 {len(customer_df)} orders"
     
     st.caption(filter_info)
@@ -2712,7 +2732,7 @@ def render_customer_planning_tab(df):
     st.markdown("### 📋 Order History")
     
     # Prepare display columns
-    display_cols = ['Date', 'Item']
+    display_cols = ['Date', 'Item Description']
     
     # Add Product Type if available
     if 'Product Type' in customer_df.columns:
@@ -2784,7 +2804,7 @@ def render_customer_planning_tab(df):
     
     # Top products
     st.markdown("**Top 5 Products by Quantity**")
-    top_products = customer_df.groupby('Item')['Quantity'].sum().sort_values(ascending=False).head(5)
+    top_products = customer_df.groupby('Item Description')['Quantity'].sum().sort_values(ascending=False).head(5)
     top_products_df = pd.DataFrame({
         'Product': top_products.index,
         'Total Quantity': top_products.values
@@ -2800,11 +2820,17 @@ def render_customer_planning_tab(df):
     if selected_product_type != 'All':
         st.info(f"ℹ️ Forecast is filtered to show only **{selected_product_type}** products")
     
+    if selected_items:
+        if len(selected_items) == 1:
+            st.info(f"ℹ️ Forecast is filtered to show only **{selected_items[0]}**")
+        else:
+            st.info(f"ℹ️ Forecast is filtered to show only **{len(selected_items)} selected items**")
+    
     # Generate forecast
     forecast_df = generate_customer_2026_forecast(
         customer_df, 
         date_col='Date', 
-        item_col='Item', 
+        item_col='Item Description', 
         qty_col='Quantity', 
         amount_col='Amount'
     )
@@ -2881,6 +2907,11 @@ def render_customer_planning_tab(df):
             summary_buffer.write(f"Date Range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}\n")
             if selected_product_type != 'All':
                 summary_buffer.write(f"Product Type Filter: {selected_product_type}\n")
+            if selected_items:
+                if len(selected_items) == 1:
+                    summary_buffer.write(f"Item Description Filter: {selected_items[0]}\n")
+                else:
+                    summary_buffer.write(f"Item Description Filters: {', '.join(selected_items)}\n")
             summary_buffer.write(f"\n")
             summary_buffer.write(f"HISTORICAL SUMMARY\n")
             summary_buffer.write(f"Total Orders: {total_orders}\n")
