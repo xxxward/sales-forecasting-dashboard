@@ -2224,20 +2224,19 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         )
                         
                         if is_checked:
-                            # ALWAYS capture to export_buckets when checked, unless overridden by customize mode
-                            if key not in export_buckets and not df.empty:
-                                df_default = df.copy()
-                                if 'SO #' in df_default.columns:
-                                    df_default['Status'] = df_default['SO #'].apply(
-                                        lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                            # ALWAYS capture default to export_buckets when checked (gets overridden by customize mode)
+                            df_default = df.copy()
+                            if 'SO #' in df_default.columns:
+                                df_default['Status'] = df_default['SO #'].apply(
+                                    lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                                )
+                                # Only filter if planning status exists
+                                if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
+                                    df_default['_should_include'] = df_default['SO #'].apply(
+                                        lambda so: get_planning_status(so) in ['IN', 'MAYBE']
                                     )
-                                    # Only filter if planning status exists
-                                    if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                        df_default['_should_include'] = df_default['SO #'].apply(
-                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']
-                                        )
-                                        df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
-                                export_buckets[key] = df_default
+                                    df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
+                            export_buckets[key] = df_default
                             
                             with st.expander(f"🔎 View Orders ({data['label']})", expanded=False):
                                 if not df.empty:
@@ -2410,20 +2409,19 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         key=checkbox_key
                     )
                     if is_checked:
-                        # ALWAYS capture to export_buckets when checked, unless overridden by customize mode
-                        if key not in export_buckets and not df.empty:
-                            df_default = df.copy()
-                            if 'Deal ID' in df_default.columns:
-                                df_default['Status'] = df_default['Deal ID'].apply(
-                                    lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
+                        # ALWAYS capture default to export_buckets when checked (gets overridden by customize mode)
+                        df_default = df.copy()
+                        if 'Deal ID' in df_default.columns:
+                            df_default['Status'] = df_default['Deal ID'].apply(
+                                lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
+                            )
+                            # Only filter if planning status exists
+                            if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
+                                df_default['_should_include'] = df_default['Deal ID'].apply(
+                                    lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
                                 )
-                                # Only filter if planning status exists
-                                if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
-                                    df_default['_should_include'] = df_default['Deal ID'].apply(
-                                        lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
-                                    )
-                                    df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
-                            export_buckets[key] = df_default
+                                df_default = df_default[df_default['_should_include']].drop(columns=['_should_include'])
+                        export_buckets[key] = df_default
                         
                         with st.expander(f"🔎 View Deals ({data['label']})"):
                             if not df.empty:
