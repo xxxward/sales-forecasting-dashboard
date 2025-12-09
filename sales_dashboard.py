@@ -2312,14 +2312,16 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 
                                         # Capture filtered rows for export
                                         selected_rows = edited[edited['Select']].copy()
-                                        export_buckets[key] = selected_rows
-                                
+                                        
                                         current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                         st.caption(f"Selected: ${current_total:,.0f}")
-                                
+                                        
                                         # Helpful note about auto-check
                                         if 'Status' in edited.columns:
                                             st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
+                                        
+                                        # ALWAYS set export_buckets in customize mode
+                                        export_buckets[key] = selected_rows
                                 else:
                                     # Read-only view
                                     if display_cols:
@@ -2490,7 +2492,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                                 edited.at[idx, 'Select'] = False
                                     
                                     selected_rows = edited[edited['Select']].copy()
-                                    export_buckets[key] = selected_rows
                                     
                                     current_total = selected_rows['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${current_total:,.0f}")
@@ -2498,6 +2499,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     # Helpful note about auto-check
                                     if 'Status' in edited.columns:
                                         st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
+                                    
+                                    # ALWAYS set export_buckets in customize mode
+                                    export_buckets[key] = selected_rows
                                 else:
                                     # Read-only view
                                     df_readonly = df.copy()
