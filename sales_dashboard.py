@@ -1953,24 +1953,30 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # Add Classification Date based on category
         # date_col_name indicates which date field was used to classify this SO
         if date_col_name == 'Promise':
-            # For PF with date: use Customer Promise Date or Projected Date
+            # For PF with date: use Customer Promise Date OR Projected Date (whichever exists)
+            d['Classification Date'] = '—'
+            
+            # Try Customer Promise Date first
             if 'Display_Promise_Date' in d.columns:
-                d['Classification Date'] = pd.to_datetime(d['Display_Promise_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
-            elif 'Display_Projected_Date' in d.columns:
-                d['Classification Date'] = pd.to_datetime(d['Display_Projected_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
-            else:
-                d['Classification Date'] = '—'
+                promise_dates = pd.to_datetime(d['Display_Promise_Date'], errors='coerce')
+                d.loc[promise_dates.notna(), 'Classification Date'] = promise_dates.dt.strftime('%Y-%m-%d')
+            
+            # Fill in with Projected Date where Promise Date is missing
+            if 'Display_Projected_Date' in d.columns:
+                projected_dates = pd.to_datetime(d['Display_Projected_Date'], errors='coerce')
+                mask = (d['Classification Date'] == '—') & projected_dates.notna()
+                if mask.any():
+                    d.loc[mask, 'Classification Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
+                    
         elif date_col_name == 'PA_Date':
             # For PA with date: use Pending Approval Date
             if 'Display_PA_Date' in d.columns:
-                d['Classification Date'] = pd.to_datetime(d['Display_PA_Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('—')
+                pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
+                d['Classification Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('—')
             else:
                 d['Classification Date'] = '—'
-        elif date_col_name == 'PF_Date':
-            # For PF no date: show dash
-            d['Classification Date'] = '—'
         else:
-            # For PA no date or other: show dash
+            # For PF/PA no date or other: show dash
             d['Classification Date'] = '—'
         
         return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
@@ -2487,6 +2493,19 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     if orders.columns.duplicated().any():
         orders = orders.loc[:, ~orders.columns.duplicated()]
     
+    # === ADD DISPLAY COLUMNS FOR UI ===
+    # Add display columns to orders dataframe
+    orders['Display_SO_Num'] = get_col_by_index(orders, 1)  # Col B: SO#
+    orders['Display_Type'] = get_col_by_index(orders, 17).fillna('Standard')  # Col R: Order Type
+    orders['Display_Promise_Date'] = pd.to_datetime(get_col_by_index(orders, 11), errors='coerce')  # Col L: Promise Date
+    orders['Display_Projected_Date'] = pd.to_datetime(get_col_by_index(orders, 12), errors='coerce')  # Col M: Projected Date
+    
+    # PA Date handling
+    if 'Pending Approval Date' in orders.columns:
+        orders['Display_PA_Date'] = pd.to_datetime(orders['Pending Approval Date'], errors='coerce')
+    else:
+        orders['Display_PA_Date'] = pd.to_datetime(get_col_by_index(orders, 29), errors='coerce')  # Col AD: PA Date
+    
     # Define Q4 2025 date range
     q4_start = pd.Timestamp('2025-10-01')
     q4_end = pd.Timestamp('2025-12-31')
@@ -2984,6 +3003,13 @@ def create_gap_chart(metrics, title):
     )
     
     return fig
+
+# Helper function to safely grab a column by index
+def get_col_by_index(df, index):
+    """Safely grab a column by index with fallback"""
+    if df is not None and not df.empty and len(df.columns) > index:
+        return df.iloc[:, index]
+    return pd.Series(dtype=object)
 
 def create_enhanced_waterfall_chart(metrics, title, mode):
     """
