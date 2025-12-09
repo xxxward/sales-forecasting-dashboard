@@ -1932,6 +1932,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         # Mark this file as processed
                         st.session_state[processed_key] = file_id
                         
+                        # Note: Checkbox states will be set when rendering the checkboxes below
+                        # We'll use the planning status to determine default values
+                        
                         # Rerun to apply the planning status to checkboxes
                         st.rerun()
                     else:
@@ -1955,8 +1958,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         # Clear button
         if st.session_state[planning_key]:
             if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+                # Clear planning status
                 st.session_state[planning_key] = {}
                 st.session_state[processed_key] = None
+                
+                # Clear all checkbox states for this rep
+                keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                
                 st.rerun()
     
     st.markdown("---")
@@ -2178,24 +2188,28 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
                 
                 # Determine default checkbox value based on planning status
-                default_checked = False
-                if not df.empty and 'SO #' in df.columns:
-                    # Check planning status for items in this category
-                    statuses = [get_planning_status(so_num) for so_num in df['SO #']]
-                    in_count = statuses.count('IN')
-                    maybe_count = statuses.count('MAYBE')
-                    out_count = statuses.count('OUT')
-                    
-                    # Auto-check if majority are IN or MAYBE
-                    if in_count + maybe_count > out_count:
-                        default_checked = True
+                checkbox_key = f"chk_{key}_{rep_name}"
+                
+                # Only set default if we have planning status and this key hasn't been set yet
+                if st.session_state[planning_key] and checkbox_key not in st.session_state:
+                    if not df.empty and 'SO #' in df.columns:
+                        # Check planning status for items in this category
+                        statuses = [get_planning_status(so_num) for so_num in df['SO #']]
+                        in_count = statuses.count('IN')
+                        maybe_count = statuses.count('MAYBE')
+                        out_count = statuses.count('OUT')
+                        
+                        # Auto-check if majority are IN or MAYBE
+                        if in_count + maybe_count > out_count:
+                            st.session_state[checkbox_key] = True
+                        else:
+                            st.session_state[checkbox_key] = False
                 
                 # Always show PA_Date even if 0 to debug
                 if val > 0 or key == 'PA_Date':
                     is_checked = st.checkbox(
                         f"{data['label']}: ${val:,.0f}", 
-                        value=default_checked, 
-                        key=f"chk_{key}_{rep_name}"
+                        key=checkbox_key
                     )
                     
                     if is_checked:
@@ -2215,6 +2229,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 if enable_edit and display_cols:
                                     df_edit = df.copy()
                                     
+                                    # Add Status column based on planning status
+                                    if 'SO #' in df_edit.columns:
+                                        df_edit['Status'] = df_edit['SO #'].apply(
+                                            lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                                        )
+                                    
                                     # Pre-fill Select column based on planning status
                                     if 'SO #' in df_edit.columns:
                                         df_edit['Select'] = df_edit['SO #'].apply(
@@ -2228,17 +2248,24 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         cols = ['Select'] + [c for c in df_edit.columns if c != 'Select']
                                         df_edit = df_edit[cols]
                                     
+                                    # Add Status to display columns if it exists
+                                    display_with_status = ['Select']
+                                    if 'Status' in df_edit.columns:
+                                        display_with_status.append('Status')
+                                    display_with_status.extend(display_cols)
+                                    
                                     edited = st.data_editor(
-                                        df_edit[['Select'] + display_cols],
+                                        df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "SO #": st.column_config.TextColumn("SO #", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
                                             "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=display_cols,
+                                        disabled=[c for c in display_with_status if c != 'Select'],
                                         hide_index=True,
                                         key=f"edit_{key}_{rep_name}"
                                     )
@@ -2249,11 +2276,23 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
-                                    # Read-only
+                                    # Read-only view
                                     if display_cols:
+                                        df_readonly = df.copy()
+                                        
+                                        # Add Status column for read-only view too
+                                        if 'SO #' in df_readonly.columns:
+                                            df_readonly['Status'] = df_readonly['SO #'].apply(
+                                                lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                                            )
+                                            display_readonly = ['Status'] + display_cols
+                                        else:
+                                            display_readonly = display_cols
+                                        
                                         st.dataframe(
-                                            df[display_cols],
+                                            df_readonly[display_readonly],
                                             column_config={
+                                                "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                                 "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                                 "SO #": st.column_config.TextColumn("SO #", width="small"),
                                                 "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2274,23 +2313,27 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 val = df['Amount_Numeric'].sum() if not df.empty else 0
                 
                 # Determine default checkbox value based on planning status
-                default_checked = False
-                if not df.empty and 'Deal ID' in df.columns:
-                    # Check planning status for items in this category
-                    statuses = [get_planning_status(deal_id) for deal_id in df['Deal ID']]
-                    in_count = statuses.count('IN')
-                    maybe_count = statuses.count('MAYBE')
-                    out_count = statuses.count('OUT')
-                    
-                    # Auto-check if majority are IN or MAYBE
-                    if in_count + maybe_count > out_count:
-                        default_checked = True
+                checkbox_key = f"chk_{key}_{rep_name}"
+                
+                # Only set default if we have planning status and this key hasn't been set yet
+                if st.session_state[planning_key] and checkbox_key not in st.session_state:
+                    if not df.empty and 'Deal ID' in df.columns:
+                        # Check planning status for items in this category
+                        statuses = [get_planning_status(deal_id) for deal_id in df['Deal ID']]
+                        in_count = statuses.count('IN')
+                        maybe_count = statuses.count('MAYBE')
+                        out_count = statuses.count('OUT')
+                        
+                        # Auto-check if majority are IN or MAYBE
+                        if in_count + maybe_count > out_count:
+                            st.session_state[checkbox_key] = True
+                        else:
+                            st.session_state[checkbox_key] = False
                 
                 if val > 0:
                     is_checked = st.checkbox(
                         f"{data['label']}: ${val:,.0f}", 
-                        value=default_checked, 
-                        key=f"chk_{key}_{rep_name}"
+                        key=checkbox_key
                     )
                     if is_checked:
                         with st.expander(f"🔎 View Deals ({data['label']})"):
@@ -2300,6 +2343,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 
                                 if enable_edit:
                                     df_edit = df.copy()
+                                    
+                                    # Add Status column based on planning status
+                                    if 'Deal ID' in df_edit.columns:
+                                        df_edit['Status'] = df_edit['Deal ID'].apply(
+                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
+                                        )
                                     
                                     # Pre-fill Select column based on planning status
                                     if 'Deal ID' in df_edit.columns:
@@ -2314,10 +2363,17 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         cols_order = ['Select'] + [c for c in df_edit.columns if c != 'Select']
                                         df_edit = df_edit[cols_order]
                                     
+                                    # Add Status to display columns if it exists
+                                    display_with_status = ['Select']
+                                    if 'Status' in df_edit.columns:
+                                        display_with_status.append('Status')
+                                    display_with_status.extend(cols)
+                                    
                                     edited = st.data_editor(
-                                        df_edit[['Select'] + cols],
+                                        df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2325,7 +2381,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=cols,
+                                        disabled=[c for c in display_with_status if c != 'Select'],
                                         hide_index=True,
                                         key=f"edit_{key}_{rep_name}"
                                     )
@@ -2335,9 +2391,22 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     current_total = selected_rows['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
+                                    # Read-only view
+                                    df_readonly = df.copy()
+                                    
+                                    # Add Status column for read-only view too
+                                    if 'Deal ID' in df_readonly.columns:
+                                        df_readonly['Status'] = df_readonly['Deal ID'].apply(
+                                            lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
+                                        )
+                                        display_readonly = ['Status'] + cols
+                                    else:
+                                        display_readonly = cols
+                                    
                                     st.dataframe(
-                                        df[cols],
+                                        df_readonly[display_readonly],
                                         column_config={
+                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
