@@ -2629,18 +2629,82 @@ def render_customer_planning_tab(df):
     df_clean = df_clean.dropna(subset=['Customer', 'Date'])
     df_clean = df_clean[df_clean['Quantity'] > 0]
     
-    # Customer selection
-    st.markdown("### Select Customer")
-    customers = sorted(df_clean['Customer'].unique())
-    selected_customer = st.selectbox("Customer", customers, key="customer_planning_select")
+    # =========================
+    # FILTERS
+    # =========================
+    st.markdown("### 🔍 Filters")
+    
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    
+    with filter_col1:
+        # Date range filter
+        min_date = df_clean['Date'].min()
+        max_date = df_clean['Date'].max()
+        
+        date_range = st.date_input(
+            "Date Range",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date,
+            key="customer_planning_date_range"
+        )
+        
+        # Handle single date or date range
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            start_date, end_date = date_range
+        else:
+            start_date = end_date = date_range
+    
+    with filter_col2:
+        # Product Type filter
+        if 'Product Type' in df_clean.columns:
+            product_types = ['All'] + sorted(df_clean['Product Type'].dropna().unique().tolist())
+            selected_product_type = st.selectbox(
+                "Product Type",
+                product_types,
+                key="customer_planning_product_type"
+            )
+        else:
+            selected_product_type = 'All'
+    
+    with filter_col3:
+        # Customer selection
+        customers = sorted(df_clean['Customer'].unique())
+        selected_customer = st.selectbox("Customer", customers, key="customer_planning_select")
+    
+    # Apply filters
+    df_filtered = df_clean.copy()
+    
+    # Apply date range filter
+    df_filtered = df_filtered[
+        (df_filtered['Date'] >= pd.Timestamp(start_date)) & 
+        (df_filtered['Date'] <= pd.Timestamp(end_date))
+    ]
+    
+    # Apply product type filter
+    if selected_product_type != 'All' and 'Product Type' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['Product Type'] == selected_product_type]
+    
+    # Apply product type filter
+    if selected_product_type != 'All' and 'Product Type' in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered['Product Type'] == selected_product_type]
     
     # Filter for selected customer
-    customer_df = df_clean[df_clean['Customer'] == selected_customer].copy()
+    customer_df = df_filtered[df_filtered['Customer'] == selected_customer].copy()
     customer_df = customer_df.sort_values('Date', ascending=False)
     
     if customer_df.empty:
-        st.warning(f"No data found for {selected_customer}")
+        st.warning(f"No data found for {selected_customer} with the selected filters")
+        st.info("Try adjusting the date range or product type filter")
         return
+    
+    # Show active filters and record count
+    filter_info = f"📅 {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+    if selected_product_type != 'All':
+        filter_info += f" | 🏷️ {selected_product_type}"
+    filter_info += f" | 📊 {len(customer_df)} orders"
+    
+    st.caption(filter_info)
     
     st.markdown("---")
     
@@ -2668,11 +2732,12 @@ def render_customer_planning_tab(df):
     st.dataframe(history_display, use_container_width=True, height=400)
     
     # Download button for history
+    date_suffix = f"_{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"
     csv_history = customer_df[display_cols].to_csv(index=False)
     st.download_button(
         label="📥 Download Order History",
         data=csv_history,
-        file_name=f"{selected_customer}_order_history.csv",
+        file_name=f"{selected_customer}_order_history{date_suffix}.csv",
         mime="text/csv",
         key="download_history"
     )
@@ -2730,7 +2795,10 @@ def render_customer_planning_tab(df):
     
     # ===== SECTION 3: 2026 Forecast =====
     st.markdown("### 🔮 2026 Forecast")
-    st.write("Based on historical order patterns, here's a projected forecast for 2026. You can edit the quantities before exporting.")
+    st.write(f"Based on {selected_customer}'s historical order patterns from the filtered date range. You can edit the quantities before exporting.")
+    
+    if selected_product_type != 'All':
+        st.info(f"ℹ️ Forecast is filtered to show only **{selected_product_type}** products")
     
     # Generate forecast
     forecast_df = generate_customer_2026_forecast(
@@ -2798,7 +2866,7 @@ def render_customer_planning_tab(df):
             st.download_button(
                 label="📥 Download 2026 Forecast",
                 data=csv_forecast,
-                file_name=f"{selected_customer}_2026_forecast.csv",
+                file_name=f"{selected_customer}_2026_forecast{date_suffix}.csv",
                 mime="text/csv",
                 key="download_forecast"
             )
@@ -2810,6 +2878,9 @@ def render_customer_planning_tab(df):
             summary_buffer.write(f"CUSTOMER ORDER SUMMARY AND 2026 FORECAST\n")
             summary_buffer.write(f"Customer: {selected_customer}\n")
             summary_buffer.write(f"Report Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+            summary_buffer.write(f"Date Range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}\n")
+            if selected_product_type != 'All':
+                summary_buffer.write(f"Product Type Filter: {selected_product_type}\n")
             summary_buffer.write(f"\n")
             summary_buffer.write(f"HISTORICAL SUMMARY\n")
             summary_buffer.write(f"Total Orders: {total_orders}\n")
@@ -2826,7 +2897,7 @@ def render_customer_planning_tab(df):
             st.download_button(
                 label="📥 Download Complete Summary",
                 data=summary_export,
-                file_name=f"{selected_customer}_complete_summary.csv",
+                file_name=f"{selected_customer}_complete_summary{date_suffix}.csv",
                 mime="text/csv",
                 key="download_complete"
             )
