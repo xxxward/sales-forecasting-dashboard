@@ -1878,38 +1878,71 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if planning_key not in st.session_state:
             st.session_state[planning_key] = {}
         
+        # Track if we've already processed this file to prevent rerun loop
+        processed_key = f'processed_file_{rep_name}'
+        if processed_key not in st.session_state:
+            st.session_state[processed_key] = None
+        
         if uploaded_file is not None:
-            try:
-                # Read the file
-                if uploaded_file.name.endswith('.csv'):
-                    # Try reading with header first
-                    planning_df = pd.read_csv(uploaded_file)
-                    # If no proper header, read without header
-                    if planning_df.shape[1] == 2 and planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
-                        uploaded_file.seek(0)  # Reset file pointer
-                        planning_df = pd.read_csv(uploaded_file, header=None, names=['ID', 'Status'])
-                else:
-                    planning_df = pd.read_excel(uploaded_file)
-                    # If no proper header, assume first two columns are ID and Status
-                    if planning_df.shape[1] >= 2:
-                        if planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
-                            planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:])
-                
-                # Ensure we have the right columns
-                if len(planning_df.columns) >= 2:
-                    # Use first two columns as ID and Status
-                    if 'ID' not in planning_df.columns or 'Status' not in planning_df.columns:
-                        planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:]) if len(planning_df.columns) > 2 else ['ID', 'Status']
+            # Check if this is a new file (different from last processed)
+            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+            
+            if st.session_state[processed_key] != file_id:
+                try:
+                    # Read the file
+                    if uploaded_file.name.endswith('.csv'):
+                        # Try reading with header first
+                        planning_df = pd.read_csv(uploaded_file)
+                        # If no proper header, read without header
+                        if planning_df.shape[1] == 2 and planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
+                            uploaded_file.seek(0)  # Reset file pointer
+                            planning_df = pd.read_csv(uploaded_file, header=None, names=['ID', 'Status'])
+                    else:
+                        planning_df = pd.read_excel(uploaded_file)
+                        # If no proper header, assume first two columns are ID and Status
+                        if planning_df.shape[1] >= 2:
+                            if planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
+                                planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:])
                     
-                    # Store in session state as dict: {ID: Status}
-                    # Normalize status to uppercase for consistent matching
-                    st.session_state[planning_key] = dict(zip(
-                        planning_df['ID'].astype(str).str.strip(),
-                        planning_df['Status'].astype(str).str.strip().str.upper()
-                    ))
-                    
-                    # Show summary
-                    status_counts = planning_df['Status'].str.upper().value_counts()
+                    # Ensure we have the right columns
+                    if len(planning_df.columns) >= 2:
+                        # Use first two columns as ID and Status
+                        if 'ID' not in planning_df.columns or 'Status' not in planning_df.columns:
+                            planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:]) if len(planning_df.columns) > 2 else ['ID', 'Status']
+                        
+                        # Store in session state as dict: {ID: Status}
+                        # Normalize status to uppercase for consistent matching
+                        st.session_state[planning_key] = dict(zip(
+                            planning_df['ID'].astype(str).str.strip(),
+                            planning_df['Status'].astype(str).str.strip().str.upper()
+                        ))
+                        
+                        # Show summary
+                        status_counts = planning_df['Status'].str.upper().value_counts()
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("✅ IN", status_counts.get('IN', 0))
+                        with col2:
+                            st.metric("⚠️ MAYBE", status_counts.get('MAYBE', 0))
+                        with col3:
+                            st.metric("❌ OUT", status_counts.get('OUT', 0))
+                        
+                        st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses")
+                        
+                        # Mark this file as processed
+                        st.session_state[processed_key] = file_id
+                        
+                        # Rerun to apply the planning status to checkboxes
+                        st.rerun()
+                    else:
+                        st.error("❌ File must have at least 2 columns (ID and Status)")
+                except Exception as e:
+                    st.error(f"❌ Error reading file: {str(e)}")
+            else:
+                # File already processed, show summary
+                if st.session_state[planning_key]:
+                    from collections import Counter
+                    status_counts = Counter(st.session_state[planning_key].values())
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.metric("✅ IN", status_counts.get('IN', 0))
@@ -1917,17 +1950,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         st.metric("⚠️ MAYBE", status_counts.get('MAYBE', 0))
                     with col3:
                         st.metric("❌ OUT", status_counts.get('OUT', 0))
-                    
                     st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses")
-                else:
-                    st.error("❌ File must have at least 2 columns (ID and Status)")
-            except Exception as e:
-                st.error(f"❌ Error reading file: {str(e)}")
         
         # Clear button
         if st.session_state[planning_key]:
             if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
                 st.session_state[planning_key] = {}
+                st.session_state[processed_key] = None
                 st.rerun()
     
     st.markdown("---")
