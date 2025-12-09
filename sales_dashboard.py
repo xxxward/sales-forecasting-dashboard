@@ -2076,6 +2076,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             return df
         d = df.copy()
         
+        # CRITICAL: Ensure Sales Rep column is preserved
+        # Sales Rep should already exist from Rep Master (Column AF)
+        if 'Sales Rep' not in d.columns and 'Rep Master' in d.columns:
+            d['Sales Rep'] = d['Rep Master']
+        
         # Add display columns
         if 'Internal ID' in d.columns:
             d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
@@ -2141,6 +2146,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         def format_hs_view(df):
             if df.empty: return df
             d = df.copy()
+            
+            # CRITICAL: Ensure Deal Owner column is preserved
+            # Deal Owner should already exist from column mapping
+            if 'Deal Owner' not in d.columns:
+                if 'Deal Owner First Name' in d.columns and 'Deal Owner Last Name' in d.columns:
+                    d['Deal Owner'] = d['Deal Owner First Name'].fillna('') + ' ' + d['Deal Owner Last Name'].fillna('')
+                    d['Deal Owner'] = d['Deal Owner'].str.strip()
             
             # Add Deal ID column (from Record ID)
             if 'Record ID' in d.columns:
@@ -2582,8 +2594,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     # NetSuite uses 'Amount' not 'Amount_Numeric'
                     amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
-                    # Get Sales Rep - should exist in the dataframe
-                    rep = row.get('Sales Rep', '')
+                    # Get Sales Rep - try multiple column names
+                    rep = row.get('Sales Rep', row.get('Rep Master', ''))
+                    # Ensure it's not NaN
+                    if pd.isna(rep) or rep is None or str(rep).lower() in ['nan', 'none', '']:
+                        rep = ''
+                    else:
+                        rep = str(rep).strip()
                 else: # HubSpot
                     item_type = f"HubSpot - {label}"
                     item_id = row.get('Deal ID', row.get('Record ID', ''))
@@ -2591,8 +2608,19 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
-                    # Get Deal Owner - should exist in the dataframe
+                    # Get Deal Owner - try multiple possible column names
                     rep = row.get('Deal Owner', '')
+                    # If Deal Owner is empty, try to construct from First + Last Name
+                    if pd.isna(rep) or rep is None or str(rep).strip() == '':
+                        first = row.get('Deal Owner First Name', '')
+                        last = row.get('Deal Owner Last Name', '')
+                        if first or last:
+                            rep = f"{first} {last}".strip()
+                    # Ensure it's not NaN
+                    if pd.isna(rep) or rep is None or str(rep).lower() in ['nan', 'none', '']:
+                        rep = ''
+                    else:
+                        rep = str(rep).strip()
                 
                 # Clean up date value - handle timestamps and blank dates
                 if pd.isna(date_val) or date_val == '' or date_val == '—':
