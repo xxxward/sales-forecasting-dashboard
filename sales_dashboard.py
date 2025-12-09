@@ -1634,7 +1634,7 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column to determine Q4 vs Q1
+                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
                 q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
                 return q4_deals[q4_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
             
@@ -1650,7 +1650,7 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column to determine Q4 vs Q1
+                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
                 q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
                 return q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
             
@@ -1669,7 +1669,7 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column to determine Q4 vs Q1
+                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
                 q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
                 return q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
             
@@ -1843,6 +1843,103 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("### 🎯 Build Your Own Forecast")
     st.caption("Select components to include. Expand sections to see details.")
     
+    # --- IN/OUT/MAYBE UPLOAD FEATURE ---
+    st.markdown("---")
+    with st.expander("📋 Upload Q4 Planning Status (IN/OUT/MAYBE)", expanded=False):
+        st.markdown("""
+        Upload a CSV or Excel file with SO#/Deal IDs and their Q4 status.
+        
+        **Expected format:**
+        ```
+        SO13501,In
+        SO13502,Out
+        32533096097,Maybe
+        32533096098,In
+        ```
+        
+        - Column A: ID (e.g., "SO13501" or "32533096097")
+        - Column B: Status ("In", "Out", or "Maybe")
+        
+        **Status meanings:**
+        - **In** = Automatically checked in forecast
+        - **Maybe** = Automatically checked (can adjust manually)
+        - **Out** = Unchecked by default
+        """)
+        
+        uploaded_file = st.file_uploader(
+            "Upload planning status file",
+            type=['csv', 'xlsx', 'xls'],
+            key=f"planning_upload_{rep_name}",
+            help="CSV or Excel file with SO#/Deal IDs and their In/Out/Maybe status"
+        )
+        
+        # Initialize session state for planning status
+        planning_key = f'planning_status_{rep_name}'
+        if planning_key not in st.session_state:
+            st.session_state[planning_key] = {}
+        
+        if uploaded_file is not None:
+            try:
+                # Read the file
+                if uploaded_file.name.endswith('.csv'):
+                    # Try reading with header first
+                    planning_df = pd.read_csv(uploaded_file)
+                    # If no proper header, read without header
+                    if planning_df.shape[1] == 2 and planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
+                        uploaded_file.seek(0)  # Reset file pointer
+                        planning_df = pd.read_csv(uploaded_file, header=None, names=['ID', 'Status'])
+                else:
+                    planning_df = pd.read_excel(uploaded_file)
+                    # If no proper header, assume first two columns are ID and Status
+                    if planning_df.shape[1] >= 2:
+                        if planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
+                            planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:])
+                
+                # Ensure we have the right columns
+                if len(planning_df.columns) >= 2:
+                    # Use first two columns as ID and Status
+                    if 'ID' not in planning_df.columns or 'Status' not in planning_df.columns:
+                        planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:]) if len(planning_df.columns) > 2 else ['ID', 'Status']
+                    
+                    # Store in session state as dict: {ID: Status}
+                    # Normalize status to uppercase for consistent matching
+                    st.session_state[planning_key] = dict(zip(
+                        planning_df['ID'].astype(str).str.strip(),
+                        planning_df['Status'].astype(str).str.strip().str.upper()
+                    ))
+                    
+                    # Show summary
+                    status_counts = planning_df['Status'].str.upper().value_counts()
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("✅ IN", status_counts.get('IN', 0))
+                    with col2:
+                        st.metric("⚠️ MAYBE", status_counts.get('MAYBE', 0))
+                    with col3:
+                        st.metric("❌ OUT", status_counts.get('OUT', 0))
+                    
+                    st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses")
+                else:
+                    st.error("❌ File must have at least 2 columns (ID and Status)")
+            except Exception as e:
+                st.error(f"❌ Error reading file: {str(e)}")
+        
+        # Clear button
+        if st.session_state[planning_key]:
+            if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+                st.session_state[planning_key] = {}
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # Helper function to get planning status for an ID
+    def get_planning_status(id_value):
+        """Get planning status (IN/OUT/MAYBE) for a given SO# or Deal ID"""
+        if not id_value or pd.isna(id_value):
+            return None
+        id_str = str(id_value).strip()
+        return st.session_state[planning_key].get(id_str)
+    
     # --- 1. PREPARE DATA LOCALLY ---
     
     # Helper to grab a column by Index (Safe Fallback)
@@ -1996,7 +2093,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
 
     hs_dfs = {}
     if not hs_data.empty:
-        # Use the Q1 2026 Spillover column from Google Sheet as source of truth
+        # Use the Q1 2026 Spillover column from Google Sheet (spreadsheet formula now handles PA date logic)
         # Q4 deals: NOT marked as Q1 spillover
         # Q1 deals: Explicitly marked as Q1 2026
         q4 = hs_data.get('Q1 2026 Spillover') != 'Q1 2026'
@@ -2051,9 +2148,26 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 df = ns_dfs.get(key, pd.DataFrame())
                 val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
                 
+                # Determine default checkbox value based on planning status
+                default_checked = False
+                if not df.empty and 'SO #' in df.columns:
+                    # Check planning status for items in this category
+                    statuses = [get_planning_status(so_num) for so_num in df['SO #']]
+                    in_count = statuses.count('IN')
+                    maybe_count = statuses.count('MAYBE')
+                    out_count = statuses.count('OUT')
+                    
+                    # Auto-check if majority are IN or MAYBE
+                    if in_count + maybe_count > out_count:
+                        default_checked = True
+                
                 # Always show PA_Date even if 0 to debug
                 if val > 0 or key == 'PA_Date':
-                    is_checked = st.checkbox(f"{data['label']}: ${val:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
+                    is_checked = st.checkbox(
+                        f"{data['label']}: ${val:,.0f}", 
+                        value=default_checked, 
+                        key=f"chk_{key}_{rep_name}"
+                    )
                     
                     if is_checked:
                         with st.expander(f"🔎 View Orders ({data['label']})"):
@@ -2071,7 +2185,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 
                                 if enable_edit and display_cols:
                                     df_edit = df.copy()
-                                    df_edit.insert(0, "Select", True)
+                                    
+                                    # Pre-fill Select column based on planning status
+                                    if 'SO #' in df_edit.columns:
+                                        df_edit['Select'] = df_edit['SO #'].apply(
+                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE', None]
+                                        )
+                                    else:
+                                        df_edit.insert(0, "Select", True)
+                                    
+                                    # Move Select to first position if not already
+                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
+                                        cols = ['Select'] + [c for c in df_edit.columns if c != 'Select']
+                                        df_edit = df_edit[cols]
+                                    
                                     edited = st.data_editor(
                                         df_edit[['Select'] + display_cols],
                                         column_config={
@@ -2117,8 +2244,25 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 df = hs_dfs.get(key, pd.DataFrame())
                 val = df['Amount_Numeric'].sum() if not df.empty else 0
                 
+                # Determine default checkbox value based on planning status
+                default_checked = False
+                if not df.empty and 'Deal ID' in df.columns:
+                    # Check planning status for items in this category
+                    statuses = [get_planning_status(deal_id) for deal_id in df['Deal ID']]
+                    in_count = statuses.count('IN')
+                    maybe_count = statuses.count('MAYBE')
+                    out_count = statuses.count('OUT')
+                    
+                    # Auto-check if majority are IN or MAYBE
+                    if in_count + maybe_count > out_count:
+                        default_checked = True
+                
                 if val > 0:
-                    is_checked = st.checkbox(f"{data['label']}: ${val:,.0f}", value=False, key=f"chk_{key}_{rep_name}")
+                    is_checked = st.checkbox(
+                        f"{data['label']}: ${val:,.0f}", 
+                        value=default_checked, 
+                        key=f"chk_{key}_{rep_name}"
+                    )
                     if is_checked:
                         with st.expander(f"🔎 View Deals ({data['label']})"):
                             if not df.empty:
@@ -2127,7 +2271,20 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 
                                 if enable_edit:
                                     df_edit = df.copy()
-                                    df_edit.insert(0, "Select", True)
+                                    
+                                    # Pre-fill Select column based on planning status
+                                    if 'Deal ID' in df_edit.columns:
+                                        df_edit['Select'] = df_edit['Deal ID'].apply(
+                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE', None]
+                                        )
+                                    else:
+                                        df_edit.insert(0, "Select", True)
+                                    
+                                    # Move Select to first position if not already
+                                    if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
+                                        cols_order = ['Select'] + [c for c in df_edit.columns if c != 'Select']
+                                        df_edit = df_edit[cols_order]
+                                    
                                     edited = st.data_editor(
                                         df_edit[['Select'] + cols],
                                         column_config={
@@ -2437,7 +2594,7 @@ def calculate_team_metrics(deals_df, dashboard_df):
     total_quota = dashboard_df['Quota'].sum()
     total_orders = dashboard_df['NetSuite Orders'].sum()
     
-    # Filter for Q4 fulfillment only using Q1 2026 Spillover column
+    # Filter for Q4 fulfillment only (spreadsheet formula now handles PA date logic)
     deals_q4 = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
     
     # Calculate Expect/Commit forecast (Q4 only)
@@ -2445,9 +2602,6 @@ def calculate_team_metrics(deals_df, dashboard_df):
     
     # Calculate Best Case/Opportunity (Q4 only)
     best_opp = deals_q4[deals_q4['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
-    
-    # Note: Q1 spillover is now calculated by aggregating rep-level q1_spillover_total values
-    # This ensures consistency with the Q1 2026 Spillover column logic
     
     # Calculate gap
     gap = total_quota - expect_commit - total_orders
@@ -2655,11 +2809,11 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     # Filter deals for this rep - ALL Q4 2025 deals (regardless of spillover)
     rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
     
-    # NEW: Check if we have the Q1 2026 Spillover column
+    # Check if we have the Q1 2026 Spillover column (spreadsheet formula now handles PA date logic)
     has_spillover_column = 'Q1 2026 Spillover' in rep_deals.columns
     
     if has_spillover_column:
-        # Separate deals by shipping timeline
+        # Separate deals by shipping timeline using spreadsheet formula
         rep_deals['Ships_In_Q4'] = rep_deals['Q1 2026 Spillover'] != 'Q1 2026'
         rep_deals['Ships_In_Q1'] = rep_deals['Q1 2026 Spillover'] == 'Q1 2026'
         
@@ -3207,7 +3361,7 @@ def create_status_breakdown_chart(deals_df, rep_name=None):
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
-    # Only show Q4 deals (not Q1 spillover)
+    # Only show Q4 deals (spreadsheet formula now handles PA date logic)
     deals_df = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
     
     if deals_df.empty:
@@ -3243,7 +3397,7 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
-    # Only show Q4 deals (not Q1 spillover)
+    # Only show Q4 deals (spreadsheet formula now handles PA date logic)
     deals_df = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
     
     if deals_df.empty:
