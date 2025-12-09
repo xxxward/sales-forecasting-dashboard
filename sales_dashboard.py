@@ -2285,38 +2285,38 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         num_rows="fixed"
                                     )
                                 
-                                    # Update planning status from edited data
-                                    if 'SO #' in edited.columns and 'Status' in edited.columns:
-                                        for idx, row in edited.iterrows():
-                                            so_num = str(row['SO #']).strip()
-                                            status = str(row['Status']).strip().upper()
-                                            if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
-                                                st.session_state[planning_key][so_num] = status
-                                            elif status == '—' and so_num in st.session_state[planning_key]:
-                                                # Remove from planning status if set to dash
-                                                del st.session_state[planning_key][so_num]
+                                        # Update planning status from edited data
+                                        if 'SO #' in edited.columns and 'Status' in edited.columns:
+                                            for idx, row in edited.iterrows():
+                                                so_num = str(row['SO #']).strip()
+                                                status = str(row['Status']).strip().upper()
+                                                if status != '—' and status in ['IN', 'MAYBE', 'OUT']:
+                                                    st.session_state[planning_key][so_num] = status
+                                                elif status == '—' and so_num in st.session_state[planning_key]:
+                                                    # Remove from planning status if set to dash
+                                                    del st.session_state[planning_key][so_num]
                                 
-                                    # Auto-update Select checkboxes based on Status changes
-                                    if 'Status' in edited.columns and 'Select' in edited.columns:
-                                        for idx in edited.index:
-                                            status = str(edited.at[idx, 'Status']).strip().upper()
-                                            # Auto-check if Status is IN or MAYBE
-                                            if status in ['IN', 'MAYBE']:
-                                                edited.at[idx, 'Select'] = True
-                                            # Auto-uncheck if Status is OUT or dash
-                                            elif status in ['OUT', '—']:
-                                                edited.at[idx, 'Select'] = False
+                                        # Auto-update Select checkboxes based on Status changes
+                                        if 'Status' in edited.columns and 'Select' in edited.columns:
+                                            for idx in edited.index:
+                                                status = str(edited.at[idx, 'Status']).strip().upper()
+                                                # Auto-check if Status is IN or MAYBE
+                                                if status in ['IN', 'MAYBE']:
+                                                    edited.at[idx, 'Select'] = True
+                                                # Auto-uncheck if Status is OUT or dash
+                                                elif status in ['OUT', '—']:
+                                                    edited.at[idx, 'Select'] = False
                                 
-                                    # Capture filtered rows for export
-                                    selected_rows = edited[edited['Select']].copy()
-                                    export_buckets[key] = selected_rows
+                                        # Capture filtered rows for export
+                                        selected_rows = edited[edited['Select']].copy()
+                                        export_buckets[key] = selected_rows
                                 
-                                    current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
-                                    st.caption(f"Selected: ${current_total:,.0f}")
+                                        current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
+                                        st.caption(f"Selected: ${current_total:,.0f}")
                                 
-                                    # Helpful note about auto-check
-                                    if 'Status' in edited.columns:
-                                        st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
+                                        # Helpful note about auto-check
+                                        if 'Status' in edited.columns:
+                                            st.caption("💡 Tip: Changing Status to IN/MAYBE auto-selects the item, OUT/— auto-deselects")
                                 else:
                                     # Read-only view
                                     if display_cols:
