@@ -2251,7 +2251,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         if 'SO #' in df_edit.columns:
                                             def should_select(so_num):
                                                 status = get_planning_status(so_num)
-                                                # Only select if status is explicitly IN or MAYBE
+                                                # If no planning status exists, default to True (selected)
+                                                if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
+                                                    return True
+                                                # If planning status exists, only select IN/MAYBE
                                                 return status in ['IN', 'MAYBE']
                                             
                                             df_edit['Select'] = df_edit['SO #'].apply(should_select)
@@ -2345,15 +2348,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             use_container_width=True
                                         )
                                     # Capture all rows for export (with Status column)
-                                    # BUT only include items with IN/MAYBE status (or items without status tracking)
+                                    # BUT only include items with IN/MAYBE status IF planning status exists
                                     if 'SO #' in df.columns:
                                         df_export = df.copy()
                                         df_export['Status'] = df_export['SO #'].apply(
                                             lambda so: get_planning_status(so) if get_planning_status(so) else '—'
                                         )
-                                        # Filter: Only include items where Status is IN, MAYBE, or dash (no planning status set)
-                                        # This matches the checkbox behavior
-                                        if st.session_state[planning_key]:  # Only filter if planning status exists
+                                        # Only filter if planning status has actual entries
+                                        if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
                                             df_export['_should_include'] = df_export['SO #'].apply(
                                                 lambda so: get_planning_status(so) in ['IN', 'MAYBE']
                                             )
@@ -2412,7 +2414,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     if 'Deal ID' in df_edit.columns:
                                         def should_select(deal_id):
                                             status = get_planning_status(deal_id)
-                                            # Only select if status is explicitly IN or MAYBE
+                                            # If no planning status exists, default to True (selected)
+                                            if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
+                                                return True
+                                            # If planning status exists, only select IN/MAYBE
                                             return status in ['IN', 'MAYBE']
                                         
                                         df_edit['Select'] = df_edit['Deal ID'].apply(should_select)
@@ -2506,14 +2511,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         use_container_width=True
                                     )
                                     # Capture all rows for export (with Status column)
-                                    # BUT only include items with IN/MAYBE status (or items without status tracking)
+                                    # BUT only include items with IN/MAYBE status IF planning status exists
                                     if 'Deal ID' in df.columns:
                                         df_export = df.copy()
                                         df_export['Status'] = df_export['Deal ID'].apply(
                                             lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
                                         )
-                                        # Filter: Only include items where Status is IN, MAYBE, or dash (no planning status set)
-                                        if st.session_state[planning_key]:  # Only filter if planning status exists
+                                        # Only filter if planning status has actual entries
+                                        if st.session_state[planning_key] and len(st.session_state[planning_key]) > 0:
                                             df_export['_should_include'] = df_export['Deal ID'].apply(
                                                 lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
                                             )
@@ -2541,9 +2546,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     df_with_cat['Status'] = df_with_cat['SO #'].apply(
                         lambda so: get_planning_status(so) if get_planning_status(so) else '—'
                     )
-                    df_with_cat['Select'] = df_with_cat['SO #'].apply(
-                        lambda so: get_planning_status(so) in ['IN', 'MAYBE']
-                    )
+                    # Default to True if no planning status, otherwise filter by IN/MAYBE
+                    if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
+                        df_with_cat['Select'] = True
+                    else:
+                        df_with_cat['Select'] = df_with_cat['SO #'].apply(
+                            lambda so: get_planning_status(so) in ['IN', 'MAYBE']
+                        )
                 all_items.append(df_with_cat)
         
         # Add HubSpot items
@@ -2558,9 +2567,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     df_with_cat['Status'] = df_with_cat['Deal ID'].apply(
                         lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
                     )
-                    df_with_cat['Select'] = df_with_cat['Deal ID'].apply(
-                        lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
-                    )
+                    # Default to True if no planning status, otherwise filter by IN/MAYBE
+                    if not st.session_state[planning_key] or len(st.session_state[planning_key]) == 0:
+                        df_with_cat['Select'] = True
+                    else:
+                        df_with_cat['Select'] = df_with_cat['Deal ID'].apply(
+                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE']
+                        )
                 all_items.append(df_with_cat)
         
         if all_items:
@@ -2662,9 +2675,16 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 
                 if not cat_items.empty:
                     # Map back to original dataframe structure
+                    # IMPORTANT: Keep the original Amount/Amount_Numeric columns for calculations
                     if key in ns_categories:
+                        # NetSuite - ensure 'Amount' column exists
+                        if 'Amount' not in cat_items.columns and 'Amount_Display' in cat_items.columns:
+                            cat_items['Amount'] = cat_items['Amount_Display']
                         export_buckets[key] = cat_items
                     else:
+                        # HubSpot - ensure 'Amount_Numeric' column exists
+                        if 'Amount_Numeric' not in cat_items.columns and 'Amount_Display' in cat_items.columns:
+                            cat_items['Amount_Numeric'] = cat_items['Amount_Display']
                         export_buckets[key] = cat_items
             
             # Show selection summary
