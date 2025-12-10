@@ -1276,9 +1276,9 @@ def load_all_data():
         st.warning("Could not find required columns in NS Sales Orders")
         sales_orders_df = pd.DataFrame()
     
-    return deals_df, dashboard_df, invoices_df, sales_orders_df
+    return deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df
 
-def store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df):
+def store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df=None):
     """
     Store a snapshot of current data for change tracking
     """
@@ -4486,7 +4486,7 @@ def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
         else:
             st.metric("Accuracy", "N/A", delta="No boss data")
 
-def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df):
+def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df=None):
     """Display the team-level dashboard"""
    
     st.title("🎯 Team Sales Dashboard - Q4 2025")
@@ -4899,7 +4899,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         st.dataframe(section2_df, use_container_width=True, hide_index=True)
     else:
         st.warning("📭 No additional forecast items")
-def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df):
+def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df=None):
     """Display individual rep dashboard with drill-down capability - REDESIGNED"""
     
     st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
@@ -5375,10 +5375,10 @@ def main():
     
     # Load data
     with st.spinner("Loading data from Google Sheets..."):
-        deals_df, dashboard_df, invoices_df, sales_orders_df = load_all_data()
+        deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df = load_all_data()
     
     # Store snapshot for change tracking
-    store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df)
+    store_snapshot(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df)
     
     # Show change detection dialog if there's a previous snapshot
     if 'previous_snapshot' in st.session_state and st.session_state.previous_snapshot:
@@ -5424,7 +5424,7 @@ def main():
     
     # Display appropriate dashboard
     if view_mode == "Team Overview":
-        display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
+        display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df)
     elif view_mode == "Individual Rep":
         if not dashboard_df.empty:
             rep_name = st.selectbox(
@@ -5432,7 +5432,7 @@ def main():
                 options=dashboard_df['Rep Name'].tolist()
             )
             if rep_name:
-                display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df)
+                display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df)
         else:
             st.error("No rep data available")
     elif view_mode == "AI Insights":
