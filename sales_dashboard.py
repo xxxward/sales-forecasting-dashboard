@@ -2268,13 +2268,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             lambda so: get_planning_notes(so)
                                         )
                                     
-                                    # Pre-fill Select column based on planning status
-                                    if 'SO #' in df_edit.columns:
-                                        df_edit['Select'] = df_edit['SO #'].apply(
-                                            lambda so: get_planning_status(so) in ['IN', 'MAYBE', None]
-                                        )
-                                    else:
-                                        df_edit.insert(0, "Select", True)
+                                    # Add Select column (default all checked)
+                                    df_edit.insert(0, "Select", True)
                                     
                                     # Move Select to first position if not already
                                     if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
@@ -2321,17 +2316,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
                                                 if status != '—':
                                                     update_planning_data(so_num, status=status, notes=notes)
-                                    
-                                    # Auto-update Select checkboxes based on Status changes
-                                    if 'Status' in edited.columns and 'Select' in edited.columns:
-                                        for idx in edited.index:
-                                            status = str(edited.at[idx, 'Status']).strip().upper()
-                                            # Auto-check if Status is IN or MAYBE
-                                            if status in ['IN', 'MAYBE']:
-                                                edited.at[idx, 'Select'] = True
-                                            # Auto-uncheck if Status is OUT or dash
-                                            elif status in ['OUT', '—']:
-                                                edited.at[idx, 'Select'] = False
                                     
                                     # Capture filtered rows for export
                                     # Merge with original df to get all columns (including Sales Rep)
@@ -2426,13 +2410,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             lambda deal_id: get_planning_notes(deal_id)
                                         )
                                     
-                                    # Pre-fill Select column based on planning status
-                                    if 'Deal ID' in df_edit.columns:
-                                        df_edit['Select'] = df_edit['Deal ID'].apply(
-                                            lambda deal_id: get_planning_status(deal_id) in ['IN', 'MAYBE', None]
-                                        )
-                                    else:
-                                        df_edit.insert(0, "Select", True)
+                                    # Add Select column (default all checked)
+                                    df_edit.insert(0, "Select", True)
                                     
                                     # Move Select to first position if not already
                                     if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
@@ -2480,17 +2459,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
                                                 if status != '—':
                                                     update_planning_data(deal_id, status=status, notes=notes)
-                                    
-                                    # Auto-update Select checkboxes based on Status changes
-                                    if 'Status' in edited.columns and 'Select' in edited.columns:
-                                        for idx in edited.index:
-                                            status = str(edited.at[idx, 'Status']).strip().upper()
-                                            # Auto-check if Status is IN or MAYBE
-                                            if status in ['IN', 'MAYBE']:
-                                                edited.at[idx, 'Select'] = True
-                                            # Auto-uncheck if Status is OUT or dash
-                                            elif status in ['OUT', '—']:
-                                                edited.at[idx, 'Select'] = False
                                     
                                     # Capture filtered rows for export
                                     # Merge with original df to get all columns (including Deal Owner)
