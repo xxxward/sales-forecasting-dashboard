@@ -2334,7 +2334,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                                 edited.at[idx, 'Select'] = False
                                     
                                     # Capture filtered rows for export
-                                    selected_rows = edited[edited['Select']].copy()
+                                    # Merge with original df to get all columns (including Sales Rep)
+                                    selected_indices = edited[edited['Select']].index
+                                    selected_rows = df.loc[selected_indices].copy()
+                                    
+                                    # Add Status and Notes columns to export data
+                                    if 'SO #' in selected_rows.columns:
+                                        selected_rows['Q4 Status'] = selected_rows['SO #'].apply(get_planning_status)
+                                        selected_rows['Notes'] = selected_rows['SO #'].apply(get_planning_notes)
+                                    
                                     export_buckets[key] = selected_rows
                                     
                                     current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
@@ -2484,7 +2492,16 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             elif status in ['OUT', '—']:
                                                 edited.at[idx, 'Select'] = False
                                     
-                                    selected_rows = edited[edited['Select']].copy()
+                                    # Capture filtered rows for export
+                                    # Merge with original df to get all columns (including Deal Owner)
+                                    selected_indices = edited[edited['Select']].index
+                                    selected_rows = df.loc[selected_indices].copy()
+                                    
+                                    # Add Status and Notes columns to export data
+                                    if 'Deal ID' in selected_rows.columns:
+                                        selected_rows['Q4 Status'] = selected_rows['Deal ID'].apply(get_planning_status)
+                                        selected_rows['Notes'] = selected_rows['Deal ID'].apply(get_planning_notes)
+                                    
                                     export_buckets[key] = selected_rows
                                     
                                     current_total = selected_rows['Amount_Numeric'].sum()
@@ -2827,6 +2844,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 if not planning_status:
                     planning_status = ''  # Use empty string instead of em dash
                 
+                # Get planning notes for this item
+                planning_notes = get_planning_notes(item_id_for_status) if item_id_for_status else ''
+                if not planning_notes:
+                    planning_notes = ''
+                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
@@ -2900,6 +2922,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Date': date_val,
                     'Amount': amount,
                     'Q4 Status': planning_status,
+                    'Notes': planning_notes,
                     'Rep': rep
                 })
 
