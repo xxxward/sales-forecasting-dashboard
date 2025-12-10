@@ -687,160 +687,6 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         return pd.DataFrame()
 
-def update_google_sheet_q4_push(id_value, status=None, notes=None):
-    """
-    Update Q4 Push sheet in Google Sheets with new status/notes for a given ID
-    """
-    try:
-        # Check if secrets exist
-        if "gcp_service_account" not in st.secrets:
-            return False
-        
-        # Get credentials
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=SCOPES
-        )
-        
-        # Build service
-        service = build('sheets', 'v4', credentials=creds)
-        sheet = service.spreadsheets()
-        
-        # First, read the Q4 Push sheet to find the row
-        result = sheet.values().get(
-            spreadsheetId=SPREADSHEET_ID,
-            range="Q4 Push!A:C"
-        ).execute()
-        
-        values = result.get('values', [])
-        if not values:
-            return False
-        
-        # Find the row with matching ID
-        row_index = None
-        for i, row in enumerate(values):
-            if len(row) > 0 and str(row[0]).strip() == str(id_value).strip():
-                row_index = i + 1  # +1 because sheets are 1-indexed
-                break
-        
-        # If ID not found, append new row
-        if row_index is None:
-            # Append new row
-            new_row = [str(id_value), status or '', notes or '']
-            body = {'values': [new_row]}
-            sheet.values().append(
-                spreadsheetId=SPREADSHEET_ID,
-                range="Q4 Push!A:C",
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-            return True
-        
-        # Update existing row
-        update_range = f"Q4 Push!B{row_index}:C{row_index}"
-        update_values = [[status or '', notes or '']]
-        body = {'values': update_values}
-        
-        sheet.values().update(
-            spreadsheetId=SPREADSHEET_ID,
-            range=update_range,
-            valueInputOption='RAW',
-            body=body
-        ).execute()
-        
-        return True
-        
-    except Exception as e:
-        st.error(f"Error updating Google Sheet: {e}")
-        return False
-
-def batch_update_google_sheet_q4_push(updates_dict):
-    """
-    Batch update multiple items in Q4 Push sheet
-    updates_dict: {id_value: {'status': 'IN', 'notes': 'text'}, ...}
-    """
-    try:
-        if not updates_dict:
-            return True
-            
-        # Check if secrets exist
-        if "gcp_service_account" not in st.secrets:
-            return False
-        
-        # Get credentials
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
-        creds = service_account.Credentials.from_service_account_info(
-            creds_dict, scopes=SCOPES
-        )
-        
-        # Build service
-        service = build('sheets', 'v4', credentials=creds)
-        sheet = service.spreadsheets()
-        
-        # Read the Q4 Push sheet once to get current data
-        result = sheet.values().get(
-            spreadsheetId=SPREADSHEET_ID,
-            range="Q4 Push!A:C"
-        ).execute()
-        
-        values = result.get('values', [])
-        if not values:
-            values = [['Deal/Order ID', 'Status', 'Notes']]  # Add headers if empty
-        
-        # Build a map of ID -> row index
-        id_to_row = {}
-        for i, row in enumerate(values):
-            if len(row) > 0 and i > 0:  # Skip header row
-                id_to_row[str(row[0]).strip()] = i + 1  # 1-indexed
-        
-        # Prepare batch update
-        data = []
-        append_rows = []
-        
-        for id_value, item_data in updates_dict.items():
-            status = item_data.get('status', '')
-            notes = item_data.get('notes', '')
-            
-            if id_value in id_to_row:
-                # Update existing row
-                row_num = id_to_row[id_value]
-                data.append({
-                    'range': f'Q4 Push!B{row_num}:C{row_num}',
-                    'values': [[status, notes]]
-                })
-            else:
-                # Append new row
-                append_rows.append([id_value, status, notes])
-        
-        # Execute batch update for existing rows
-        if data:
-            body = {
-                'valueInputOption': 'RAW',
-                'data': data
-            }
-            sheet.values().batchUpdate(
-                spreadsheetId=SPREADSHEET_ID,
-                body=body
-            ).execute()
-        
-        # Append new rows
-        if append_rows:
-            body = {'values': append_rows}
-            sheet.values().append(
-                spreadsheetId=SPREADSHEET_ID,
-                range="Q4 Push!A:C",
-                valueInputOption='RAW',
-                body=body
-            ).execute()
-        
-        return True
-        
-    except Exception as e:
-        st.error(f"Error batch updating Google Sheet: {e}")
-        return False
-
 def apply_q4_fulfillment_logic(deals_df):
     """
     Apply lead time logic to filter out deals that close late in Q4 
@@ -2000,38 +1846,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("### 🎯 Build Your Own Forecast")
     st.caption("Select components to include. Expand sections to see details.")
     
-    # --- TOGGLE FOR INCLUDING MAYBES ---
-    toggle_col1, toggle_col2 = st.columns([1, 3])
-    with toggle_col1:
-        include_maybes_key = f'include_maybes_{rep_name}'
-        
-        # Track previous toggle state to detect changes
-        prev_toggle_key = f'prev_include_maybes_{rep_name}'
-        if prev_toggle_key not in st.session_state:
-            st.session_state[prev_toggle_key] = True  # Default to ON
-        
-        if include_maybes_key not in st.session_state:
-            st.session_state[include_maybes_key] = True  # Default to ON
-        
-        include_maybes = st.toggle(
-            "Include MAYBEs in Forecast",
-            value=st.session_state[include_maybes_key],
-            key=include_maybes_key,
-            help="When ON: Both IN and MAYBE items are counted in forecast. When OFF: Only IN items are counted."
-        )
-        
-        # Detect toggle change and show feedback
-        if st.session_state[prev_toggle_key] != include_maybes:
-            st.session_state[prev_toggle_key] = include_maybes
-            # Rerun to update calculations
-            st.rerun()
-    
-    with toggle_col2:
-        if include_maybes:
-            st.info("✅ **IN** + ⚠️ **MAYBE** items will be included in forecast totals")
-        else:
-            st.info("✅ Only **IN** items will be included in forecast totals")
-    
     # --- LOAD Q4 PLANNING STATUS FROM GOOGLE SHEET ---
     st.markdown("---")
     
@@ -2117,54 +1931,18 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     else:
         st.info("💡 No Q4 Push sheet data available. Add data to 'Q4 Push' sheet in Google Sheets to load planning status.")
     
-    # Sync and Clear buttons
+    # Clear button
     if st.session_state[planning_key]:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            # Sync button
-            sync_key = f'pending_sync_{rep_name}'
-            pending_count = len(st.session_state.get(sync_key, set()))
+        if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+            # Clear planning status
+            st.session_state[planning_key] = {}
             
-            if pending_count > 0:
-                sync_label = f"💾 Sync {pending_count} Changes to Google Sheets"
-            else:
-                sync_label = "✅ All Changes Synced"
+            # Clear all checkbox states for this rep
+            keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
+            for key in keys_to_clear:
+                del st.session_state[key]
             
-            if st.button(sync_label, key=f"sync_planning_{rep_name}", disabled=(pending_count == 0)):
-                # Batch update all pending changes
-                if sync_key in st.session_state and st.session_state[sync_key]:
-                    updates_dict = {}
-                    for item_id in st.session_state[sync_key]:
-                        if item_id in st.session_state[planning_key]:
-                            updates_dict[item_id] = st.session_state[planning_key][item_id]
-                    
-                    with st.spinner("Syncing to Google Sheets..."):
-                        success = batch_update_google_sheet_q4_push(updates_dict)
-                        if success:
-                            st.success(f"✅ Synced {len(updates_dict)} items to Google Sheets!")
-                            st.session_state[sync_key] = set()  # Clear pending
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error("❌ Failed to sync. Check your Google Sheets permissions.")
-        
-        with col2:
-            if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
-                # Clear planning status
-                st.session_state[planning_key] = {}
-                
-                # Clear pending sync
-                sync_key = f'pending_sync_{rep_name}'
-                if sync_key in st.session_state:
-                    st.session_state[sync_key] = set()
-                
-                # Clear all checkbox states for this rep
-                keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
-                for key in keys_to_clear:
-                    del st.session_state[key]
-                
-                st.rerun()
+            st.rerun()
     
     st.markdown("---")
     
@@ -2194,7 +1972,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         return ''
     
     def update_planning_data(id_value, status=None, notes=None):
-        """Update planning status and/or notes for a given ID (session state only)"""
+        """Update planning status and/or notes for a given ID"""
         if not id_value or pd.isna(id_value):
             return
         id_str = str(id_value).strip()
@@ -2215,12 +1993,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             st.session_state[planning_key][id_str]['status'] = status.upper()
         if notes is not None:
             st.session_state[planning_key][id_str]['notes'] = notes
-        
-        # Mark as pending sync (don't sync immediately to avoid rate limits)
-        sync_key = f'pending_sync_{rep_name}'
-        if sync_key not in st.session_state:
-            st.session_state[sync_key] = set()
-        st.session_state[sync_key].add(id_str)
     
     # --- 1. PREPARE DATA LOCALLY ---
     
@@ -2540,9 +2312,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         num_rows="fixed"
                                     )
                                     
-                                    # Track if any status/notes changed
-                                    status_changed = False
-                                    
                                     # Update planning status and notes from edited data
                                     if 'SO #' in edited.columns:
                                         for idx, row in edited.iterrows():
@@ -2550,15 +2319,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             if 'Status' in row:
                                                 status = str(row['Status']).strip().upper()
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
-                                                
-                                                # Check if status or notes changed
-                                                old_data = st.session_state[planning_key].get(so_num, {})
-                                                old_status = old_data.get('status', '') if isinstance(old_data, dict) else old_data
-                                                old_notes = old_data.get('notes', '') if isinstance(old_data, dict) else ''
-                                                
-                                                if status != '—' and (status != old_status or notes != old_notes):
+                                                if status != '—':
                                                     update_planning_data(so_num, status=status, notes=notes)
-                                                    status_changed = True
                                     
                                     # Auto-update Select checkboxes based on Status changes
                                     if 'Status' in edited.columns and 'Select' in edited.columns:
@@ -2577,10 +2339,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
-                                    
-                                    # If status changed, rerun to update totals
-                                    if status_changed:
-                                        st.rerun()
                                 else:
                                     # Read-only view
                                     if display_cols:
@@ -2705,9 +2463,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         num_rows="fixed"
                                     )
                                     
-                                    # Track if any status/notes changed
-                                    status_changed = False
-                                    
                                     # Update planning status and notes from edited data
                                     if 'Deal ID' in edited.columns:
                                         for idx, row in edited.iterrows():
@@ -2715,15 +2470,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             if 'Status' in row:
                                                 status = str(row['Status']).strip().upper()
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
-                                                
-                                                # Check if status or notes changed
-                                                old_data = st.session_state[planning_key].get(deal_id, {})
-                                                old_status = old_data.get('status', '') if isinstance(old_data, dict) else old_data
-                                                old_notes = old_data.get('notes', '') if isinstance(old_data, dict) else ''
-                                                
-                                                if status != '—' and (status != old_status or notes != old_notes):
+                                                if status != '—':
                                                     update_planning_data(deal_id, status=status, notes=notes)
-                                                    status_changed = True
                                     
                                     # Auto-update Select checkboxes based on Status changes
                                     if 'Status' in edited.columns and 'Select' in edited.columns:
@@ -2741,10 +2489,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     current_total = selected_rows['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${current_total:,.0f}")
-                                    
-                                    # If status changed, rerun to update totals
-                                    if status_changed:
-                                        st.rerun()
                                 else:
                                     # Read-only view
                                     df_readonly = df.copy()
@@ -2788,52 +2532,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         else:
             return 0
     
-    # Filter function to apply MAYBE toggle
-    def filter_by_status(df):
-        """Filter dataframe based on planning status and include_maybes toggle"""
-        if df.empty:
-            return df
-        
-        # Create a copy to avoid modifying original
-        filtered_df = df.copy()
-        
-        # Add status column by looking up each item
-        statuses = []
-        for _, row in filtered_df.iterrows():
-            item_id = row.get('SO #') or row.get('Deal ID')
-            status = get_planning_status(item_id)
-            # If status is empty or None, treat as blank
-            if not status or status == '—':
-                status = ''
-            statuses.append(status)
-        
-        filtered_df['_Status'] = statuses
-        
-        # Filter based on toggle
-        if include_maybes:
-            # Include IN, MAYBE, and items with no status (blank/checked items default to IN)
-            # If item is checked but has no status, include it
-            filtered_df = filtered_df[
-                (filtered_df['_Status'].isin(['IN', 'MAYBE'])) | 
-                (filtered_df['_Status'] == '')
-            ]
-        else:
-            # Include only IN and blank items that are checked (treat blank as IN if checked)
-            filtered_df = filtered_df[
-                (filtered_df['_Status'] == 'IN') | 
-                (filtered_df['_Status'] == '')
-            ]
-        
-        # Drop the temporary status column
-        filtered_df = filtered_df.drop(columns=['_Status'])
-        
-        return filtered_df
-    
-    # Apply filtering to all export buckets
-    filtered_export_buckets = {k: filter_by_status(df) for k, df in export_buckets.items()}
-    
-    selected_pending = sum(safe_sum(df) for k, df in filtered_export_buckets.items() if k in ns_categories)
-    selected_pipeline = sum(safe_sum(df) for k, df in filtered_export_buckets.items() if k in hs_categories)
+    selected_pending = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
+    selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
     
     total_forecast = invoiced_shipped + selected_pending + selected_pipeline
     gap_to_quota = quota - total_forecast
@@ -3127,11 +2827,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 if not planning_status:
                     planning_status = ''  # Use empty string instead of em dash
                 
-                # Get notes for this item
-                planning_notes = get_planning_notes(item_id_for_status) if item_id_for_status else ''
-                if not planning_notes:
-                    planning_notes = ''
-                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
@@ -3205,7 +2900,6 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Date': date_val,
                     'Amount': amount,
                     'Q4 Status': planning_status,
-                    'Notes': planning_notes,
                     'Rep': rep
                 })
 
