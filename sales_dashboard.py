@@ -1906,16 +1906,28 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     
                     # Ensure we have the right columns
                     if len(planning_df.columns) >= 2:
-                        # Use first two columns as ID and Status
+                        # Use first two columns as ID and Status, third as Notes (optional)
                         if 'ID' not in planning_df.columns or 'Status' not in planning_df.columns:
-                            planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:]) if len(planning_df.columns) > 2 else ['ID', 'Status']
+                            col_names = ['ID', 'Status']
+                            if len(planning_df.columns) >= 3:
+                                col_names.append('Notes')
+                            col_names += list(planning_df.columns[len(col_names):])
+                            planning_df.columns = col_names
                         
-                        # Store in session state as dict: {ID: Status}
+                        # Store in session state as dict: {ID: {'status': Status, 'notes': Notes}}
                         # Normalize status to uppercase for consistent matching
-                        st.session_state[planning_key] = dict(zip(
-                            planning_df['ID'].astype(str).str.strip(),
-                            planning_df['Status'].astype(str).str.strip().str.upper()
-                        ))
+                        st.session_state[planning_key] = {}
+                        for idx, row in planning_df.iterrows():
+                            id_str = str(row['ID']).strip()
+                            status_str = str(row['Status']).strip().upper()
+                            notes_str = str(row.get('Notes', '')).strip() if 'Notes' in planning_df.columns else ''
+                            # Clean up notes - if it's 'nan' or empty, set to empty string
+                            if notes_str.lower() in ['nan', 'none', '']:
+                                notes_str = ''
+                            st.session_state[planning_key][id_str] = {
+                                'status': status_str,
+                                'notes': notes_str
+                            }
                         
                         # Show summary
                         status_counts = planning_df['Status'].str.upper().value_counts()
@@ -1977,7 +1989,47 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if not id_value or pd.isna(id_value):
             return None
         id_str = str(id_value).strip()
-        return st.session_state[planning_key].get(id_str)
+        item_data = st.session_state[planning_key].get(id_str)
+        if item_data:
+            # Handle both old format (string) and new format (dict)
+            if isinstance(item_data, dict):
+                return item_data.get('status')
+            else:
+                return item_data  # Backward compatibility
+        return None
+    
+    def get_planning_notes(id_value):
+        """Get planning notes for a given SO# or Deal ID"""
+        if not id_value or pd.isna(id_value):
+            return ''
+        id_str = str(id_value).strip()
+        item_data = st.session_state[planning_key].get(id_str)
+        if item_data and isinstance(item_data, dict):
+            return item_data.get('notes', '')
+        return ''
+    
+    def update_planning_data(id_value, status=None, notes=None):
+        """Update planning status and/or notes for a given ID"""
+        if not id_value or pd.isna(id_value):
+            return
+        id_str = str(id_value).strip()
+        
+        # Get existing data or create new
+        if id_str not in st.session_state[planning_key]:
+            st.session_state[planning_key][id_str] = {'status': None, 'notes': ''}
+        
+        # Ensure it's a dict (convert old string format if needed)
+        if isinstance(st.session_state[planning_key][id_str], str):
+            st.session_state[planning_key][id_str] = {
+                'status': st.session_state[planning_key][id_str],
+                'notes': ''
+            }
+        
+        # Update fields
+        if status is not None:
+            st.session_state[planning_key][id_str]['status'] = status.upper()
+        if notes is not None:
+            st.session_state[planning_key][id_str]['notes'] = notes
     
     # --- 1. PREPARE DATA LOCALLY ---
     
@@ -2047,6 +2099,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     ns_categories = {
         'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External'},
         'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal'},
+        'PF_Spillover':  {'label': '⚠️ PF Spillover (Q1 2026)'},
         'PF_NoDate_Ext': {'label': 'PF (No Date) - External'},
         'PF_NoDate_Int': {'label': 'PF (No Date) - Internal'},
         'PA_Date':       {'label': 'Pending Approval (With Date)'},
@@ -2093,34 +2146,34 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if 'Display_Type' in d.columns:
             d['Type'] = d['Display_Type']
         
-        # Add Classification Date based on category
+        # Add Ship Date based on category
         # date_col_name indicates which date field was used to classify this SO
         if date_col_name == 'Promise':
             # For PF with date: use Customer Promise Date OR Projected Date (whichever exists)
-            d['Classification Date'] = ''
+            d['Ship Date'] = ''
             
             # Try Customer Promise Date first
             if 'Display_Promise_Date' in d.columns:
                 promise_dates = pd.to_datetime(d['Display_Promise_Date'], errors='coerce')
-                d.loc[promise_dates.notna(), 'Classification Date'] = promise_dates.dt.strftime('%Y-%m-%d')
+                d.loc[promise_dates.notna(), 'Ship Date'] = promise_dates.dt.strftime('%Y-%m-%d')
             
             # Fill in with Projected Date where Promise Date is missing
             if 'Display_Projected_Date' in d.columns:
                 projected_dates = pd.to_datetime(d['Display_Projected_Date'], errors='coerce')
-                mask = (d['Classification Date'] == '') & projected_dates.notna()
+                mask = (d['Ship Date'] == '') & projected_dates.notna()
                 if mask.any():
-                    d.loc[mask, 'Classification Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
+                    d.loc[mask, 'Ship Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
                     
         elif date_col_name == 'PA_Date':
             # For PA with date: use Pending Approval Date
             if 'Display_PA_Date' in d.columns:
                 pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
-                d['Classification Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
+                d['Ship Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
             else:
-                d['Classification Date'] = ''
+                d['Ship Date'] = ''
         else:
             # For PF/PA no date or other: show blank
-            d['Classification Date'] = ''
+            d['Ship Date'] = ''
         
         return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
     
@@ -2128,6 +2181,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     ns_dfs = {
         'PF_Date_Ext': format_ns_view(so_categories['pf_date_ext'], 'Promise'),
         'PF_Date_Int': format_ns_view(so_categories['pf_date_int'], 'Promise'),
+        'PF_Spillover': format_ns_view(so_categories['pf_spillover'], 'Promise'),
         'PF_NoDate_Ext': format_ns_view(so_categories['pf_nodate_ext'], 'PF_Date'),
         'PF_NoDate_Int': format_ns_view(so_categories['pf_nodate_int'], 'PF_Date'),
         'PA_Old': format_ns_view(so_categories['pa_old'], 'PA_Date'),
@@ -2235,7 +2289,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                 if 'SO #' in df.columns: display_cols.append('SO #')
                                 if 'Type' in df.columns: display_cols.append('Type')
                                 if 'Customer' in df.columns: display_cols.append('Customer')
-                                if 'Classification Date' in df.columns: display_cols.append('Classification Date')
+                                if 'Ship Date' in df.columns: display_cols.append('Ship Date')
                                 if 'Amount' in df.columns: display_cols.append('Amount')
                                 
                                 if enable_edit and display_cols:
@@ -2245,6 +2299,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     if 'SO #' in df_edit.columns:
                                         df_edit['Status'] = df_edit['SO #'].apply(
                                             lambda so: get_planning_status(so) if get_planning_status(so) else '—'
+                                        )
+                                        # Add Notes column
+                                        df_edit['Notes'] = df_edit['SO #'].apply(
+                                            lambda so: get_planning_notes(so)
                                         )
                                     
                                     # Pre-fill Select column based on planning status
@@ -2260,27 +2318,58 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         cols = ['Select'] + [c for c in df_edit.columns if c != 'Select']
                                         df_edit = df_edit[cols]
                                     
-                                    # Add Status to display columns if it exists
+                                    # Add Status and Notes to display columns if they exist
                                     display_with_status = ['Select']
                                     if 'Status' in df_edit.columns:
                                         display_with_status.append('Status')
+                                    if 'Notes' in df_edit.columns:
+                                        display_with_status.append('Notes')
                                     display_with_status.extend(display_cols)
                                     
                                     edited = st.data_editor(
                                         df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                            "Status": st.column_config.SelectboxColumn(
+                                                "Q4 Status",
+                                                width="small",
+                                                options=['IN', 'MAYBE', 'OUT', '—'],
+                                                required=False
+                                            ),
+                                            "Notes": st.column_config.TextColumn("Notes", width="medium"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "SO #": st.column_config.TextColumn("SO #", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
-                                            "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
+                                            "Ship Date": st.column_config.TextColumn("Ship Date", width="small"),
                                             "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c != 'Select'],
+                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status', 'Notes']],
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}",
+                                        num_rows="fixed"
                                     )
+                                    
+                                    # Update planning status and notes from edited data
+                                    if 'SO #' in edited.columns:
+                                        for idx, row in edited.iterrows():
+                                            so_num = str(row['SO #']).strip()
+                                            if 'Status' in row:
+                                                status = str(row['Status']).strip().upper()
+                                                notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
+                                                if status != '—':
+                                                    update_planning_data(so_num, status=status, notes=notes)
+                                    
+                                    # Auto-update Select checkboxes based on Status changes
+                                    if 'Status' in edited.columns and 'Select' in edited.columns:
+                                        for idx in edited.index:
+                                            status = str(edited.at[idx, 'Status']).strip().upper()
+                                            # Auto-check if Status is IN or MAYBE
+                                            if status in ['IN', 'MAYBE']:
+                                                edited.at[idx, 'Select'] = True
+                                            # Auto-uncheck if Status is OUT or dash
+                                            elif status in ['OUT', '—']:
+                                                edited.at[idx, 'Select'] = False
+                                    
                                     # Capture filtered rows for export
                                     selected_rows = edited[edited['Select']].copy()
                                     export_buckets[key] = selected_rows
@@ -2308,7 +2397,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                                 "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                                 "SO #": st.column_config.TextColumn("SO #", width="small"),
                                                 "Type": st.column_config.TextColumn("Type", width="small"),
-                                                "Classification Date": st.column_config.TextColumn("Class. Date", width="small"),
+                                                "Ship Date": st.column_config.TextColumn("Ship Date", width="small"),
                                                 "Amount": st.column_config.NumberColumn("Amount", format="$%d")
                                             },
                                             hide_index=True,
@@ -2361,6 +2450,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         df_edit['Status'] = df_edit['Deal ID'].apply(
                                             lambda deal_id: get_planning_status(deal_id) if get_planning_status(deal_id) else '—'
                                         )
+                                        # Add Notes column
+                                        df_edit['Notes'] = df_edit['Deal ID'].apply(
+                                            lambda deal_id: get_planning_notes(deal_id)
+                                        )
                                     
                                     # Pre-fill Select column based on planning status
                                     if 'Deal ID' in df_edit.columns:
@@ -2375,17 +2468,25 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         cols_order = ['Select'] + [c for c in df_edit.columns if c != 'Select']
                                         df_edit = df_edit[cols_order]
                                     
-                                    # Add Status to display columns if it exists
+                                    # Add Status and Notes to display columns if they exist
                                     display_with_status = ['Select']
                                     if 'Status' in df_edit.columns:
                                         display_with_status.append('Status')
+                                    if 'Notes' in df_edit.columns:
+                                        display_with_status.append('Notes')
                                     display_with_status.extend(cols)
                                     
                                     edited = st.data_editor(
                                         df_edit[display_with_status],
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                            "Status": st.column_config.SelectboxColumn(
+                                                "Q4 Status",
+                                                width="small",
+                                                options=['IN', 'MAYBE', 'OUT', '—'],
+                                                required=False
+                                            ),
+                                            "Notes": st.column_config.TextColumn("Notes", width="medium"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2393,10 +2494,33 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             "PA Date": st.column_config.TextColumn("PA Date", width="small"),
                                             "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
                                         },
-                                        disabled=[c for c in display_with_status if c != 'Select'],
+                                        disabled=[c for c in display_with_status if c not in ['Select', 'Status', 'Notes']],
                                         hide_index=True,
-                                        key=f"edit_{key}_{rep_name}"
+                                        key=f"edit_{key}_{rep_name}",
+                                        num_rows="fixed"
                                     )
+                                    
+                                    # Update planning status and notes from edited data
+                                    if 'Deal ID' in edited.columns:
+                                        for idx, row in edited.iterrows():
+                                            deal_id = str(row['Deal ID']).strip()
+                                            if 'Status' in row:
+                                                status = str(row['Status']).strip().upper()
+                                                notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
+                                                if status != '—':
+                                                    update_planning_data(deal_id, status=status, notes=notes)
+                                    
+                                    # Auto-update Select checkboxes based on Status changes
+                                    if 'Status' in edited.columns and 'Select' in edited.columns:
+                                        for idx in edited.index:
+                                            status = str(edited.at[idx, 'Status']).strip().upper()
+                                            # Auto-check if Status is IN or MAYBE
+                                            if status in ['IN', 'MAYBE']:
+                                                edited.at[idx, 'Select'] = True
+                                            # Auto-uncheck if Status is OUT or dash
+                                            elif status in ['OUT', '—']:
+                                                edited.at[idx, 'Select'] = False
+                                    
                                     selected_rows = edited[edited['Select']].copy()
                                     export_buckets[key] = selected_rows
                                     
@@ -2512,6 +2636,161 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             st.info("✅ No pending items to ship")
         elif gap_to_quota <= 0:
             st.success("🎉 Scenario Hits Quota!")
+    
+    # --- 5B. ENHANCED FORECAST BREAKDOWN ---
+    st.markdown("---")
+    st.markdown("### 📊 Detailed Forecast Breakdown")
+    
+    # Calculate IN/OUT/MAYBE totals from export_buckets
+    in_items = []
+    out_items = []
+    maybe_items = []
+    no_status_items = []
+    
+    for key, df in export_buckets.items():
+        if df.empty:
+            continue
+        for _, row in df.iterrows():
+            # Get ID
+            item_id = row.get('SO #') if 'SO #' in row else row.get('Deal ID')
+            if not item_id or pd.isna(item_id):
+                continue
+            
+            # Get status
+            status = get_planning_status(item_id)
+            
+            # Get amount
+            amount = row.get('Amount') if 'Amount' in row else row.get('Amount_Numeric', 0)
+            if pd.isna(amount):
+                amount = 0
+            
+            # Get rep
+            rep = row.get('Sales Rep') if 'Sales Rep' in row else row.get('Deal Owner', '')
+            if pd.isna(rep) or not rep:
+                rep = 'Unknown'
+            
+            # Get category label
+            label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
+            
+            # Categorize
+            if status == 'IN':
+                in_items.append({'Rep': rep, 'Amount': amount, 'Category': label, 'ID': item_id})
+            elif status == 'OUT':
+                out_items.append({'Rep': rep, 'Amount': amount, 'Category': label, 'ID': item_id})
+            elif status == 'MAYBE':
+                maybe_items.append({'Rep': rep, 'Amount': amount, 'Category': label, 'ID': item_id})
+            else:
+                no_status_items.append({'Rep': rep, 'Amount': amount, 'Category': label, 'ID': item_id})
+    
+    # Create summary tables
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown("#### ✅ IN Items")
+        if in_items:
+            in_df = pd.DataFrame(in_items)
+            in_by_rep = in_df.groupby('Rep')['Amount'].sum().reset_index()
+            in_by_rep.columns = ['Rep', 'Total']
+            in_by_rep = in_by_rep.sort_values('Total', ascending=False)
+            st.dataframe(
+                in_by_rep.style.format({'Total': '${:,.0f}'}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.metric("Total IN", f"${in_df['Amount'].sum():,.0f}", f"{len(in_df)} items")
+        else:
+            st.info("No IN items")
+    
+    with col2:
+        st.markdown("#### ⚠️ MAYBE Items")
+        if maybe_items:
+            maybe_df = pd.DataFrame(maybe_items)
+            maybe_by_rep = maybe_df.groupby('Rep')['Amount'].sum().reset_index()
+            maybe_by_rep.columns = ['Rep', 'Total']
+            maybe_by_rep = maybe_by_rep.sort_values('Total', ascending=False)
+            st.dataframe(
+                maybe_by_rep.style.format({'Total': '${:,.0f}'}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.metric("Total MAYBE", f"${maybe_df['Amount'].sum():,.0f}", f"{len(maybe_df)} items")
+        else:
+            st.info("No MAYBE items")
+    
+    with col3:
+        st.markdown("#### ❌ OUT Items")
+        if out_items:
+            out_df = pd.DataFrame(out_items)
+            out_by_rep = out_df.groupby('Rep')['Amount'].sum().reset_index()
+            out_by_rep.columns = ['Rep', 'Total']
+            out_by_rep = out_by_rep.sort_values('Total', ascending=False)
+            st.dataframe(
+                out_by_rep.style.format({'Total': '${:,.0f}'}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.metric("Total OUT", f"${out_df['Amount'].sum():,.0f}", f"{len(out_df)} items")
+        else:
+            st.info("No OUT items")
+    
+    with col4:
+        st.markdown("#### ➖ No Status")
+        if no_status_items:
+            no_status_df = pd.DataFrame(no_status_items)
+            no_status_by_rep = no_status_df.groupby('Rep')['Amount'].sum().reset_index()
+            no_status_by_rep.columns = ['Rep', 'Total']
+            no_status_by_rep = no_status_by_rep.sort_values('Total', ascending=False)
+            st.dataframe(
+                no_status_by_rep.style.format({'Total': '${:,.0f}'}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.metric("Total No Status", f"${no_status_df['Amount'].sum():,.0f}", f"{len(no_status_df)} items")
+        else:
+            st.info("All items have status")
+    
+    # Add rep-by-bucket breakdown
+    st.markdown("---")
+    st.markdown("### 📋 Forecast by Rep & Bucket")
+    
+    # Create breakdown similar to team dashboard tables
+    rep_bucket_summary = []
+    for key, df in export_buckets.items():
+        if not df.empty:
+            label = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
+            
+            # Determine which rep column to use
+            rep_col = 'Sales Rep' if 'Sales Rep' in df.columns else 'Deal Owner'
+            amount_col = 'Amount' if 'Amount' in df.columns else 'Amount_Numeric'
+            
+            if rep_col in df.columns and amount_col in df.columns:
+                by_rep = df.groupby(rep_col)[amount_col].sum()
+                for rep, amt in by_rep.items():
+                    if pd.notna(rep) and rep and str(rep).strip():
+                        rep_bucket_summary.append({
+                            'Rep': str(rep).strip(),
+                            'Bucket': label,
+                            'Amount': amt
+                        })
+    
+    if rep_bucket_summary:
+        summary_df = pd.DataFrame(rep_bucket_summary)
+        pivot_df = summary_df.pivot_table(
+            index='Rep',
+            columns='Bucket',
+            values='Amount',
+            aggfunc='sum',
+            fill_value=0
+        )
+        pivot_df['Total'] = pivot_df.sum(axis=1)
+        pivot_df = pivot_df.sort_values('Total', ascending=False)
+        
+        st.dataframe(
+            pivot_df.style.format('${:,.0f}'),
+            use_container_width=True
+        )
+    else:
+        st.info("No data to display")
 
     # --- 6. ROBUST EXPORT FUNCTIONALITY ---
     if total_forecast > 0:
@@ -2590,7 +2869,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     item_type = f"Sales Order - {label}"
                     item_id = row.get('SO #', row.get('Document Number', ''))
                     cust = row.get('Customer', '')
-                    date_val = row.get('Classification Date', row.get('Key Date', ''))
+                    date_val = row.get('Ship Date', row.get('Key Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
                     # NetSuite uses 'Amount' not 'Amount_Numeric'
                     amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
@@ -2814,7 +3093,8 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pf_nodate_int': pd.DataFrame(), 'pf_nodate_int_amount': 0,
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
-            'pa_old': pd.DataFrame(), 'pa_old_amount': 0
+            'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
+            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0
         }
     
     # Filter by rep if specified
@@ -2831,7 +3111,8 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pf_nodate_int': pd.DataFrame(), 'pf_nodate_int_amount': 0,
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
-            'pa_old': pd.DataFrame(), 'pa_old_amount': 0
+            'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
+            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0
         }
     
     # Remove duplicate columns
@@ -2851,9 +3132,11 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     else:
         orders['Display_PA_Date'] = pd.to_datetime(get_col_by_index(orders, 29), errors='coerce')  # Col AD: PA Date
     
-    # Define Q4 2025 date range
+    # Define Q4 2025 and Q1 2026 date ranges
     q4_start = pd.Timestamp('2025-10-01')
     q4_end = pd.Timestamp('2025-12-31')
+    q1_2026_start = pd.Timestamp('2026-01-01')
+    q1_2026_end = pd.Timestamp('2026-03-31')
     
     # === PENDING FULFILLMENT CATEGORIZATION ===
     pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
@@ -2869,18 +3152,34 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
                     return True
             return False
         
+        # NEW: Check if dates are in Q1 2026 range (Spillover)
+        def has_q1_2026_date(row):
+            if pd.notna(row.get('Customer Promise Date')):
+                if q1_2026_start <= row['Customer Promise Date'] <= q1_2026_end:
+                    return True
+            if pd.notna(row.get('Projected Date')):
+                if q1_2026_start <= row['Projected Date'] <= q1_2026_end:
+                    return True
+            return False
+        
         pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
+        pf_orders['Has_Q1_2026_Date'] = pf_orders.apply(has_q1_2026_date, axis=1)
         
         # Check External/Internal flag
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
             is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
         
-        # Categorize PF orders
-        pf_date_ext = pf_orders[(pf_orders['Has_Q4_Date'] == True) & is_ext].copy()
-        pf_date_int = pf_orders[(pf_orders['Has_Q4_Date'] == True) & ~is_ext].copy()
+        # NEW: Q1 2026 Spillover bucket (takes priority)
+        pf_spillover = pf_orders[pf_orders['Has_Q1_2026_Date'] == True].copy()
+        spillover_ids = pf_spillover.index
         
-        # No date means BOTH dates are missing
+        # Categorize Q4 PF orders (exclude spillover to avoid double counting)
+        q4_candidates = pf_orders[(pf_orders['Has_Q4_Date'] == True) & (~pf_orders.index.isin(spillover_ids))]
+        pf_date_ext = q4_candidates[is_ext.loc[q4_candidates.index]].copy()
+        pf_date_int = q4_candidates[~is_ext.loc[q4_candidates.index]].copy()
+        
+        # No date means BOTH dates are missing (not Q4 and not Q1)
         no_date_mask = (
             (pf_orders['Customer Promise Date'].isna()) &
             (pf_orders['Projected Date'].isna())
@@ -2888,7 +3187,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_nodate_ext = pf_orders[no_date_mask & is_ext].copy()
         pf_nodate_int = pf_orders[no_date_mask & ~is_ext].copy()
     else:
-        pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pd.DataFrame()
+        pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pf_spillover = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
     # Logic:
@@ -2961,7 +3260,9 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         'pa_nodate': pa_nodate,
         'pa_nodate_amount': get_amount(pa_nodate),
         'pa_old': pa_old,
-        'pa_old_amount': get_amount(pa_old)
+        'pa_old_amount': get_amount(pa_old),
+        'pf_spillover': pf_spillover,
+        'pf_spillover_amount': get_amount(pf_spillover)
     }
 
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
