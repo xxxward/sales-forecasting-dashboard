@@ -783,6 +783,9 @@ def load_all_data():
     # Load sales orders data from NetSuite - EXTEND to include Columns through AF (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
     
+    # Load Q4 Push planning status data (Deal/Order ID and Status)
+    q4_push_df = load_google_sheets_data("Q4 Push", "A:C", version=CACHE_VERSION)
+    
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
         # Get column names from first row
@@ -1833,7 +1836,7 @@ def display_invoices_drill_down(invoices_df, rep_name=None):
         else:
             st.dataframe(filtered_invoices, use_container_width=True, hide_index=True)
 
-def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None):
+def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None, invoices_df=None, sales_orders_df=None, q4_push_df=None):
     """
     Refined Interactive Forecast Builder (v6 - Robust Export Edition)
     - Captures 'Customize' selections for export
@@ -1843,94 +1846,72 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("### 🎯 Build Your Own Forecast")
     st.caption("Select components to include. Expand sections to see details.")
     
-    # --- IN/OUT/MAYBE UPLOAD FEATURE ---
+    # --- LOAD Q4 PLANNING STATUS FROM GOOGLE SHEET ---
     st.markdown("---")
-    with st.expander("📋 Upload Q4 Planning Status (IN/OUT/MAYBE)", expanded=False):
-        st.markdown("""
-        Upload a CSV or Excel file with SO#/Deal IDs and their Q4 status.
-        
-        **Expected format:**
-        ```
-        SO13501,In
-        SO13502,Out
-        32533096097,Maybe
-        32533096098,In
-        ```
-        
-        - Column A: ID (e.g., "SO13501" or "32533096097")
-        - Column B: Status ("In", "Out", or "Maybe")
-        
-        **Status meanings:**
-        - **In** = Automatically checked in forecast
-        - **Maybe** = Automatically checked (can adjust manually)
-        - **Out** = Unchecked by default
-        """)
-        
-        uploaded_file = st.file_uploader(
-            "Upload planning status file",
-            type=['csv', 'xlsx', 'xls'],
-            key=f"planning_upload_{rep_name}",
-            help="CSV or Excel file with SO#/Deal IDs and their In/Out/Maybe status"
-        )
-        
-        # Initialize session state for planning status
-        planning_key = f'planning_status_{rep_name}'
-        if planning_key not in st.session_state:
-            st.session_state[planning_key] = {}
-        
-        # Track if we've already processed this file to prevent rerun loop
-        processed_key = f'processed_file_{rep_name}'
-        if processed_key not in st.session_state:
-            st.session_state[processed_key] = None
-        
-        if uploaded_file is not None:
-            # Check if this is a new file (different from last processed)
-            file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+    
+    # Initialize session state for planning status
+    planning_key = f'planning_status_{rep_name}'
+    if planning_key not in st.session_state:
+        st.session_state[planning_key] = {}
+    
+    # Load planning status from Q4 Push sheet
+    if q4_push_df is not None and not q4_push_df.empty:
+        with st.expander("📊 Q4 Planning Status (From Google Sheet)", expanded=False):
+            st.info("""
+            **Planning status is loaded from the "Q4 Push" sheet in your Google Sheets.**
             
-            if st.session_state[processed_key] != file_id:
-                try:
-                    # Read the file
-                    if uploaded_file.name.endswith('.csv'):
-                        # Try reading with header first
-                        planning_df = pd.read_csv(uploaded_file)
-                        # If no proper header, read without header
-                        if planning_df.shape[1] == 2 and planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
-                            uploaded_file.seek(0)  # Reset file pointer
-                            planning_df = pd.read_csv(uploaded_file, header=None, names=['ID', 'Status'])
-                    else:
-                        planning_df = pd.read_excel(uploaded_file)
-                        # If no proper header, assume first two columns are ID and Status
-                        if planning_df.shape[1] >= 2:
-                            if planning_df.columns[0] not in ['ID', 'SO', 'Deal']:
-                                planning_df.columns = ['ID', 'Status'] + list(planning_df.columns[2:])
+            - Column A: Deal/Order ID (e.g., "SO13501" or "32533096097")
+            - Column B: Status ("In", "Out", or "Maybe")
+            - Column C: Notes (optional)
+            
+            **Status meanings:**
+            - **IN** = Automatically checked in forecast
+            - **MAYBE** = Automatically checked (can adjust manually)
+            - **OUT** = Unchecked by default
+            """)
+            
+            try:
+                # Process the Q4 Push sheet data
+                # Ensure we have at least 2 columns
+                if len(q4_push_df.columns) >= 2:
+                    # Get column names (should be in first row as header)
+                    # Use first 3 columns: ID, Status, Notes (if exists)
+                    id_col = q4_push_df.columns[0]
+                    status_col = q4_push_df.columns[1]
+                    notes_col = q4_push_df.columns[2] if len(q4_push_df.columns) >= 3 else None
                     
-                    # Ensure we have the right columns
-                    if len(planning_df.columns) >= 2:
-                        # Use first two columns as ID and Status, third as Notes (optional)
-                        if 'ID' not in planning_df.columns or 'Status' not in planning_df.columns:
-                            col_names = ['ID', 'Status']
-                            if len(planning_df.columns) >= 3:
-                                col_names.append('Notes')
-                            col_names += list(planning_df.columns[len(col_names):])
-                            planning_df.columns = col_names
+                    # Clear existing planning status
+                    st.session_state[planning_key] = {}
+                    
+                    # Load into session state
+                    for idx, row in q4_push_df.iterrows():
+                        id_str = str(row[id_col]).strip()
+                        status_str = str(row[status_col]).strip().upper()
                         
-                        # Store in session state as dict: {ID: {'status': Status, 'notes': Notes}}
-                        # Normalize status to uppercase for consistent matching
-                        st.session_state[planning_key] = {}
-                        for idx, row in planning_df.iterrows():
-                            id_str = str(row['ID']).strip()
-                            status_str = str(row['Status']).strip().upper()
-                            notes_str = str(row.get('Notes', '')).strip() if 'Notes' in planning_df.columns else ''
-                            # Clean up notes - if it's 'nan' or empty, set to empty string
+                        # Skip empty rows
+                        if not id_str or id_str.lower() in ['nan', 'none', '']:
+                            continue
+                        
+                        # Get notes if column exists
+                        notes_str = ''
+                        if notes_col and notes_col in row:
+                            notes_str = str(row[notes_col]).strip()
                             if notes_str.lower() in ['nan', 'none', '']:
                                 notes_str = ''
-                            st.session_state[planning_key][id_str] = {
-                                'status': status_str,
-                                'notes': notes_str
-                            }
                         
-                        # Show summary
-                        status_counts = planning_df['Status'].str.upper().value_counts()
+                        # Store in session state
+                        st.session_state[planning_key][id_str] = {
+                            'status': status_str,
+                            'notes': notes_str
+                        }
+                    
+                    # Show summary
+                    if st.session_state[planning_key]:
+                        status_counts = {}
+                        for item_data in st.session_state[planning_key].values():
+                            status = item_data.get('status', '') if isinstance(item_data, dict) else item_data
+                            status_counts[status] = status_counts.get(status, 0) + 1
+                        
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("✅ IN", status_counts.get('IN', 0))
@@ -1939,47 +1920,29 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                         with col3:
                             st.metric("❌ OUT", status_counts.get('OUT', 0))
                         
-                        st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses")
-                        
-                        # Mark this file as processed
-                        st.session_state[processed_key] = file_id
-                        
-                        # Note: Checkbox states will be set when rendering the checkboxes below
-                        # We'll use the planning status to determine default values
-                        
-                        # Rerun to apply the planning status to checkboxes
-                        st.rerun()
+                        st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses from Q4 Push sheet")
                     else:
-                        st.error("❌ File must have at least 2 columns (ID and Status)")
-                except Exception as e:
-                    st.error(f"❌ Error reading file: {str(e)}")
-            else:
-                # File already processed, show summary
-                if st.session_state[planning_key]:
-                    from collections import Counter
-                    status_counts = Counter(st.session_state[planning_key].values())
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("✅ IN", status_counts.get('IN', 0))
-                    with col2:
-                        st.metric("⚠️ MAYBE", status_counts.get('MAYBE', 0))
-                    with col3:
-                        st.metric("❌ OUT", status_counts.get('OUT', 0))
-                    st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses")
-        
-        # Clear button
-        if st.session_state[planning_key]:
-            if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
-                # Clear planning status
-                st.session_state[planning_key] = {}
-                st.session_state[processed_key] = None
-                
-                # Clear all checkbox states for this rep
-                keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
-                for key in keys_to_clear:
-                    del st.session_state[key]
-                
-                st.rerun()
+                        st.warning("No planning status data found in Q4 Push sheet")
+                else:
+                    st.warning("Q4 Push sheet doesn't have enough columns (needs at least ID and Status)")
+                    
+            except Exception as e:
+                st.error(f"Error loading Q4 Push sheet: {e}")
+    else:
+        st.info("💡 No Q4 Push sheet data available. Add data to 'Q4 Push' sheet in Google Sheets to load planning status.")
+    
+    # Clear button
+    if st.session_state[planning_key]:
+        if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+            # Clear planning status
+            st.session_state[planning_key] = {}
+            
+            # Clear all checkbox states for this rep
+            keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
+            for key in keys_to_clear:
+                del st.session_state[key]
+            
+            st.rerun()
     
     st.markdown("---")
     
@@ -4822,7 +4785,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df)
         rep_name=None,
         deals_df=deals_df,
         invoices_df=invoices_df,
-        sales_orders_df=sales_orders_df
+        sales_orders_df=sales_orders_df,
+        q4_push_df=q4_push_df
     )
     
     st.markdown("---")
@@ -5022,7 +4986,8 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         rep_name=rep_name,
         deals_df=deals_df,
         invoices_df=invoices_df,
-        sales_orders_df=sales_orders_df
+        sales_orders_df=sales_orders_df,
+        q4_push_df=q4_push_df
     )
     
     st.markdown("---")
