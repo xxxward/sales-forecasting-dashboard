@@ -687,6 +687,74 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         return pd.DataFrame()
 
+def update_google_sheet_q4_push(id_value, status=None, notes=None):
+    """
+    Update Q4 Push sheet in Google Sheets with new status/notes for a given ID
+    """
+    try:
+        # Check if secrets exist
+        if "gcp_service_account" not in st.secrets:
+            return False
+        
+        # Get credentials
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+        
+        # Build service
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        
+        # First, read the Q4 Push sheet to find the row
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="Q4 Push!A:C"
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values:
+            return False
+        
+        # Find the row with matching ID
+        row_index = None
+        for i, row in enumerate(values):
+            if len(row) > 0 and str(row[0]).strip() == str(id_value).strip():
+                row_index = i + 1  # +1 because sheets are 1-indexed
+                break
+        
+        # If ID not found, append new row
+        if row_index is None:
+            # Append new row
+            new_row = [str(id_value), status or '', notes or '']
+            body = {'values': [new_row]}
+            sheet.values().append(
+                spreadsheetId=SPREADSHEET_ID,
+                range="Q4 Push!A:C",
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+            return True
+        
+        # Update existing row
+        update_range = f"Q4 Push!B{row_index}:C{row_index}"
+        update_values = [[status or '', notes or '']]
+        body = {'values': update_values}
+        
+        sheet.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=update_range,
+            valueInputOption='RAW',
+            body=body
+        ).execute()
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error updating Google Sheet: {e}")
+        return False
+
 def apply_q4_fulfillment_logic(deals_df):
     """
     Apply lead time logic to filter out deals that close late in Q4 
@@ -1846,6 +1914,26 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     st.markdown("### 🎯 Build Your Own Forecast")
     st.caption("Select components to include. Expand sections to see details.")
     
+    # --- TOGGLE FOR INCLUDING MAYBES ---
+    toggle_col1, toggle_col2 = st.columns([1, 3])
+    with toggle_col1:
+        include_maybes_key = f'include_maybes_{rep_name}'
+        if include_maybes_key not in st.session_state:
+            st.session_state[include_maybes_key] = True  # Default to ON
+        
+        include_maybes = st.toggle(
+            "Include MAYBEs in Forecast",
+            value=st.session_state[include_maybes_key],
+            key=include_maybes_key,
+            help="When ON: Both IN and MAYBE items are counted in forecast. When OFF: Only IN items are counted."
+        )
+    
+    with toggle_col2:
+        if include_maybes:
+            st.info("✅ **IN** + ⚠️ **MAYBE** items will be included in forecast totals")
+        else:
+            st.info("✅ Only **IN** items will be included in forecast totals")
+    
     # --- LOAD Q4 PLANNING STATUS FROM GOOGLE SHEET ---
     st.markdown("---")
     
@@ -1972,7 +2060,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         return ''
     
     def update_planning_data(id_value, status=None, notes=None):
-        """Update planning status and/or notes for a given ID"""
+        """Update planning status and/or notes for a given ID and sync to Google Sheets"""
         if not id_value or pd.isna(id_value):
             return
         id_str = str(id_value).strip()
@@ -1993,6 +2081,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             st.session_state[planning_key][id_str]['status'] = status.upper()
         if notes is not None:
             st.session_state[planning_key][id_str]['notes'] = notes
+        
+        # Write back to Google Sheets
+        update_google_sheet_q4_push(
+            id_str,
+            status=st.session_state[planning_key][id_str]['status'],
+            notes=st.session_state[planning_key][id_str]['notes']
+        )
     
     # --- 1. PREPARE DATA LOCALLY ---
     
@@ -2532,8 +2627,42 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         else:
             return 0
     
-    selected_pending = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
-    selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
+    # Filter function to apply MAYBE toggle
+    def filter_by_status(df):
+        """Filter dataframe based on planning status and include_maybes toggle"""
+        if df.empty:
+            return df
+        
+        # Create a copy to avoid modifying original
+        filtered_df = df.copy()
+        
+        # Add status column by looking up each item
+        statuses = []
+        for _, row in filtered_df.iterrows():
+            item_id = row.get('SO #') or row.get('Deal ID')
+            status = get_planning_status(item_id)
+            statuses.append(status)
+        
+        filtered_df['_Status'] = statuses
+        
+        # Filter based on toggle
+        if include_maybes:
+            # Include both IN and MAYBE
+            filtered_df = filtered_df[filtered_df['_Status'].isin(['IN', 'MAYBE'])]
+        else:
+            # Include only IN
+            filtered_df = filtered_df[filtered_df['_Status'] == 'IN']
+        
+        # Drop the temporary status column
+        filtered_df = filtered_df.drop(columns=['_Status'])
+        
+        return filtered_df
+    
+    # Apply filtering to all export buckets
+    filtered_export_buckets = {k: filter_by_status(df) for k, df in export_buckets.items()}
+    
+    selected_pending = sum(safe_sum(df) for k, df in filtered_export_buckets.items() if k in ns_categories)
+    selected_pipeline = sum(safe_sum(df) for k, df in filtered_export_buckets.items() if k in hs_categories)
     
     total_forecast = invoiced_shipped + selected_pending + selected_pipeline
     gap_to_quota = quota - total_forecast
@@ -2827,6 +2956,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 if not planning_status:
                     planning_status = ''  # Use empty string instead of em dash
                 
+                # Get notes for this item
+                planning_notes = get_planning_notes(item_id_for_status) if item_id_for_status else ''
+                if not planning_notes:
+                    planning_notes = ''
+                
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories: # NetSuite
                     item_type = f"Sales Order - {label}"
@@ -2900,6 +3034,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Date': date_val,
                     'Amount': amount,
                     'Q4 Status': planning_status,
+                    'Notes': planning_notes,
                     'Rep': rep
                 })
 
