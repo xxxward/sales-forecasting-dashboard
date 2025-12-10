@@ -755,6 +755,92 @@ def update_google_sheet_q4_push(id_value, status=None, notes=None):
         st.error(f"Error updating Google Sheet: {e}")
         return False
 
+def batch_update_google_sheet_q4_push(updates_dict):
+    """
+    Batch update multiple items in Q4 Push sheet
+    updates_dict: {id_value: {'status': 'IN', 'notes': 'text'}, ...}
+    """
+    try:
+        if not updates_dict:
+            return True
+            
+        # Check if secrets exist
+        if "gcp_service_account" not in st.secrets:
+            return False
+        
+        # Get credentials
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+        creds = service_account.Credentials.from_service_account_info(
+            creds_dict, scopes=SCOPES
+        )
+        
+        # Build service
+        service = build('sheets', 'v4', credentials=creds)
+        sheet = service.spreadsheets()
+        
+        # Read the Q4 Push sheet once to get current data
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="Q4 Push!A:C"
+        ).execute()
+        
+        values = result.get('values', [])
+        if not values:
+            values = [['Deal/Order ID', 'Status', 'Notes']]  # Add headers if empty
+        
+        # Build a map of ID -> row index
+        id_to_row = {}
+        for i, row in enumerate(values):
+            if len(row) > 0 and i > 0:  # Skip header row
+                id_to_row[str(row[0]).strip()] = i + 1  # 1-indexed
+        
+        # Prepare batch update
+        data = []
+        append_rows = []
+        
+        for id_value, item_data in updates_dict.items():
+            status = item_data.get('status', '')
+            notes = item_data.get('notes', '')
+            
+            if id_value in id_to_row:
+                # Update existing row
+                row_num = id_to_row[id_value]
+                data.append({
+                    'range': f'Q4 Push!B{row_num}:C{row_num}',
+                    'values': [[status, notes]]
+                })
+            else:
+                # Append new row
+                append_rows.append([id_value, status, notes])
+        
+        # Execute batch update for existing rows
+        if data:
+            body = {
+                'valueInputOption': 'RAW',
+                'data': data
+            }
+            sheet.values().batchUpdate(
+                spreadsheetId=SPREADSHEET_ID,
+                body=body
+            ).execute()
+        
+        # Append new rows
+        if append_rows:
+            body = {'values': append_rows}
+            sheet.values().append(
+                spreadsheetId=SPREADSHEET_ID,
+                range="Q4 Push!A:C",
+                valueInputOption='RAW',
+                body=body
+            ).execute()
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error batch updating Google Sheet: {e}")
+        return False
+
 def apply_q4_fulfillment_logic(deals_df):
     """
     Apply lead time logic to filter out deals that close late in Q4 
@@ -2019,18 +2105,54 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     else:
         st.info("💡 No Q4 Push sheet data available. Add data to 'Q4 Push' sheet in Google Sheets to load planning status.")
     
-    # Clear button
+    # Sync and Clear buttons
     if st.session_state[planning_key]:
-        if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
-            # Clear planning status
-            st.session_state[planning_key] = {}
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            # Sync button
+            sync_key = f'pending_sync_{rep_name}'
+            pending_count = len(st.session_state.get(sync_key, set()))
             
-            # Clear all checkbox states for this rep
-            keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
-            for key in keys_to_clear:
-                del st.session_state[key]
+            if pending_count > 0:
+                sync_label = f"💾 Sync {pending_count} Changes to Google Sheets"
+            else:
+                sync_label = "✅ All Changes Synced"
             
-            st.rerun()
+            if st.button(sync_label, key=f"sync_planning_{rep_name}", disabled=(pending_count == 0)):
+                # Batch update all pending changes
+                if sync_key in st.session_state and st.session_state[sync_key]:
+                    updates_dict = {}
+                    for item_id in st.session_state[sync_key]:
+                        if item_id in st.session_state[planning_key]:
+                            updates_dict[item_id] = st.session_state[planning_key][item_id]
+                    
+                    with st.spinner("Syncing to Google Sheets..."):
+                        success = batch_update_google_sheet_q4_push(updates_dict)
+                        if success:
+                            st.success(f"✅ Synced {len(updates_dict)} items to Google Sheets!")
+                            st.session_state[sync_key] = set()  # Clear pending
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to sync. Check your Google Sheets permissions.")
+        
+        with col2:
+            if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+                # Clear planning status
+                st.session_state[planning_key] = {}
+                
+                # Clear pending sync
+                sync_key = f'pending_sync_{rep_name}'
+                if sync_key in st.session_state:
+                    st.session_state[sync_key] = set()
+                
+                # Clear all checkbox states for this rep
+                keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                
+                st.rerun()
     
     st.markdown("---")
     
@@ -2060,7 +2182,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         return ''
     
     def update_planning_data(id_value, status=None, notes=None):
-        """Update planning status and/or notes for a given ID and sync to Google Sheets"""
+        """Update planning status and/or notes for a given ID (session state only)"""
         if not id_value or pd.isna(id_value):
             return
         id_str = str(id_value).strip()
@@ -2082,12 +2204,11 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         if notes is not None:
             st.session_state[planning_key][id_str]['notes'] = notes
         
-        # Write back to Google Sheets
-        update_google_sheet_q4_push(
-            id_str,
-            status=st.session_state[planning_key][id_str]['status'],
-            notes=st.session_state[planning_key][id_str]['notes']
-        )
+        # Mark as pending sync (don't sync immediately to avoid rate limits)
+        sync_key = f'pending_sync_{rep_name}'
+        if sync_key not in st.session_state:
+            st.session_state[sync_key] = set()
+        st.session_state[sync_key].add(id_str)
     
     # --- 1. PREPARE DATA LOCALLY ---
     
@@ -2641,17 +2762,27 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         for _, row in filtered_df.iterrows():
             item_id = row.get('SO #') or row.get('Deal ID')
             status = get_planning_status(item_id)
+            # If status is empty or None, treat as blank
+            if not status or status == '—':
+                status = ''
             statuses.append(status)
         
         filtered_df['_Status'] = statuses
         
         # Filter based on toggle
         if include_maybes:
-            # Include both IN and MAYBE
-            filtered_df = filtered_df[filtered_df['_Status'].isin(['IN', 'MAYBE'])]
+            # Include IN, MAYBE, and items with no status (blank/checked items default to IN)
+            # If item is checked but has no status, include it
+            filtered_df = filtered_df[
+                (filtered_df['_Status'].isin(['IN', 'MAYBE'])) | 
+                (filtered_df['_Status'] == '')
+            ]
         else:
-            # Include only IN
-            filtered_df = filtered_df[filtered_df['_Status'] == 'IN']
+            # Include only IN and blank items that are checked (treat blank as IN if checked)
+            filtered_df = filtered_df[
+                (filtered_df['_Status'] == 'IN') | 
+                (filtered_df['_Status'] == '')
+            ]
         
         # Drop the temporary status column
         filtered_df = filtered_df.drop(columns=['_Status'])
