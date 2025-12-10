@@ -2004,6 +2004,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     toggle_col1, toggle_col2 = st.columns([1, 3])
     with toggle_col1:
         include_maybes_key = f'include_maybes_{rep_name}'
+        
+        # Track previous toggle state to detect changes
+        prev_toggle_key = f'prev_include_maybes_{rep_name}'
+        if prev_toggle_key not in st.session_state:
+            st.session_state[prev_toggle_key] = True  # Default to ON
+        
         if include_maybes_key not in st.session_state:
             st.session_state[include_maybes_key] = True  # Default to ON
         
@@ -2013,6 +2019,12 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
             key=include_maybes_key,
             help="When ON: Both IN and MAYBE items are counted in forecast. When OFF: Only IN items are counted."
         )
+        
+        # Detect toggle change and show feedback
+        if st.session_state[prev_toggle_key] != include_maybes:
+            st.session_state[prev_toggle_key] = include_maybes
+            # Rerun to update calculations
+            st.rerun()
     
     with toggle_col2:
         if include_maybes:
@@ -2528,6 +2540,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         num_rows="fixed"
                                     )
                                     
+                                    # Track if any status/notes changed
+                                    status_changed = False
+                                    
                                     # Update planning status and notes from edited data
                                     if 'SO #' in edited.columns:
                                         for idx, row in edited.iterrows():
@@ -2535,8 +2550,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             if 'Status' in row:
                                                 status = str(row['Status']).strip().upper()
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
-                                                if status != '—':
+                                                
+                                                # Check if status or notes changed
+                                                old_data = st.session_state[planning_key].get(so_num, {})
+                                                old_status = old_data.get('status', '') if isinstance(old_data, dict) else old_data
+                                                old_notes = old_data.get('notes', '') if isinstance(old_data, dict) else ''
+                                                
+                                                if status != '—' and (status != old_status or notes != old_notes):
                                                     update_planning_data(so_num, status=status, notes=notes)
+                                                    status_changed = True
                                     
                                     # Auto-update Select checkboxes based on Status changes
                                     if 'Status' in edited.columns and 'Select' in edited.columns:
@@ -2555,6 +2577,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
+                                    
+                                    # If status changed, rerun to update totals
+                                    if status_changed:
+                                        st.rerun()
                                 else:
                                     # Read-only view
                                     if display_cols:
@@ -2679,6 +2705,9 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         num_rows="fixed"
                                     )
                                     
+                                    # Track if any status/notes changed
+                                    status_changed = False
+                                    
                                     # Update planning status and notes from edited data
                                     if 'Deal ID' in edited.columns:
                                         for idx, row in edited.iterrows():
@@ -2686,8 +2715,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             if 'Status' in row:
                                                 status = str(row['Status']).strip().upper()
                                                 notes = str(row.get('Notes', '')).strip() if 'Notes' in row else ''
-                                                if status != '—':
+                                                
+                                                # Check if status or notes changed
+                                                old_data = st.session_state[planning_key].get(deal_id, {})
+                                                old_status = old_data.get('status', '') if isinstance(old_data, dict) else old_data
+                                                old_notes = old_data.get('notes', '') if isinstance(old_data, dict) else ''
+                                                
+                                                if status != '—' and (status != old_status or notes != old_notes):
                                                     update_planning_data(deal_id, status=status, notes=notes)
+                                                    status_changed = True
                                     
                                     # Auto-update Select checkboxes based on Status changes
                                     if 'Status' in edited.columns and 'Select' in edited.columns:
@@ -2705,6 +2741,10 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     current_total = selected_rows['Amount_Numeric'].sum()
                                     st.caption(f"Selected: ${current_total:,.0f}")
+                                    
+                                    # If status changed, rerun to update totals
+                                    if status_changed:
+                                        st.rerun()
                                 else:
                                     # Read-only view
                                     df_readonly = df.copy()
