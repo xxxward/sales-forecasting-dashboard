@@ -2636,17 +2636,6 @@ def render_customer_planning_tab(df):
     # =========================
     st.markdown("### 🔍 Filters")
     
-    # Row 1: Customer selection (must be first to filter item descriptions)
-    st.markdown("**Select Customer**")
-    customers = sorted(df_clean['Customer'].unique())
-    selected_customer = st.selectbox("Customer", customers, key="customer_planning_select", label_visibility="collapsed")
-    
-    # Filter data for selected customer first (for item description list)
-    customer_base_df = df_clean[df_clean['Customer'] == selected_customer].copy()
-    
-    st.markdown("---")
-    
-    # Row 2: Date range and Product Type
     filter_col1, filter_col2 = st.columns(2)
     
     with filter_col1:
@@ -2669,6 +2658,13 @@ def render_customer_planning_tab(df):
             start_date = end_date = date_range
     
     with filter_col2:
+        # Customer selection
+        customers = sorted(df_clean['Customer'].unique())
+        selected_customer = st.selectbox("Customer", customers, key="customer_planning_select")
+    
+    filter_col3, filter_col4 = st.columns(2)
+    
+    with filter_col3:
         # Product Type filter
         if 'Product Type' in df_clean.columns:
             product_types = ['All'] + sorted(df_clean['Product Type'].dropna().unique().tolist())
@@ -2680,24 +2676,16 @@ def render_customer_planning_tab(df):
         else:
             selected_product_type = 'All'
     
-    # Row 3: Item Description (filtered by selected customer)
-    # Get only items this customer has ordered
-    customer_items = sorted(customer_base_df['Item Description'].dropna().unique().tolist())
-    
-    st.markdown(f"**Item Description Filter (Optional)** - {len(customer_items)} items available")
-    
-    if customer_items:
+    with filter_col4:
+        # Item Description filter (multiselect for specific SKUs)
+        items = sorted(df_clean['Item Description'].dropna().unique().tolist())
         selected_items = st.multiselect(
-            "Select specific items to filter",
-            customer_items,
+            "Item Description (optional)",
+            items,
             default=[],
             key="customer_planning_items",
-            help=f"Showing only items ordered by {selected_customer}. Leave empty to show all their items.",
-            label_visibility="collapsed"
+            help="Select specific item descriptions to filter. Leave empty to show all items."
         )
-    else:
-        selected_items = []
-        st.info(f"No items found for {selected_customer}")
     
     # Apply filters
     df_filtered = df_clean.copy()
