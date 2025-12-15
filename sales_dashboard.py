@@ -1937,18 +1937,32 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     else:
         st.info("💡 No Q4 Push sheet data available. Add data to 'Q4 Push' sheet in Google Sheets to load planning status.")
     
-    # Clear button
+    # Clear buttons - Enhanced to include selections
     if st.session_state[planning_key]:
-        if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
-            # Clear planning status
-            st.session_state[planning_key] = {}
-            
-            # Clear all checkbox states for this rep
-            keys_to_clear = [k for k in st.session_state.keys() if k.startswith(f"chk_") and k.endswith(f"_{rep_name}")]
-            for key in keys_to_clear:
-                del st.session_state[key]
-            
-            st.rerun()
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🗑️ Clear Planning Status", key=f"clear_planning_{rep_name}"):
+                # Clear planning status only
+                st.session_state[planning_key] = {}
+                st.success("✅ Planning status cleared")
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear All Selections", key=f"clear_selections_{rep_name}"):
+                # Clear planning status
+                st.session_state[planning_key] = {}
+                
+                # Clear all checkbox states for this rep
+                keys_to_clear = [k for k in st.session_state.keys() 
+                                 if (k.startswith(f"chk_") or 
+                                     k.startswith(f"unselected_") or
+                                     k.startswith(f"tgl_")) 
+                                 and k.endswith(f"_{rep_name}")]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                
+                st.success("✅ All selections cleared")
+                st.rerun()
     
     st.markdown("---")
     
@@ -2274,8 +2288,21 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             lambda so: get_planning_notes(so)
                                         )
                                     
-                                    # Add Select column (default all checked)
-                                    df_edit.insert(0, "Select", True)
+                                    # FIX: Initialize session state for unselected items if not exists
+                                    unselected_key = f"unselected_{key}_{rep_name}"
+                                    if unselected_key not in st.session_state:
+                                        st.session_state[unselected_key] = set()
+                                    
+                                    # FIX: Determine ID column for matching
+                                    id_col = 'SO #' if 'SO #' in df_edit.columns else 'Deal ID'
+                                    
+                                    # FIX: Set "Select" based on persisted state (default True unless in unselected set)
+                                    if id_col in df_edit.columns:
+                                        df_edit.insert(0, "Select", df_edit[id_col].apply(
+                                            lambda x: str(x) not in st.session_state[unselected_key]
+                                        ))
+                                    else:
+                                        df_edit.insert(0, "Select", True)
                                     
                                     # Move Select to first position if not already
                                     if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
@@ -2312,6 +2339,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         key=f"edit_{key}_{rep_name}",
                                         num_rows="fixed"
                                     )
+                                    
+                                    # FIX: Update unselected set based on user interaction
+                                    if id_col in edited.columns:
+                                        current_unselected = set()
+                                        for idx, row in edited.iterrows():
+                                            if not row['Select']:
+                                                current_unselected.add(str(row[id_col]))
+                                        # Update session state
+                                        st.session_state[unselected_key] = current_unselected
                                     
                                     # Update planning status and notes from edited data
                                     if 'SO #' in edited.columns:
@@ -2416,8 +2452,21 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                             lambda deal_id: get_planning_notes(deal_id)
                                         )
                                     
-                                    # Add Select column (default all checked)
-                                    df_edit.insert(0, "Select", True)
+                                    # FIX: Initialize session state for unselected items if not exists
+                                    unselected_key = f"unselected_{key}_{rep_name}"
+                                    if unselected_key not in st.session_state:
+                                        st.session_state[unselected_key] = set()
+                                    
+                                    # FIX: Determine ID column for matching
+                                    id_col = 'Deal ID' if 'Deal ID' in df_edit.columns else 'SO #'
+                                    
+                                    # FIX: Set "Select" based on persisted state (default True unless in unselected set)
+                                    if id_col in df_edit.columns:
+                                        df_edit.insert(0, "Select", df_edit[id_col].apply(
+                                            lambda x: str(x) not in st.session_state[unselected_key]
+                                        ))
+                                    else:
+                                        df_edit.insert(0, "Select", True)
                                     
                                     # Move Select to first position if not already
                                     if 'Select' in df_edit.columns and df_edit.columns[0] != 'Select':
@@ -2455,6 +2504,15 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         key=f"edit_{key}_{rep_name}",
                                         num_rows="fixed"
                                     )
+                                    
+                                    # FIX: Update unselected set based on user interaction
+                                    if id_col in edited.columns:
+                                        current_unselected = set()
+                                        for idx, row in edited.iterrows():
+                                            if not row['Select']:
+                                                current_unselected.add(str(row[id_col]))
+                                        # Update session state
+                                        st.session_state[unselected_key] = current_unselected
                                     
                                     # Update planning status and notes from edited data
                                     if 'Deal ID' in edited.columns:
@@ -5447,9 +5505,11 @@ def main():
         display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df)
     elif view_mode == "Individual Rep":
         if not dashboard_df.empty:
+            # FIX: Added key="rep_selector" to preserve selection across refreshes
             rep_name = st.selectbox(
                 "Select Rep:",
-                options=dashboard_df['Rep Name'].tolist()
+                options=dashboard_df['Rep Name'].tolist(),
+                key="rep_selector"
             )
             if rep_name:
                 display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df)
