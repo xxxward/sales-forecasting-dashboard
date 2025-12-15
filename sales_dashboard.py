@@ -606,13 +606,11 @@ st.markdown("""
 SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
 
-# Cache duration - 1 hour
-CACHE_TTL = 3600
+# Cache version for manual refresh control
+# No TTL - data only refreshes when user clicks refresh button
+CACHE_VERSION = "v62_manual_refresh_only"
 
-# Add a version number to force cache refresh when code changes
-CACHE_VERSION = "v61_fix_dec31_timestamp"
-
-@st.cache_data(ttl=CACHE_TTL)
+@st.cache_data  # Removed TTL - cache persists until manually cleared
 def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
     """
     Load data from Google Sheets with caching and enhanced error handling
@@ -5188,6 +5186,10 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
 # Main app
 def main():
     
+    # Initialize session state for data load timestamp
+    if 'data_load_time' not in st.session_state:
+        st.session_state.data_load_time = datetime.now()
+    
     # Dashboard tagline
     st.markdown("""
     <div style='text-align: center; padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
@@ -5297,8 +5299,20 @@ def main():
         st.markdown("---")
         
         # Sexy metrics cards for quick stats
-        current_time = datetime.now()
         biz_days = calculate_business_days_remaining()
+        
+        # Get data load time from session state
+        data_load_time = st.session_state.data_load_time
+        time_since_load = datetime.now() - data_load_time
+        minutes_ago = int(time_since_load.total_seconds() / 60)
+        
+        if minutes_ago < 1:
+            time_ago_text = "Just now"
+        elif minutes_ago < 60:
+            time_ago_text = f"{minutes_ago} min ago"
+        else:
+            hours_ago = minutes_ago // 60
+            time_ago_text = f"{hours_ago} hr ago"
         
         st.markdown("""
         <div style="
@@ -5329,10 +5343,10 @@ def main():
                 <span style="font-size: 24px;">🔄</span>
                 <div style="flex: 1;">
                     <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Last Sync</div>
-                    <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">""" + current_time.strftime('%I:%M %p') + """</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">""" + data_load_time.strftime('%I:%M %p') + """</div>
                 </div>
             </div>
-            <div style="font-size: 10px; opacity: 0.6;">Auto-refresh every hour</div>
+            <div style="font-size: 10px; opacity: 0.6;">""" + time_ago_text + """ • Manual refresh only</div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -5342,7 +5356,9 @@ def main():
             if 'current_snapshot' in st.session_state:
                 st.session_state.previous_snapshot = st.session_state.current_snapshot
             
+            # Clear cache and update timestamp
             st.cache_data.clear()
+            st.session_state.data_load_time = datetime.now()
             st.rerun()
         
         st.markdown("---")
