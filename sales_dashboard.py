@@ -5368,6 +5368,10 @@ def main():
             # Clear cache and update timestamp
             st.cache_data.clear()
             st.session_state.data_load_time = get_mst_time()
+            
+            # Rerun to load fresh data
+            # Note: Your view selection, rep selection, and filters are automatically 
+            # preserved via Streamlit's widget keys (nav_selector, rep_selector, etc.)
             st.rerun()
         
         st.markdown("---")
