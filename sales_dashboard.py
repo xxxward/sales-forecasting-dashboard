@@ -13,6 +13,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import time
 import base64
 import numpy as np
@@ -82,6 +83,13 @@ def calculate_business_days_remaining():
         current_date += timedelta(days=1)
     
     return business_days
+
+def get_mst_time():
+    """
+    Get current time in Mountain Standard Time (MST/MDT)
+    Returns timezone-aware datetime in America/Denver timezone
+    """
+    return datetime.now(ZoneInfo("America/Denver"))
 
 # Page configuration
 st.set_page_config(
@@ -5188,7 +5196,7 @@ def main():
     
     # Initialize session state for data load timestamp
     if 'data_load_time' not in st.session_state:
-        st.session_state.data_load_time = datetime.now()
+        st.session_state.data_load_time = get_mst_time()
     
     # Dashboard tagline
     st.markdown("""
@@ -5303,7 +5311,8 @@ def main():
         
         # Get data load time from session state
         data_load_time = st.session_state.data_load_time
-        time_since_load = datetime.now() - data_load_time
+        current_mst_time = get_mst_time()
+        time_since_load = current_mst_time - data_load_time
         minutes_ago = int(time_since_load.total_seconds() / 60)
         
         if minutes_ago < 1:
@@ -5343,7 +5352,7 @@ def main():
                 <span style="font-size: 24px;">🔄</span>
                 <div style="flex: 1;">
                     <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Last Sync</div>
-                    <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">""" + data_load_time.strftime('%I:%M %p') + """</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #3b82f6;">""" + data_load_time.strftime('%I:%M %p %Z') + """</div>
                 </div>
             </div>
             <div style="font-size: 10px; opacity: 0.6;">""" + time_ago_text + """ • Manual refresh only</div>
@@ -5358,7 +5367,7 @@ def main():
             
             # Clear cache and update timestamp
             st.cache_data.clear()
-            st.session_state.data_load_time = datetime.now()
+            st.session_state.data_load_time = get_mst_time()
             st.rerun()
         
         st.markdown("---")
