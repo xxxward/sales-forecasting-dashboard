@@ -440,7 +440,225 @@ def load_historical_orders(main_dash, rep_name):
     else:
         historical_df['Order Type'] = 'Standard'
     
+    # Also grab the SO# (Document Number) for matching with invoices - Column B
+    if len(col_names) > 1:
+        so_col = col_names[1]
+        if so_col in historical_df.columns:
+            historical_df['SO_Number'] = historical_df[so_col].astype(str).str.strip()
+    
     return historical_df
+
+
+def load_invoices(main_dash, rep_name):
+    """
+    Load 2025 invoices for actual revenue figures
+    
+    NS Invoice tab columns:
+    - Column C: Date (Invoice Date)
+    - Column E: Created From (SO# to match with Sales Orders)
+    - Column K: Amount (Transaction Total)
+    - Column T: Corrected Customer Name
+    - Column U: Rep Master
+    """
+    
+    invoice_df = main_dash.load_google_sheets_data("NS Invoice", "A:U", version=main_dash.CACHE_VERSION)
+    
+    if invoice_df.empty:
+        return pd.DataFrame()
+    
+    col_names = invoice_df.columns.tolist()
+    
+    rename_dict = {}
+    
+    # Column C: Date
+    if len(col_names) > 2:
+        rename_dict[col_names[2]] = 'Invoice_Date'
+    
+    # Column E: Created From (SO#)
+    if len(col_names) > 4:
+        rename_dict[col_names[4]] = 'SO_Number'
+    
+    # Column K: Amount (Transaction Total)
+    if len(col_names) > 10:
+        rename_dict[col_names[10]] = 'Invoice_Amount'
+    
+    # Column T: Corrected Customer Name
+    if len(col_names) > 19:
+        rename_dict[col_names[19]] = 'Customer'
+    
+    # Column U: Rep Master
+    if len(col_names) > 20:
+        rename_dict[col_names[20]] = 'Rep Master'
+    
+    invoice_df = invoice_df.rename(columns=rename_dict)
+    
+    # Remove duplicate columns
+    if invoice_df.columns.duplicated().any():
+        invoice_df = invoice_df.loc[:, ~invoice_df.columns.duplicated()]
+    
+    # Clean Rep Master and filter to selected rep
+    if 'Rep Master' in invoice_df.columns:
+        invoice_df['Rep Master'] = invoice_df['Rep Master'].astype(str).str.strip()
+        invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+        invoice_df = invoice_df[~invoice_df['Rep Master'].isin(invalid_values)]
+        invoice_df = invoice_df[invoice_df['Rep Master'] == rep_name]
+    else:
+        return pd.DataFrame()
+    
+    # Clean Customer column
+    if 'Customer' in invoice_df.columns:
+        invoice_df['Customer'] = invoice_df['Customer'].astype(str).str.strip()
+        invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+        invoice_df = invoice_df[~invoice_df['Customer'].isin(invalid_values)]
+    
+    # Clean Amount
+    def clean_numeric(value):
+        if pd.isna(value) or str(value).strip() == '':
+            return 0
+        cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+        try:
+            return float(cleaned)
+        except:
+            return 0
+    
+    if 'Invoice_Amount' in invoice_df.columns:
+        invoice_df['Invoice_Amount'] = invoice_df['Invoice_Amount'].apply(clean_numeric)
+        invoice_df = invoice_df[invoice_df['Invoice_Amount'] > 0]
+    
+    # Parse Invoice Date and filter to 2025
+    if 'Invoice_Date' in invoice_df.columns:
+        invoice_df['Invoice_Date'] = pd.to_datetime(invoice_df['Invoice_Date'], errors='coerce')
+        
+        # Fix 2-digit year issue
+        if invoice_df['Invoice_Date'].notna().any():
+            mask = (invoice_df['Invoice_Date'].dt.year < 2000) & (invoice_df['Invoice_Date'].notna())
+            if mask.any():
+                invoice_df.loc[mask, 'Invoice_Date'] = invoice_df.loc[mask, 'Invoice_Date'] + pd.DateOffset(years=100)
+        
+        # Filter to 2025 only
+        year_2025_start = pd.Timestamp('2025-01-01')
+        year_2025_end = pd.Timestamp('2025-12-31')
+        invoice_df = invoice_df[
+            (invoice_df['Invoice_Date'] >= year_2025_start) & 
+            (invoice_df['Invoice_Date'] <= year_2025_end)
+        ]
+    
+    # Clean SO_Number for matching
+    if 'SO_Number' in invoice_df.columns:
+        invoice_df['SO_Number'] = invoice_df['SO_Number'].astype(str).str.strip()
+        # Extract just the SO number (might be formatted like "Sales Order #12345")
+        invoice_df['SO_Number'] = invoice_df['SO_Number'].str.extract(r'(\d+)', expand=False).fillna('')
+    
+    return invoice_df
+
+
+def load_line_items(main_dash):
+    """
+    Load Sales Order Line Items for item-level detail
+    
+    Sales Order Line Item tab columns:
+    - Column B: Document Number (SO#)
+    - Column C: Item
+    - Column E: Item Rate (price per unit)
+    - Column F: Quantity Ordered
+    """
+    
+    line_items_df = main_dash.load_google_sheets_data("Sales Order Line Item", "A:F", version=main_dash.CACHE_VERSION)
+    
+    if line_items_df.empty:
+        return pd.DataFrame()
+    
+    col_names = line_items_df.columns.tolist()
+    
+    rename_dict = {}
+    
+    # Column B: Document Number (SO#)
+    if len(col_names) > 1:
+        rename_dict[col_names[1]] = 'SO_Number'
+    
+    # Column C: Item
+    if len(col_names) > 2:
+        rename_dict[col_names[2]] = 'Item'
+    
+    # Column E: Item Rate
+    if len(col_names) > 4:
+        rename_dict[col_names[4]] = 'Item_Rate'
+    
+    # Column F: Quantity Ordered
+    if len(col_names) > 5:
+        rename_dict[col_names[5]] = 'Quantity'
+    
+    line_items_df = line_items_df.rename(columns=rename_dict)
+    
+    # Remove duplicate columns
+    if line_items_df.columns.duplicated().any():
+        line_items_df = line_items_df.loc[:, ~line_items_df.columns.duplicated()]
+    
+    # Clean SO_Number
+    if 'SO_Number' in line_items_df.columns:
+        line_items_df['SO_Number'] = line_items_df['SO_Number'].astype(str).str.strip()
+        # Extract just the number
+        line_items_df['SO_Number'] = line_items_df['SO_Number'].str.extract(r'(\d+)', expand=False).fillna('')
+        line_items_df = line_items_df[line_items_df['SO_Number'] != '']
+    
+    # Clean Item
+    if 'Item' in line_items_df.columns:
+        line_items_df['Item'] = line_items_df['Item'].astype(str).str.strip()
+        line_items_df = line_items_df[line_items_df['Item'] != '']
+        line_items_df = line_items_df[line_items_df['Item'].str.lower() != 'nan']
+    
+    # Clean numeric columns
+    def clean_numeric(value):
+        if pd.isna(value) or str(value).strip() == '':
+            return 0
+        cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+        try:
+            return float(cleaned)
+        except:
+            return 0
+    
+    if 'Item_Rate' in line_items_df.columns:
+        line_items_df['Item_Rate'] = line_items_df['Item_Rate'].apply(clean_numeric)
+    
+    if 'Quantity' in line_items_df.columns:
+        line_items_df['Quantity'] = line_items_df['Quantity'].apply(clean_numeric)
+    
+    # Calculate line total
+    line_items_df['Line_Total'] = line_items_df['Quantity'] * line_items_df['Item_Rate']
+    
+    return line_items_df
+
+
+def merge_orders_with_invoices(orders_df, invoices_df):
+    """
+    Merge sales orders with invoice data to get actual revenue
+    
+    Returns orders_df with Invoice_Amount added (actual invoiced revenue)
+    Cadence still based on Order Start Date
+    """
+    
+    if orders_df.empty:
+        return orders_df
+    
+    if invoices_df.empty:
+        # No invoices - fall back to order amounts
+        orders_df['Invoice_Amount'] = orders_df['Amount']
+        return orders_df
+    
+    # Clean SO numbers for matching
+    orders_df['SO_Number_Clean'] = orders_df['SO_Number'].astype(str).str.extract(r'(\d+)', expand=False).fillna('')
+    
+    # Aggregate invoice amounts by SO#
+    invoice_totals = invoices_df.groupby('SO_Number')['Invoice_Amount'].sum().reset_index()
+    invoice_totals.columns = ['SO_Number_Clean', 'Invoice_Amount']
+    
+    # Merge
+    merged = orders_df.merge(invoice_totals, on='SO_Number_Clean', how='left')
+    
+    # Fill missing invoice amounts with order amounts (for orders not yet invoiced)
+    merged['Invoice_Amount'] = merged['Invoice_Amount'].fillna(merged['Amount'])
+    
+    return merged
 
 
 def calculate_customer_metrics(historical_df):
@@ -450,9 +668,9 @@ def calculate_customer_metrics(historical_df):
     Returns DataFrame with:
     - Customer name
     - Total orders in 2025
-    - Total revenue
+    - Total revenue (from invoices)
     - Weighted avg order value (H2 weighted 1.25x)
-    - Avg days between orders (cadence)
+    - Avg days between orders (cadence - based on order dates)
     - Last order date
     - Days since last order
     - Product types purchased
@@ -464,6 +682,9 @@ def calculate_customer_metrics(historical_df):
     
     today = pd.Timestamp.now()
     
+    # Determine which amount column to use (Invoice_Amount if available, else Amount)
+    amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
+    
     # Group by customer
     customer_metrics = []
     
@@ -471,19 +692,19 @@ def calculate_customer_metrics(historical_df):
         cust_orders = historical_df[historical_df['Customer'] == customer].copy()
         cust_orders = cust_orders.sort_values('Order Start Date')
         
-        # Basic metrics
+        # Basic metrics - use invoice amounts for revenue
         order_count = len(cust_orders)
-        total_revenue = cust_orders['Amount'].sum()
+        total_revenue = cust_orders[amount_col].sum()
         
-        # Order dates for cadence calculation
+        # Order dates for cadence calculation (still based on order dates, not invoice dates)
         order_dates = cust_orders['Order Start Date'].dropna().tolist()
         
-        # Weighted average order value (H2 = 1.25x weight)
+        # Weighted average order value (H2 = 1.25x weight) - use invoice amounts
         weighted_sum = 0
         weight_total = 0
         for _, row in cust_orders.iterrows():
             order_date = row['Order Start Date']
-            amount = row['Amount']
+            amount = row[amount_col]
             if pd.notna(order_date) and order_date.month >= 7:  # H2
                 weight = 1.25
             else:  # H1
@@ -542,6 +763,11 @@ def calculate_customer_metrics(historical_df):
         # Get rep name if available (for team view)
         rep_for_customer = cust_orders['Rep'].iloc[0] if 'Rep' in cust_orders.columns else ''
         
+        # Get list of SO numbers for line item lookup
+        so_numbers = []
+        if 'SO_Number' in cust_orders.columns:
+            so_numbers = cust_orders['SO_Number'].dropna().unique().tolist()
+        
         customer_metrics.append({
             'Customer': customer,
             'Rep': rep_for_customer,
@@ -556,7 +782,8 @@ def calculate_customer_metrics(historical_df):
             'Product_Types_Dict': product_types,
             'Confidence_Tier': confidence_tier,
             'Confidence_Pct': confidence_pct,
-            'Projected_Value': projected_value
+            'Projected_Value': projected_value,
+            'SO_Numbers': so_numbers
         })
     
     return pd.DataFrame(customer_metrics)
@@ -592,6 +819,48 @@ def identify_reorder_opportunities(customer_metrics_df, pending_customers, pipel
     ].copy()
     
     return opportunities_df
+
+
+def get_customer_line_items(so_numbers, line_items_df):
+    """
+    Get aggregated line items for a customer based on their SO numbers
+    
+    Groups by Item and sums quantities, calculates weighted average rate
+    
+    Returns DataFrame with columns: Item, Total_Qty, Avg_Rate, Total_Value
+    """
+    
+    if not so_numbers or line_items_df.empty:
+        return pd.DataFrame()
+    
+    # Clean SO numbers for matching
+    so_numbers_clean = [str(so).strip() for so in so_numbers]
+    # Extract just digits
+    so_numbers_clean = [s if s.isdigit() else ''.join(filter(str.isdigit, s)) for s in so_numbers_clean]
+    so_numbers_clean = [s for s in so_numbers_clean if s]  # Remove empty
+    
+    if not so_numbers_clean:
+        return pd.DataFrame()
+    
+    # Filter line items to customer's SO numbers
+    customer_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers_clean)].copy()
+    
+    if customer_items.empty:
+        return pd.DataFrame()
+    
+    # Aggregate by Item - sum quantities, weighted average rate
+    aggregated = customer_items.groupby('Item').agg({
+        'Quantity': 'sum',
+        'Item_Rate': 'mean',  # Average rate across orders
+        'Line_Total': 'sum'
+    }).reset_index()
+    
+    aggregated.columns = ['Item', 'Total_Qty', 'Avg_Rate', 'Total_Value']
+    
+    # Sort by total value descending
+    aggregated = aggregated.sort_values('Total_Value', ascending=False)
+    
+    return aggregated
 
 
 def get_product_type_summary(historical_df, opportunities_df):
@@ -1224,31 +1493,45 @@ def main():
     
     st.markdown("---")
     st.markdown("### 🔄 Reorder Forecast (Historical Analysis)")
-    st.caption("Customers who ordered in 2025 but have no pending orders or Q1 pipeline deals")
+    st.caption("Customers who ordered in 2025 but have no pending orders or Q1 pipeline deals. Revenue from actual invoices.")
     
     # Initialize reorder buckets (will be populated if historical data exists)
     reorder_buckets = {}
     
     # Load historical data - aggregate if team view
-    with st.spinner("Analyzing 2025 order history..."):
+    with st.spinner("Analyzing 2025 order history and invoices..."):
         if is_team_view:
             # Aggregate historical data from all team reps
             all_historical = []
+            all_invoices = []
             for r in active_team_reps:
                 rep_historical = load_historical_orders(main_dash, r)
+                rep_invoices = load_invoices(main_dash, r)
                 if not rep_historical.empty:
                     rep_historical['Rep'] = r  # Add rep column for reference
                     all_historical.append(rep_historical)
+                if not rep_invoices.empty:
+                    all_invoices.append(rep_invoices)
+            
             historical_df = pd.concat(all_historical, ignore_index=True) if all_historical else pd.DataFrame()
+            invoices_df = pd.concat(all_invoices, ignore_index=True) if all_invoices else pd.DataFrame()
         else:
             historical_df = load_historical_orders(main_dash, rep_name)
+            invoices_df = load_invoices(main_dash, rep_name)
             if not historical_df.empty:
                 historical_df['Rep'] = rep_name
+        
+        # Merge orders with invoices to get actual revenue
+        if not historical_df.empty:
+            historical_df = merge_orders_with_invoices(historical_df, invoices_df)
+        
+        # Load line items for detailed forecasting (loaded once, filtered per customer later)
+        line_items_df = load_line_items(main_dash)
     
     if historical_df.empty:
         st.info("No 2025 historical orders found for this rep")
     else:
-        # Calculate customer metrics
+        # Calculate customer metrics (now uses Invoice_Amount for revenue)
         customer_metrics_df = calculate_customer_metrics(historical_df)
         
         # Get list of customers with pending orders (from Section 1)
@@ -1272,17 +1555,18 @@ def main():
         if opportunities_df.empty:
             st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
         else:
-            # 2025 Performance Summary
-            st.markdown("#### 📊 Your 2025 Performance")
+            # 2025 Performance Summary - Use Invoice amounts for actual revenue
+            st.markdown("#### 📊 Your 2025 Performance (Invoiced Revenue)")
+            amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
             perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
             with perf_col1:
-                st.metric("Total Revenue", f"${historical_df['Amount'].sum():,.0f}")
+                st.metric("Total Revenue", f"${historical_df[amount_col].sum():,.0f}")
             with perf_col2:
                 st.metric("Unique Customers", f"{historical_df['Customer'].nunique()}")
             with perf_col3:
                 st.metric("Total Orders", f"{len(historical_df)}")
             with perf_col4:
-                avg_order = historical_df['Amount'].mean()
+                avg_order = historical_df[amount_col].mean()
                 st.metric("Avg Order", f"${avg_order:,.0f}")
             
             st.markdown("---")
@@ -1324,7 +1608,7 @@ def main():
                 key=f"q1_view_mode_{rep_name}"
             )
             
-            st.caption("💡 **Projected** = Avg Order × Expected Q1 Orders × Confidence %. Expected orders based on ordering cadence (90 days ÷ cadence). You can edit the Projected value for any customer.")
+            st.caption("💡 **Forecast** = Avg Order × Expected Q1 Orders × Confidence %. Enable **Customize** to edit values or expand **Edit Line Items** to refine by item, quantity, and rate.")
             
             st.markdown("---")
             
@@ -1456,8 +1740,107 @@ def main():
                                         selected_count += 1
                                 st.caption(f"Selected: {selected_count} customers, ${selected_total:,.0f} forecast")
                                 
-                                # Store for export with edited values
+                                # === LINE ITEM EDITING SECTION ===
                                 selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                
+                                if selected_customers_list and not line_items_df.empty:
+                                    with st.expander("📋 Edit Line Items (Qty & Rate)"):
+                                        st.caption("Adjust quantities and rates to refine your forecast. Item names are read-only.")
+                                        
+                                        # Session state for edited line items
+                                        line_items_key = f"q1_reorder_line_items_{tier_name}_{rep_name}"
+                                        if line_items_key not in st.session_state:
+                                            st.session_state[line_items_key] = {}
+                                        
+                                        # Collect line items for all selected customers
+                                        all_line_items = []
+                                        for cust in selected_customers_list:
+                                            cust_row = tier_customers[tier_customers['Customer'] == cust]
+                                            if not cust_row.empty:
+                                                so_numbers = cust_row.iloc[0].get('SO_Numbers', [])
+                                                if so_numbers:
+                                                    cust_items = get_customer_line_items(so_numbers, line_items_df)
+                                                    if not cust_items.empty:
+                                                        cust_items['Customer'] = cust
+                                                        all_line_items.append(cust_items)
+                                        
+                                        if all_line_items:
+                                            combined_items = pd.concat(all_line_items, ignore_index=True)
+                                            
+                                            # Build editable display with persisted edits
+                                            line_display = []
+                                            for _, item_row in combined_items.iterrows():
+                                                item_key = f"{item_row['Customer']}|{item_row['Item']}"
+                                                
+                                                # Get edited values or defaults
+                                                if item_key in st.session_state[line_items_key]:
+                                                    qty = st.session_state[line_items_key][item_key]['Qty']
+                                                    rate = st.session_state[line_items_key][item_key]['Rate']
+                                                else:
+                                                    # Default: proportional qty for Q1 based on expected orders
+                                                    cust_row = tier_customers[tier_customers['Customer'] == item_row['Customer']]
+                                                    exp_q1 = cust_row.iloc[0].get('Expected_Orders_Q1', 1.0) if not cust_row.empty else 1.0
+                                                    # Scale by expected orders vs historical orders
+                                                    order_count = cust_row.iloc[0].get('Order_Count', 1) if not cust_row.empty else 1
+                                                    scale_factor = exp_q1 / max(order_count, 1)
+                                                    qty = item_row['Total_Qty'] * scale_factor
+                                                    rate = item_row['Avg_Rate']
+                                                
+                                                line_display.append({
+                                                    'Customer': item_row['Customer'],
+                                                    'Item': item_row['Item'],
+                                                    'Hist Qty': item_row['Total_Qty'],
+                                                    'Q1 Qty': qty,
+                                                    'Rate': rate,
+                                                    'Line Total': qty * rate
+                                                })
+                                            
+                                            line_df = pd.DataFrame(line_display)
+                                            
+                                            edited_lines = st.data_editor(
+                                                line_df,
+                                                column_config={
+                                                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                                    "Item": st.column_config.TextColumn("Item", width="medium"),
+                                                    "Hist Qty": st.column_config.NumberColumn("2025 Qty", format="%d", help="Historical quantity ordered in 2025"),
+                                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty", format="%.0f", help="Edit: Forecasted quantity for Q1"),
+                                                    "Rate": st.column_config.NumberColumn("Rate $", format="$%.2f", help="Edit: Price per unit"),
+                                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%,.0f")
+                                                },
+                                                disabled=['Customer', 'Item', 'Hist Qty', 'Line Total'],
+                                                hide_index=True,
+                                                key=f"q1_line_edit_{tier_name}_{rep_name}",
+                                                use_container_width=True
+                                            )
+                                            
+                                            # Store edited values and recalculate
+                                            line_item_total = 0
+                                            customer_totals = {}
+                                            for _, line_row in edited_lines.iterrows():
+                                                item_key = f"{line_row['Customer']}|{line_row['Item']}"
+                                                st.session_state[line_items_key][item_key] = {
+                                                    'Qty': line_row['Q1 Qty'],
+                                                    'Rate': line_row['Rate']
+                                                }
+                                                line_total = line_row['Q1 Qty'] * line_row['Rate']
+                                                line_item_total += line_total
+                                                
+                                                # Accumulate by customer
+                                                if line_row['Customer'] not in customer_totals:
+                                                    customer_totals[line_row['Customer']] = 0
+                                                customer_totals[line_row['Customer']] += line_total
+                                            
+                                            # Apply confidence percentage to line item total
+                                            line_item_forecast = line_item_total * tier_pct
+                                            st.success(f"📊 Line Item Total: ${line_item_total:,.0f} × {int(tier_pct*100)}% confidence = **${line_item_forecast:,.0f}** forecast")
+                                            
+                                            # Update individual customer forecasts based on line items
+                                            for cust, cust_total in customer_totals.items():
+                                                st.session_state[edited_proj_key][cust] = cust_total * tier_pct
+                                        else:
+                                            st.info("No line item detail available for selected customers")
+                                
+                                # Store for export with edited values
                                 export_df = tier_customers[tier_customers['Customer'].isin(selected_customers_list)].copy()
                                 # Update with edited forecast values
                                 for idx, row in export_df.iterrows():
@@ -1619,8 +2002,107 @@ def main():
                                         selected_count += 1
                                 st.caption(f"Selected: {selected_count} customers, ${selected_total:,.0f} forecast")
                                 
-                                # Store for export with edited values
+                                # === LINE ITEM EDITING SECTION ===
                                 selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                
+                                if selected_customers_list and not line_items_df.empty:
+                                    with st.expander("📋 Edit Line Items (Qty & Rate)"):
+                                        st.caption("Adjust quantities and rates to refine your forecast. Item names are read-only.")
+                                        
+                                        # Session state for edited line items
+                                        line_items_key = f"q1_reorder_prod_line_items_{product_type}_{rep_name}"
+                                        if line_items_key not in st.session_state:
+                                            st.session_state[line_items_key] = {}
+                                        
+                                        # Collect line items for all selected customers
+                                        all_line_items = []
+                                        for cust in selected_customers_list:
+                                            cust_row = prod_opportunities[prod_opportunities['Customer'] == cust]
+                                            if not cust_row.empty:
+                                                so_numbers = cust_row.iloc[0].get('SO_Numbers', [])
+                                                if so_numbers:
+                                                    cust_items = get_customer_line_items(so_numbers, line_items_df)
+                                                    if not cust_items.empty:
+                                                        cust_items['Customer'] = cust
+                                                        cust_items['Confidence_Pct'] = cust_row.iloc[0].get('Confidence_Pct', 0.5)
+                                                        all_line_items.append(cust_items)
+                                        
+                                        if all_line_items:
+                                            combined_items = pd.concat(all_line_items, ignore_index=True)
+                                            
+                                            # Build editable display with persisted edits
+                                            line_display = []
+                                            for _, item_row in combined_items.iterrows():
+                                                item_key = f"{item_row['Customer']}|{item_row['Item']}"
+                                                
+                                                # Get edited values or defaults
+                                                if item_key in st.session_state[line_items_key]:
+                                                    qty = st.session_state[line_items_key][item_key]['Qty']
+                                                    rate = st.session_state[line_items_key][item_key]['Rate']
+                                                else:
+                                                    # Default: proportional qty for Q1 based on expected orders
+                                                    cust_row = prod_opportunities[prod_opportunities['Customer'] == item_row['Customer']]
+                                                    exp_q1 = cust_row.iloc[0].get('Expected_Orders_Q1', 1.0) if not cust_row.empty else 1.0
+                                                    order_count = cust_row.iloc[0].get('Order_Count', 1) if not cust_row.empty else 1
+                                                    scale_factor = exp_q1 / max(order_count, 1)
+                                                    qty = item_row['Total_Qty'] * scale_factor
+                                                    rate = item_row['Avg_Rate']
+                                                
+                                                line_display.append({
+                                                    'Customer': item_row['Customer'],
+                                                    'Item': item_row['Item'],
+                                                    'Hist Qty': item_row['Total_Qty'],
+                                                    'Q1 Qty': qty,
+                                                    'Rate': rate,
+                                                    'Line Total': qty * rate
+                                                })
+                                            
+                                            line_df = pd.DataFrame(line_display)
+                                            
+                                            edited_lines = st.data_editor(
+                                                line_df,
+                                                column_config={
+                                                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                                    "Item": st.column_config.TextColumn("Item", width="medium"),
+                                                    "Hist Qty": st.column_config.NumberColumn("2025 Qty", format="%d"),
+                                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty", format="%.0f", help="Edit: Forecasted quantity"),
+                                                    "Rate": st.column_config.NumberColumn("Rate $", format="$%.2f", help="Edit: Price per unit"),
+                                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%,.0f")
+                                                },
+                                                disabled=['Customer', 'Item', 'Hist Qty', 'Line Total'],
+                                                hide_index=True,
+                                                key=f"q1_prod_line_edit_{product_type}_{rep_name}",
+                                                use_container_width=True
+                                            )
+                                            
+                                            # Store edited values and recalculate by customer
+                                            customer_totals = {}
+                                            for _, line_row in edited_lines.iterrows():
+                                                item_key = f"{line_row['Customer']}|{line_row['Item']}"
+                                                st.session_state[line_items_key][item_key] = {
+                                                    'Qty': line_row['Q1 Qty'],
+                                                    'Rate': line_row['Rate']
+                                                }
+                                                line_total = line_row['Q1 Qty'] * line_row['Rate']
+                                                
+                                                if line_row['Customer'] not in customer_totals:
+                                                    customer_totals[line_row['Customer']] = 0
+                                                customer_totals[line_row['Customer']] += line_total
+                                            
+                                            # Update forecasts with confidence applied
+                                            total_forecast = 0
+                                            for cust, cust_total in customer_totals.items():
+                                                cust_row = prod_opportunities[prod_opportunities['Customer'] == cust]
+                                                conf_pct = cust_row.iloc[0].get('Confidence_Pct', 0.5) if not cust_row.empty else 0.5
+                                                cust_forecast = cust_total * conf_pct
+                                                st.session_state[edited_proj_key][cust] = cust_forecast
+                                                total_forecast += cust_forecast
+                                            
+                                            st.success(f"📊 Line Item Forecast: **${total_forecast:,.0f}** (with confidence % applied)")
+                                        else:
+                                            st.info("No line item detail available for selected customers")
+                                
+                                # Store for export with edited values
                                 export_df = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)].copy()
                                 # Update with edited forecast values
                                 for idx, row in export_df.iterrows():
