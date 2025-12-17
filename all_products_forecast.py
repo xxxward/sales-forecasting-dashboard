@@ -1865,9 +1865,11 @@ def main():
     # === DEBUG INFO ===
     with st.expander("🔧 Debug: Data Summary"):
         st.write("**Data Source:** Copy of All Reps All Pipelines (Q4 2025 + Q1 2026 deals)")
+        if is_team_view:
+            st.write(f"**Team Reps:** {', '.join(active_team_reps)}")
         st.write(f"**Total Deals Loaded:** {len(deals_df)}")
-        st.write(f"**PF Spillover:** {len(so_categories['pf_spillover'])} orders, ${so_categories['pf_spillover_amount']:,.0f}")
-        st.write(f"**PA Spillover:** {len(so_categories['pa_spillover'])} orders, ${so_categories['pa_spillover_amount']:,.0f}")
+        st.write(f"**PF Spillover:** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
+        st.write(f"**PA Spillover:** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
         
         for key in hs_categories.keys():
             df = hs_dfs.get(key, pd.DataFrame())
