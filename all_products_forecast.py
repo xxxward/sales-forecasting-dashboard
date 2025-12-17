@@ -242,16 +242,27 @@ def categorize_sales_orders_q1(sales_orders_df, rep_name=None):
     if sales_orders_df is None or sales_orders_df.empty:
         return empty_result
     
+    # Make a clean copy and remove ALL duplicate columns FIRST
+    orders = sales_orders_df.copy()
+    if orders.columns.duplicated().any():
+        orders = orders.loc[:, ~orders.columns.duplicated()]
+    
     # Filter by rep if specified
-    if rep_name and 'Sales Rep' in sales_orders_df.columns:
-        orders = sales_orders_df[sales_orders_df['Sales Rep'] == rep_name].copy()
-    else:
-        orders = sales_orders_df.copy()
+    if rep_name:
+        if 'Sales Rep' in orders.columns:
+            # Safe filtering - convert to list of matching indices first
+            try:
+                orders = orders[orders['Sales Rep'].astype(str).str.strip() == str(rep_name).strip()].copy()
+            except Exception as e:
+                st.warning(f"Error filtering by rep: {e}")
+                return empty_result
+        else:
+            st.warning("Sales Rep column not found in orders data")
     
     if orders.empty:
         return empty_result
     
-    # Remove duplicate columns
+    # Remove duplicate columns one more time after filtering
     if orders.columns.duplicated().any():
         orders = orders.loc[:, ~orders.columns.duplicated()]
     
@@ -507,6 +518,10 @@ def main():
     
     # Process deals data
     if not deals_df.empty and len(deals_df.columns) >= 6:
+        # CRITICAL: Remove duplicate columns first
+        if deals_df.columns.duplicated().any():
+            deals_df = deals_df.loc[:, ~deals_df.columns.duplicated()]
+        
         # Column mapping (same as main dashboard)
         col_names = deals_df.columns.tolist()
         rename_dict = {}
@@ -536,6 +551,10 @@ def main():
                 rename_dict[col] = 'Pending Approval Date'
         
         deals_df = deals_df.rename(columns=rename_dict)
+        
+        # Remove duplicates after rename
+        if deals_df.columns.duplicated().any():
+            deals_df = deals_df.loc[:, ~deals_df.columns.duplicated()]
         
         # Create Deal Owner if not exists
         if 'Deal Owner' not in deals_df.columns:
@@ -570,6 +589,10 @@ def main():
     
     # Process sales orders data
     if not sales_orders_df.empty:
+        # CRITICAL: Remove duplicate columns first
+        if sales_orders_df.columns.duplicated().any():
+            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
+        
         # Map columns similar to main dashboard
         if len(sales_orders_df.columns) > 29:
             # Rename key columns
@@ -590,6 +613,10 @@ def main():
                 col_mapping[sales_orders_df.columns[31]] = 'Sales Rep'
             
             sales_orders_df = sales_orders_df.rename(columns=col_mapping)
+            
+            # CRITICAL: Remove duplicates AGAIN after renaming (in case target names already existed)
+            if sales_orders_df.columns.duplicated().any():
+                sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
             
             # Clean Amount
             def clean_numeric(value):
