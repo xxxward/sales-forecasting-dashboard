@@ -166,50 +166,76 @@ def inject_custom_css():
 
 # ========== GAUGE CHART ==========
 def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
-    """Create a gauge chart for Q1 2026 progress"""
+    """Create a clean gauge chart for Q1 2026 progress"""
     
     if goal <= 0:
         goal = 1
     
     percentage = (value / goal) * 100
     
+    # Determine color based on progress
     if percentage >= 100:
-        bar_color = "#4ade80"
+        bar_color = "#4ade80"  # Green - at or above goal
     elif percentage >= 75:
-        bar_color = "#fbbf24"
+        bar_color = "#fbbf24"  # Yellow
     elif percentage >= 50:
-        bar_color = "#fb923c"
+        bar_color = "#fb923c"  # Orange
     else:
-        bar_color = "#f87171"
+        bar_color = "#f87171"  # Red
+    
+    # Set gauge range - adapt to actual value if it exceeds goal
+    max_range = max(goal * 1.1, value * 1.05)
     
     fig = go.Figure(go.Indicator(
-        mode="gauge+number+delta",
+        mode="gauge+number",
         value=value,
-        number={'prefix': "$", 'valueformat': ",.0f"},
-        delta={'reference': goal, 'valueformat': ",.0f", 'prefix': "$"},
-        title={'text': title, 'font': {'size': 16}},
+        number={
+            'prefix': "$", 
+            'valueformat': ",.0f",
+            'font': {'size': 48, 'color': 'white'}
+        },
+        title={
+            'text': f"{title}<br><span style='font-size:14px;color:#888'>Goal: ${goal:,.0f}</span>",
+            'font': {'size': 18, 'color': 'white'}
+        },
         gauge={
-            'axis': {'range': [0, goal * 1.2], 'tickformat': "$,.0f"},
-            'bar': {'color': bar_color},
-            'bgcolor': "rgba(255,255,255,0.1)",
+            'axis': {
+                'range': [0, max_range], 
+                'tickmode': 'array',
+                'tickvals': [0, goal * 0.5, goal, max_range],
+                'ticktext': ['$0', f'${goal*0.5/1000:.0f}K', f'${goal/1000:.0f}K', ''],
+                'tickfont': {'size': 10, 'color': '#888'},
+                'showticklabels': True
+            },
+            'bar': {'color': bar_color, 'thickness': 0.75},
+            'bgcolor': "rgba(255,255,255,0.05)",
             'borderwidth': 0,
             'steps': [
-                {'range': [0, goal * 0.5], 'color': "rgba(248, 113, 113, 0.2)"},
-                {'range': [goal * 0.5, goal * 0.75], 'color': "rgba(251, 191, 36, 0.2)"},
-                {'range': [goal * 0.75, goal], 'color': "rgba(74, 222, 128, 0.2)"},
-                {'range': [goal, goal * 1.2], 'color': "rgba(96, 165, 250, 0.2)"},
+                {'range': [0, goal * 0.5], 'color': "rgba(248, 113, 113, 0.15)"},
+                {'range': [goal * 0.5, goal * 0.75], 'color': "rgba(251, 191, 36, 0.15)"},
+                {'range': [goal * 0.75, goal], 'color': "rgba(74, 222, 128, 0.15)"},
+                {'range': [goal, max_range], 'color': "rgba(96, 165, 250, 0.15)"},
             ],
             'threshold': {
-                'line': {'color': "white", 'width': 3},
-                'thickness': 0.8,
+                'line': {'color': "#10b981", 'width': 4},
+                'thickness': 0.85,
                 'value': goal
             }
         }
     ))
     
+    # Add percentage annotation
+    fig.add_annotation(
+        x=0.5, y=0.25,
+        text=f"{percentage:.0f}% of Goal",
+        showarrow=False,
+        font=dict(size=16, color='#888' if percentage < 100 else '#4ade80'),
+        xref="paper", yref="paper"
+    )
+    
     fig.update_layout(
-        height=300,
-        margin=dict(l=20, r=20, t=40, b=20),
+        height=280,
+        margin=dict(l=30, r=30, t=60, b=20),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font={'color': 'white'}
