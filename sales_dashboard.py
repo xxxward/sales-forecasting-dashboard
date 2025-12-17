@@ -2086,6 +2086,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'PF_NoDate_Ext': {'label': 'PF (No Date) - External'},
         'PF_NoDate_Int': {'label': 'PF (No Date) - Internal'},
         'PA_Date':       {'label': 'Pending Approval (With Date)'},
+        'PA_Spillover':  {'label': '⚠️ PA Spillover (Q1 2026)'},
         'PA_NoDate':     {'label': 'Pending Approval (No Date)'},
         'PA_Old':        {'label': 'Pending Approval (>2 Wks)'},
     }
@@ -2169,6 +2170,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'PF_NoDate_Int': format_ns_view(so_categories['pf_nodate_int'], 'PF_Date'),
         'PA_Old': format_ns_view(so_categories['pa_old'], 'PA_Date'),
         'PA_Date': format_ns_view(so_categories['pa_date'], 'PA_Date'),
+        'PA_Spillover': format_ns_view(so_categories['pa_spillover'], 'PA_Date'),
         'PA_NoDate': format_ns_view(so_categories['pa_nodate'], 'None')
     }
 
@@ -3112,7 +3114,8 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
             'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
-            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0
+            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0,
+            'pa_spillover': pd.DataFrame(), 'pa_spillover_amount': 0
         }
     
     # Filter by rep if specified
@@ -3130,7 +3133,8 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
             'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
-            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0
+            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0,
+            'pa_spillover': pd.DataFrame(), 'pa_spillover_amount': 0
         }
     
     # Remove duplicate columns
@@ -3238,6 +3242,12 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             (pa_orders['PA_Date_Parsed'] <= q4_end)
         )
         
+        # NEW: Determine which orders have a Q1 2026 PA Date (Spillover)
+        has_q1_2026_pa_date = (
+            (pa_orders['PA_Date_Parsed'].notna()) &
+            (pa_orders['PA_Date_Parsed'] >= q1_2026_start)
+        )
+        
         # Determine which orders have NO PA Date (or invalid/outside Q4)
         has_no_pa_date = (
             (pa_orders['PA_Date_Parsed'].isna()) |
@@ -3245,12 +3255,19 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             (pa_orders['Pending Approval Date'].astype(str).str.strip() == '')
         )
         
+        # NEW: PA Q1 2026 Spillover bucket (takes priority over other PA categories)
+        pa_spillover = pa_orders[has_q1_2026_pa_date].copy()
+        spillover_pa_ids = pa_spillover.index
+        
+        # Exclude spillover from remaining PA categorization
+        pa_orders_remaining = pa_orders[~pa_orders.index.isin(spillover_pa_ids)].copy()
+        
         # CATEGORY 3: PA Old (>= 13 business days) - ANY PA order that is old, regardless of PA date
         # This takes priority - old orders go here first
-        pa_old = pa_orders[pa_orders['Age_Business_Days'] >= 13].copy()
+        pa_old = pa_orders_remaining[pa_orders_remaining['Age_Business_Days'] >= 13].copy()
         
         # Only "young" orders (< 13 days) are eligible for PA with Date or PA No Date
-        young_pa = pa_orders[pa_orders['Age_Business_Days'] < 13].copy()
+        young_pa = pa_orders_remaining[pa_orders_remaining['Age_Business_Days'] < 13].copy()
         
         # CATEGORY 1: PA with Date - has Q4 PA date AND is NOT old (< 13 days)
         pa_date = young_pa[has_q4_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
@@ -3258,7 +3275,7 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         # CATEGORY 2: PA No Date - no PA date AND is NOT old (< 13 days)
         pa_nodate = young_pa[has_no_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
     else:
-        pa_old = pa_date = pa_nodate = pd.DataFrame()
+        pa_old = pa_date = pa_nodate = pa_spillover = pd.DataFrame()
     
     # Calculate amounts
     def get_amount(df):
@@ -3280,7 +3297,9 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         'pa_old': pa_old,
         'pa_old_amount': get_amount(pa_old),
         'pf_spillover': pf_spillover,
-        'pf_spillover_amount': get_amount(pf_spillover)
+        'pf_spillover_amount': get_amount(pf_spillover),
+        'pa_spillover': pa_spillover,
+        'pa_spillover_amount': get_amount(pa_spillover)
     }
 
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
