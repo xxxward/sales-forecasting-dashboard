@@ -844,15 +844,31 @@ def main():
         rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
         
         if 'Close Date' in rep_deals.columns:
-            # Q1 2026 Close Date deals
+            # Q1 2026 Close Date deals (Close Date in Q1 2026)
             q1_close_mask = (rep_deals['Close Date'] >= Q1_2026_START) & (rep_deals['Close Date'] <= Q1_2026_END)
             q1_deals = rep_deals[q1_close_mask]
             
-            # Q4 2025 Spillover - use the Q1 2026 Spillover column from spreadsheet
+            # Q4 2025 Spillover - deals with Q4 close date BUT marked as Q1 2026 Spillover
+            # IMPORTANT: Only include deals with Q4 close dates to avoid double counting with Q1 deals
+            q4_close_mask = (rep_deals['Close Date'] >= Q4_2025_START) & (rep_deals['Close Date'] <= Q4_2025_END)
+            
             if 'Q1 2026 Spillover' in rep_deals.columns:
-                q4_spillover = rep_deals[rep_deals['Q1 2026 Spillover'] == 'Q1 2026']
+                # Q4 Spillover = Q4 close date AND spillover flag is set
+                q4_spillover = rep_deals[q4_close_mask & (rep_deals['Q1 2026 Spillover'] == 'Q1 2026')]
             else:
                 q4_spillover = pd.DataFrame()
+            
+            # Debug info
+            with st.expander("🔧 Debug: HubSpot Deal Counts"):
+                st.write(f"**Total rep deals loaded:** {len(rep_deals)}")
+                st.write(f"**Q1 Close Date deals:** {len(q1_deals)} (Close Date in Jan-Mar 2026)")
+                st.write(f"**Q4 Spillover deals:** {len(q4_spillover)} (Q4 Close Date + Spillover flag)")
+                if 'Amount' in rep_deals.columns:
+                    q1_total = q1_deals['Amount'].sum() if not q1_deals.empty else 0
+                    q4_spill_total = q4_spillover['Amount'].sum() if not q4_spillover.empty else 0
+                    st.write(f"**Q1 deals total:** ${q1_total:,.0f}")
+                    st.write(f"**Q4 spillover total:** ${q4_spill_total:,.0f}")
+                    st.write(f"**Combined (should match ~$800K for Jake):** ${q1_total + q4_spill_total:,.0f}")
             
             # Q1 Close deals by status
             if 'Status' in q1_deals.columns:
