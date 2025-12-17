@@ -523,8 +523,21 @@ def calculate_customer_metrics(historical_df):
             confidence_tier = 'Long Shot'
             confidence_pct = 0.25
         
-        # Projected value
-        projected_value = weighted_avg * confidence_pct
+        # Calculate expected orders in Q1 based on cadence
+        # Q1 2026 = 90 days (Jan 1 - Mar 31)
+        q1_days = 90
+        if cadence_days and cadence_days > 0:
+            expected_orders_q1 = q1_days / cadence_days
+            # Cap at reasonable max (6 orders = roughly every 2 weeks)
+            expected_orders_q1 = min(expected_orders_q1, 6.0)
+            # Floor at 1 order minimum
+            expected_orders_q1 = max(expected_orders_q1, 1.0)
+        else:
+            # No cadence data (only 1 order) - assume 1 order in Q1
+            expected_orders_q1 = 1.0
+        
+        # Projected value = Avg Order × Expected Orders × Confidence %
+        projected_value = weighted_avg * expected_orders_q1 * confidence_pct
         
         customer_metrics.append({
             'Customer': customer,
@@ -532,6 +545,7 @@ def calculate_customer_metrics(historical_df):
             'Total_Revenue': total_revenue,
             'Weighted_Avg_Order': weighted_avg,
             'Cadence_Days': cadence_days,
+            'Expected_Orders_Q1': expected_orders_q1,
             'Last_Order_Date': last_order_date,
             'Days_Since_Last': days_since_last,
             'Product_Types': product_types_str,
@@ -1255,6 +1269,8 @@ def main():
                 key=f"q1_view_mode_{rep_name}"
             )
             
+            st.caption("💡 **Projected** = Avg Order × Expected Q1 Orders × Confidence %. Expected orders based on ordering cadence (90 days ÷ cadence). You can edit the Projected value for any customer.")
+            
             st.markdown("---")
             
             # Initialize reorder buckets for tracking selections
@@ -1281,7 +1297,7 @@ def main():
                     checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
                     
                     is_checked = st.checkbox(
-                        f"{tier_emoji} {tier_name} ({int(tier_pct*100)}%): {len(tier_customers)} customers, ${tier_historical:,.0f} hist → **${tier_projected:,.0f} projected**",
+                        f"{tier_emoji} {tier_name} ({int(tier_pct*100)}%): {len(tier_customers)} customers  |  ${tier_historical:,.0f} hist  →  ${tier_projected:,.0f} projected",
                         key=checkbox_key,
                         help=tier_desc
                     )
@@ -1296,6 +1312,11 @@ def main():
                                 unselected_key = f"q1_reorder_unsel_{tier_name}_{rep_name}"
                                 if unselected_key not in st.session_state:
                                     st.session_state[unselected_key] = set()
+                                
+                                # Session state for edited projected values
+                                edited_proj_key = f"q1_reorder_edited_proj_{tier_name}_{rep_name}"
+                                if edited_proj_key not in st.session_state:
+                                    st.session_state[edited_proj_key] = {}
                                 
                                 # Row-level select/unselect buttons
                                 row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
@@ -1312,17 +1333,18 @@ def main():
                                 display_data = []
                                 for _, row in tier_customers.iterrows():
                                     is_selected = row['Customer'] not in st.session_state[unselected_key]
+                                    # Use edited projected value if available
+                                    proj_val = st.session_state[edited_proj_key].get(row['Customer'], row['Projected_Value'])
                                     display_data.append({
                                         'Select': is_selected,
                                         'Customer': row['Customer'],
                                         '2025 Orders': row['Order_Count'],
-                                        '2025 Revenue': row['Total_Revenue'],
                                         'Avg Order': row['Weighted_Avg_Order'],
-                                        'Cadence': f"~{int(row['Cadence_Days'])} days" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Exp Q1': row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in row else 1.0,
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
                                         'Days Ago': row['Days_Since_Last'],
-                                        'Products': row['Product_Types'],
-                                        'Projected': row['Projected_Value']
+                                        'Forecast': proj_val
                                     })
                                 
                                 display_df = pd.DataFrame(display_data)
@@ -1333,48 +1355,58 @@ def main():
                                         "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                         "Customer": st.column_config.TextColumn("Customer", width="medium"),
                                         "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "2025 Revenue": st.column_config.NumberColumn("2025 Rev", format="$%d"),
                                         "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
                                         "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f", help="Expected orders in Q1 based on cadence"),
                                         "Last Order": st.column_config.TextColumn("Last Order", width="small"),
                                         "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
-                                        "Products": st.column_config.TextColumn("Products", width="medium"),
-                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
                                     },
-                                    disabled=['Customer', '2025 Orders', '2025 Revenue', 'Avg Order', 'Cadence', 'Last Order', 'Days Ago', 'Products', 'Projected'],
+                                    disabled=['Customer', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order', 'Days Ago'],
                                     hide_index=True,
                                     key=f"q1_reorder_edit_{tier_name}_{rep_name}",
                                     use_container_width=True
                                 )
                                 
-                                # Update unselected set
+                                # Update unselected set and edited projections
                                 current_unselected = set()
                                 for _, row in edited.iterrows():
                                     if not row['Select']:
                                         current_unselected.add(row['Customer'])
+                                    # Store edited forecast values
+                                    st.session_state[edited_proj_key][row['Customer']] = row['Forecast']
                                 st.session_state[unselected_key] = current_unselected
                                 
-                                # Calculate selected total
-                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
-                                selected_total = tier_customers[tier_customers['Customer'].isin(selected_customers_list)]['Projected_Value'].sum()
-                                st.caption(f"Selected: {len(selected_customers_list)} customers, ${selected_total:,.0f} projected")
+                                # Calculate selected total using EDITED values
+                                selected_total = 0
+                                selected_count = 0
+                                for _, row in edited.iterrows():
+                                    if row['Select']:
+                                        selected_total += row['Forecast']
+                                        selected_count += 1
+                                st.caption(f"Selected: {selected_count} customers, ${selected_total:,.0f} forecast")
                                 
-                                # Store for export
-                                reorder_buckets[f"reorder_{tier_name}"] = tier_customers[tier_customers['Customer'].isin(selected_customers_list)]
+                                # Store for export with edited values
+                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                export_df = tier_customers[tier_customers['Customer'].isin(selected_customers_list)].copy()
+                                # Update with edited forecast values
+                                for idx, row in export_df.iterrows():
+                                    if row['Customer'] in st.session_state[edited_proj_key]:
+                                        export_df.loc[idx, 'Projected_Value'] = st.session_state[edited_proj_key][row['Customer']]
+                                reorder_buckets[f"reorder_{tier_name}"] = export_df
                             else:
-                                # Read-only view
+                                # Read-only view - shows calculated values, enable Customize to edit
                                 display_data = []
                                 for _, row in tier_customers.iterrows():
                                     display_data.append({
                                         'Customer': row['Customer'],
                                         '2025 Orders': row['Order_Count'],
-                                        '2025 Revenue': row['Total_Revenue'],
                                         'Avg Order': row['Weighted_Avg_Order'],
-                                        'Cadence': f"~{int(row['Cadence_Days'])} days" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Exp Q1': row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in row else 1.0,
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
                                         'Days Ago': row['Days_Since_Last'],
-                                        'Products': row['Product_Types'],
-                                        'Projected': row['Projected_Value']
+                                        'Forecast': row['Projected_Value']
                                     })
                                 
                                 st.dataframe(
@@ -1382,17 +1414,17 @@ def main():
                                     column_config={
                                         "Customer": st.column_config.TextColumn("Customer", width="medium"),
                                         "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "2025 Revenue": st.column_config.NumberColumn("2025 Rev", format="$%d"),
                                         "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
                                         "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
                                         "Last Order": st.column_config.TextColumn("Last Order", width="small"),
                                         "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
-                                        "Products": st.column_config.TextColumn("Products", width="medium"),
-                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
                                     },
                                     hide_index=True,
                                     use_container_width=True
                                 )
+                                st.caption("💡 Enable **Customize** to edit forecast values")
                                 
                                 # Store full tier for export
                                 reorder_buckets[f"reorder_{tier_name}"] = tier_customers
@@ -1404,7 +1436,7 @@ def main():
                     checkbox_key = f"q1_reorder_prod_{product_type}_{rep_name}"
                     
                     is_checked = st.checkbox(
-                        f"📦 {product_type}: {len(data['customers'])} customers, ${data['historical_total']:,.0f} hist → **${data['projected_total']:,.0f} projected**",
+                        f"📦 {product_type}: {len(data['customers'])} customers  |  ${data['historical_total']:,.0f} hist  →  ${data['projected_total']:,.0f} projected",
                         key=checkbox_key
                     )
                     
@@ -1423,6 +1455,11 @@ def main():
                                 if unselected_key not in st.session_state:
                                     st.session_state[unselected_key] = set()
                                 
+                                # Session state for edited projected values
+                                edited_proj_key = f"q1_reorder_prod_edited_proj_{product_type}_{rep_name}"
+                                if edited_proj_key not in st.session_state:
+                                    st.session_state[edited_proj_key] = {}
+                                
                                 # Row-level buttons
                                 row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
                                 with row_col1:
@@ -1434,18 +1471,22 @@ def main():
                                         st.session_state[unselected_key] = set(prod_customers)
                                         st.rerun()
                                 
-                                # Build display dataframe
+                                # Build display dataframe with cadence and editable forecast
                                 display_data = []
                                 for _, row in prod_opportunities.iterrows():
                                     is_selected = row['Customer'] not in st.session_state[unselected_key]
+                                    # Use edited projected value if available
+                                    proj_val = st.session_state[edited_proj_key].get(row['Customer'], row['Projected_Value'])
                                     display_data.append({
                                         'Select': is_selected,
                                         'Customer': row['Customer'],
                                         'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
+                                        'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Exp Q1': row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in row else 1.0,
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
-                                        'Projected': row['Projected_Value']
+                                        'Forecast': proj_val
                                     })
                                 
                                 display_df = pd.DataFrame(display_data)
@@ -1458,31 +1499,45 @@ def main():
                                         "Confidence": st.column_config.TextColumn("Confidence", width="small"),
                                         "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
                                         "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
                                         "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
                                     },
-                                    disabled=['Customer', 'Confidence', '2025 Orders', 'Avg Order', 'Last Order', 'Projected'],
+                                    disabled=['Customer', 'Confidence', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order'],
                                     hide_index=True,
                                     key=f"q1_reorder_prod_edit_{product_type}_{rep_name}",
                                     use_container_width=True
                                 )
                                 
-                                # Update unselected set
+                                # Update unselected set and edited projections
                                 current_unselected = set()
                                 for _, row in edited.iterrows():
                                     if not row['Select']:
                                         current_unselected.add(row['Customer'])
+                                    # Store edited forecast values
+                                    st.session_state[edited_proj_key][row['Customer']] = row['Forecast']
                                 st.session_state[unselected_key] = current_unselected
                                 
-                                # Calculate selected total
-                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
-                                selected_total = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)]['Projected_Value'].sum()
-                                st.caption(f"Selected: {len(selected_customers_list)} customers, ${selected_total:,.0f} projected")
+                                # Calculate selected total using EDITED values
+                                selected_total = 0
+                                selected_count = 0
+                                for _, row in edited.iterrows():
+                                    if row['Select']:
+                                        selected_total += row['Forecast']
+                                        selected_count += 1
+                                st.caption(f"Selected: {selected_count} customers, ${selected_total:,.0f} forecast")
                                 
-                                # Store for export
-                                reorder_buckets[f"reorder_prod_{product_type}"] = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)]
+                                # Store for export with edited values
+                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                export_df = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)].copy()
+                                # Update with edited forecast values
+                                for idx, row in export_df.iterrows():
+                                    if row['Customer'] in st.session_state[edited_proj_key]:
+                                        export_df.loc[idx, 'Projected_Value'] = st.session_state[edited_proj_key][row['Customer']]
+                                reorder_buckets[f"reorder_prod_{product_type}"] = export_df
                             else:
-                                # Read-only view
+                                # Read-only view - shows calculated values, enable Customize to edit
                                 display_data = []
                                 for _, row in prod_opportunities.iterrows():
                                     display_data.append({
@@ -1490,8 +1545,10 @@ def main():
                                         'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
+                                        'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Exp Q1': row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in row else 1.0,
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
-                                        'Projected': row['Projected_Value']
+                                        'Forecast': row['Projected_Value']
                                     })
                                 
                                 st.dataframe(
@@ -1501,12 +1558,15 @@ def main():
                                         "Confidence": st.column_config.TextColumn("Confidence", width="small"),
                                         "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
                                         "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
                                         "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
                                     },
                                     hide_index=True,
                                     use_container_width=True
                                 )
+                                st.caption("💡 Enable **Customize** to edit forecast values")
                                 
                                 # Store for export
                                 reorder_buckets[f"reorder_prod_{product_type}"] = prod_opportunities
