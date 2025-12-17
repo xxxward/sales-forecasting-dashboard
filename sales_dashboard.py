@@ -2225,6 +2225,34 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     # We use this dict to store the ACTUAL dataframes to be exported
     export_buckets = {}
     
+    # --- SELECT ALL / UNSELECT ALL BUTTONS ---
+    sel_col1, sel_col2, sel_col3 = st.columns([1, 1, 2])
+    with sel_col1:
+        if st.button("☑️ Select All", key=f"select_all_{rep_name}", use_container_width=True):
+            # Select all NetSuite categories that have data
+            for key in ns_categories.keys():
+                df = ns_dfs.get(key, pd.DataFrame())
+                val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+                if val > 0 or key == 'PA_Date':
+                    st.session_state[f"chk_{key}_{rep_name}"] = True
+            # Select all HubSpot categories that have data
+            for key in hs_categories.keys():
+                df = hs_dfs.get(key, pd.DataFrame())
+                val = df['Amount_Numeric'].sum() if not df.empty else 0
+                if val > 0:
+                    st.session_state[f"chk_{key}_{rep_name}"] = True
+            st.rerun()
+    
+    with sel_col2:
+        if st.button("☐ Unselect All", key=f"unselect_all_{rep_name}", use_container_width=True):
+            # Unselect all NetSuite categories
+            for key in ns_categories.keys():
+                st.session_state[f"chk_{key}_{rep_name}"] = False
+            # Unselect all HubSpot categories
+            for key in hs_categories.keys():
+                st.session_state[f"chk_{key}_{rep_name}"] = False
+            st.rerun()
+    
     with st.container():
         col_ns, col_hs = st.columns(2)
         
