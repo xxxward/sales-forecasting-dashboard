@@ -1,7 +1,12 @@
 """
 Q1 2026 Sales Forecasting Module
-Based on Sales Dashboard 43 architecture
-Helps sales reps plan and forecast their Q1 2026 quarter
+Based on Sales Dashboard architecture
+
+KEY INSIGHT: The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
+- pf_spillover = PF orders with Q1 2026 dates
+- pa_spillover = PA orders with PA Date in Q1 2026
+
+This module imports directly from the main dashboard to reuse all data loading and categorization logic.
 """
 
 import streamlit as st
@@ -9,18 +14,18 @@ import pandas as pd
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import numpy as np
 
 # ========== DATE CONSTANTS ==========
 Q1_2026_START = pd.Timestamp('2026-01-01')
 Q1_2026_END = pd.Timestamp('2026-03-31')
 Q4_2025_START = pd.Timestamp('2025-10-01')
 Q4_2025_END = pd.Timestamp('2025-12-31')
-Q2_2026_START = pd.Timestamp('2026-04-01')
+
 
 def get_mst_time():
     """Get current time in Mountain Standard Time"""
     return datetime.now(ZoneInfo("America/Denver"))
+
 
 def calculate_business_days_until_q1():
     """Calculate business days from today until Q1 2026 starts"""
@@ -49,11 +54,11 @@ def calculate_business_days_until_q1():
     
     return business_days
 
-# ========== CUSTOM CSS FOR Q1 2026 MODULE ==========
+
+# ========== CUSTOM CSS ==========
 def inject_custom_css():
     st.markdown("""
     <style>
-    /* Q1 2026 Theme - Slightly different accent to distinguish from Q4 */
     .q1-header {
         background: linear-gradient(135deg, #059669 0%, #10b981 100%);
         padding: 20px;
@@ -73,16 +78,6 @@ def inject_custom_css():
         margin: 5px 0 0 0;
     }
     
-    /* Goal input styling */
-    .goal-input-container {
-        background: linear-gradient(135deg, rgba(5, 150, 105, 0.2) 0%, rgba(16, 185, 129, 0.2) 100%);
-        border: 1px solid rgba(16, 185, 129, 0.3);
-        border-radius: 12px;
-        padding: 15px;
-        margin-bottom: 20px;
-    }
-    
-    /* Sticky forecast bar for Q1 */
     .sticky-forecast-bar-q1 {
         position: fixed;
         bottom: 0;
@@ -162,7 +157,6 @@ def inject_custom_css():
         }
     }
     
-    /* Add padding at bottom for sticky bar */
     .main .block-container {
         padding-bottom: 100px !important;
     }
@@ -170,235 +164,23 @@ def inject_custom_css():
     """, unsafe_allow_html=True)
 
 
-# ========== DATA LOADING ==========
-def load_q1_data(sales_orders_df, deals_df, dashboard_df):
-    """
-    Process data for Q1 2026 forecasting
-    Returns filtered DataFrames for Q1 2026 planning
-    """
-    
-    q1_data = {
-        'sales_orders': pd.DataFrame(),
-        'hubspot_q1_close': pd.DataFrame(),
-        'hubspot_q4_spillover': pd.DataFrame(),
-        'reps': []
-    }
-    
-    # Get rep list from dashboard
-    if dashboard_df is not None and not dashboard_df.empty:
-        if 'Rep Name' in dashboard_df.columns:
-            q1_data['reps'] = dashboard_df['Rep Name'].tolist()
-    
-    # Process Sales Orders for Q1 2026
-    if sales_orders_df is not None and not sales_orders_df.empty:
-        q1_data['sales_orders'] = sales_orders_df.copy()
-    
-    # Process HubSpot deals
-    if deals_df is not None and not deals_df.empty:
-        df = deals_df.copy()
-        
-        # Ensure Close Date is datetime
-        if 'Close Date' in df.columns:
-            df['Close Date'] = pd.to_datetime(df['Close Date'], errors='coerce')
-        
-        # Parse Pending Approval Date (Column P in HubSpot data)
-        if 'Pending Approval Date' in df.columns:
-            df['PA_Date_Parsed'] = pd.to_datetime(df['Pending Approval Date'], errors='coerce')
-        else:
-            df['PA_Date_Parsed'] = pd.NaT
-        
-        # Q1 2026 Close Date deals
-        q1_close_mask = (
-            (df['Close Date'] >= Q1_2026_START) & 
-            (df['Close Date'] <= Q1_2026_END)
-        )
-        q1_data['hubspot_q1_close'] = df[q1_close_mask].copy()
-        
-        # Q4 2025 Spillover: Close Date in Q4 2025 BUT PA Date in 2026
-        q4_spillover_mask = (
-            (df['Close Date'] >= Q4_2025_START) & 
-            (df['Close Date'] <= Q4_2025_END) &
-            (df['PA_Date_Parsed'] >= Q1_2026_START)
-        )
-        q1_data['hubspot_q4_spillover'] = df[q4_spillover_mask].copy()
-    
-    return q1_data
-
-
-# ========== SALES ORDER CATEGORIZATION FOR Q1 2026 ==========
-def categorize_sales_orders_q1(sales_orders_df, rep_name=None):
-    """
-    Categorize sales orders for Q1 2026 planning
-    Returns orders with Promise/Projected Date OR PA Date in Q1 2026
-    """
-    
-    empty_result = {
-        'pf_date_ext': pd.DataFrame(), 'pf_date_ext_amount': 0,
-        'pf_date_int': pd.DataFrame(), 'pf_date_int_amount': 0,
-        'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
-        'pf_q2_spillover': pd.DataFrame(), 'pf_q2_spillover_amount': 0,
-    }
-    
-    if sales_orders_df is None or sales_orders_df.empty:
-        return empty_result
-    
-    # Make a clean copy and remove ALL duplicate columns FIRST
-    orders = sales_orders_df.copy()
-    if orders.columns.duplicated().any():
-        orders = orders.loc[:, ~orders.columns.duplicated()]
-    
-    # Filter by rep if specified
-    if rep_name:
-        if 'Sales Rep' in orders.columns:
-            # Safe filtering - convert to list of matching indices first
-            try:
-                orders = orders[orders['Sales Rep'].astype(str).str.strip() == str(rep_name).strip()].copy()
-            except Exception as e:
-                st.warning(f"Error filtering by rep: {e}")
-                return empty_result
-        else:
-            st.warning("Sales Rep column not found in orders data")
-    
-    if orders.empty:
-        return empty_result
-    
-    # Remove duplicate columns one more time after filtering
-    if orders.columns.duplicated().any():
-        orders = orders.loc[:, ~orders.columns.duplicated()]
-    
-    # Helper to get column by index
-    def get_col_by_index(df, index):
-        if df is not None and len(df.columns) > index:
-            return df.iloc[:, index]
-        return pd.Series()
-    
-    # Add display columns
-    orders['Display_SO_Num'] = get_col_by_index(orders, 1)  # Col B: SO#
-    orders['Display_Type'] = get_col_by_index(orders, 17).fillna('Standard')  # Col R: Order Type
-    orders['Display_Promise_Date'] = pd.to_datetime(get_col_by_index(orders, 11), errors='coerce')  # Col L
-    orders['Display_Projected_Date'] = pd.to_datetime(get_col_by_index(orders, 12), errors='coerce')  # Col M
-    
-    # PA Date handling
-    if 'Pending Approval Date' in orders.columns:
-        orders['Display_PA_Date'] = pd.to_datetime(orders['Pending Approval Date'], errors='coerce')
-    else:
-        orders['Display_PA_Date'] = pd.to_datetime(get_col_by_index(orders, 29), errors='coerce')  # Col AD
-    
-    # Parse Customer Promise Date and Projected Date
-    if 'Customer Promise Date' not in orders.columns:
-        orders['Customer Promise Date'] = orders['Display_Promise_Date']
-    else:
-        orders['Customer Promise Date'] = pd.to_datetime(orders['Customer Promise Date'], errors='coerce')
-    
-    if 'Projected Date' not in orders.columns:
-        orders['Projected Date'] = orders['Display_Projected_Date']
-    else:
-        orders['Projected Date'] = pd.to_datetime(orders['Projected Date'], errors='coerce')
-    
-    # === PENDING FULFILLMENT CATEGORIZATION FOR Q1 2026 ===
-    pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
-    
-    if not pf_orders.empty:
-        # Check if dates are in Q1 2026 range
-        def has_q1_2026_date(row):
-            if pd.notna(row.get('Customer Promise Date')):
-                if Q1_2026_START <= row['Customer Promise Date'] <= Q1_2026_END:
-                    return True
-            if pd.notna(row.get('Projected Date')):
-                if Q1_2026_START <= row['Projected Date'] <= Q1_2026_END:
-                    return True
-            return False
-        
-        # Check if dates are in Q2 2026+ (spillover beyond Q1)
-        def has_q2_2026_date(row):
-            if pd.notna(row.get('Customer Promise Date')):
-                if row['Customer Promise Date'] >= Q2_2026_START:
-                    return True
-            if pd.notna(row.get('Projected Date')):
-                if row['Projected Date'] >= Q2_2026_START:
-                    return True
-            return False
-        
-        pf_orders['Has_Q1_2026_Date'] = pf_orders.apply(has_q1_2026_date, axis=1)
-        pf_orders['Has_Q2_2026_Date'] = pf_orders.apply(has_q2_2026_date, axis=1)
-        
-        # Check External/Internal flag
-        is_ext = pd.Series(False, index=pf_orders.index)
-        if 'Calyx External Order' in pf_orders.columns:
-            is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
-        
-        # Q2 2026 Spillover (beyond Q1)
-        pf_q2_spillover = pf_orders[pf_orders['Has_Q2_2026_Date'] == True].copy()
-        spillover_ids = pf_q2_spillover.index
-        
-        # Q1 2026 PF orders (exclude Q2 spillover)
-        q1_candidates = pf_orders[(pf_orders['Has_Q1_2026_Date'] == True) & (~pf_orders.index.isin(spillover_ids))]
-        pf_date_ext = q1_candidates[is_ext.loc[q1_candidates.index]].copy()
-        pf_date_int = q1_candidates[~is_ext.loc[q1_candidates.index]].copy()
-    else:
-        pf_date_ext = pf_date_int = pf_q2_spillover = pd.DataFrame()
-    
-    # === PENDING APPROVAL CATEGORIZATION FOR Q1 2026 ===
-    pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
-    
-    if not pa_orders.empty:
-        # Parse PA Date
-        if 'Pending Approval Date' in pa_orders.columns:
-            pa_orders['PA_Date_Parsed'] = pd.to_datetime(pa_orders['Pending Approval Date'], errors='coerce')
-            
-            # Fix 2-digit year issue (26 -> 1926 instead of 2026)
-            if pa_orders['PA_Date_Parsed'].notna().any():
-                mask_1900s = (pa_orders['PA_Date_Parsed'].dt.year < 2000) & (pa_orders['PA_Date_Parsed'].notna())
-                if mask_1900s.any():
-                    pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] = pa_orders.loc[mask_1900s, 'PA_Date_Parsed'] + pd.DateOffset(years=100)
-        else:
-            pa_orders['PA_Date_Parsed'] = pd.NaT
-        
-        # PA with Q1 2026 Date
-        has_q1_pa_date = (
-            (pa_orders['PA_Date_Parsed'].notna()) &
-            (pa_orders['PA_Date_Parsed'] >= Q1_2026_START) &
-            (pa_orders['PA_Date_Parsed'] <= Q1_2026_END)
-        )
-        
-        pa_date = pa_orders[has_q1_pa_date].copy()
-    else:
-        pa_date = pd.DataFrame()
-    
-    # Calculate amounts
-    def get_amount(df):
-        return df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
-    
-    return {
-        'pf_date_ext': pf_date_ext,
-        'pf_date_ext_amount': get_amount(pf_date_ext),
-        'pf_date_int': pf_date_int,
-        'pf_date_int_amount': get_amount(pf_date_int),
-        'pa_date': pa_date,
-        'pa_date_amount': get_amount(pa_date),
-        'pf_q2_spillover': pf_q2_spillover,
-        'pf_q2_spillover_amount': get_amount(pf_q2_spillover),
-    }
-
-
 # ========== GAUGE CHART ==========
 def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
     """Create a gauge chart for Q1 2026 progress"""
     
     if goal <= 0:
-        goal = 1  # Prevent division by zero
+        goal = 1
     
     percentage = (value / goal) * 100
     
-    # Color based on progress
     if percentage >= 100:
-        bar_color = "#4ade80"  # Green
+        bar_color = "#4ade80"
     elif percentage >= 75:
-        bar_color = "#fbbf24"  # Yellow
+        bar_color = "#fbbf24"
     elif percentage >= 50:
-        bar_color = "#fb923c"  # Orange
+        bar_color = "#fb923c"
     else:
-        bar_color = "#f87171"  # Red
+        bar_color = "#f87171"
     
     fig = go.Figure(go.Indicator(
         mode="gauge+number+delta",
@@ -436,6 +218,82 @@ def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
     return fig
 
 
+# ========== FORMAT FUNCTIONS ==========
+def get_col_by_index(df, index):
+    """Safely get column by index"""
+    if df is not None and len(df.columns) > index:
+        return df.iloc[:, index]
+    return pd.Series()
+
+
+def format_ns_view(df, date_col_name):
+    """Format NetSuite orders for display"""
+    if df.empty:
+        return df
+    d = df.copy()
+    
+    # Remove duplicate columns
+    if d.columns.duplicated().any():
+        d = d.loc[:, ~d.columns.duplicated()]
+    
+    # Add Link column
+    if 'Internal ID' in d.columns:
+        d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
+    
+    # SO Number
+    if 'Display_SO_Num' in d.columns:
+        d['SO #'] = d['Display_SO_Num']
+    elif 'Document Number' in d.columns:
+        d['SO #'] = d['Document Number']
+    
+    # Type
+    if 'Display_Type' in d.columns:
+        d['Type'] = d['Display_Type']
+    
+    # Ship Date
+    if date_col_name == 'Promise':
+        d['Ship Date'] = ''
+        if 'Display_Promise_Date' in d.columns:
+            promise_dates = pd.to_datetime(d['Display_Promise_Date'], errors='coerce')
+            d.loc[promise_dates.notna(), 'Ship Date'] = promise_dates.dt.strftime('%Y-%m-%d')
+        if 'Display_Projected_Date' in d.columns:
+            projected_dates = pd.to_datetime(d['Display_Projected_Date'], errors='coerce')
+            mask = (d['Ship Date'] == '') & projected_dates.notna()
+            if mask.any():
+                d.loc[mask, 'Ship Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
+    elif date_col_name == 'PA_Date':
+        if 'Display_PA_Date' in d.columns:
+            pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
+            d['Ship Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
+        elif 'PA_Date_Parsed' in d.columns:
+            pa_dates = pd.to_datetime(d['PA_Date_Parsed'], errors='coerce')
+            d['Ship Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
+        else:
+            d['Ship Date'] = ''
+    else:
+        d['Ship Date'] = ''
+    
+    return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
+
+
+def format_hs_view(df):
+    """Format HubSpot deals for display"""
+    if df.empty:
+        return df
+    d = df.copy()
+    
+    if 'Record ID' in d.columns:
+        d['Deal ID'] = d['Record ID']
+        d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
+    if 'Close Date' in d.columns:
+        d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+    if 'Pending Approval Date' in d.columns:
+        d['PA Date'] = pd.to_datetime(d['Pending Approval Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
+    if 'Amount' in d.columns:
+        d['Amount_Numeric'] = pd.to_numeric(d['Amount'], errors='coerce').fillna(0)
+    return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
+
+
 # ========== MAIN FUNCTION ==========
 def main():
     """Main function for Q1 2026 Forecasting module"""
@@ -450,10 +308,9 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # Calculate days until Q1
+    # Days until Q1
     days_until_q1 = calculate_business_days_until_q1()
     
-    # Info bar
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("📅 Q1 2026", "Jan 1 - Mar 31, 2026")
@@ -464,161 +321,72 @@ def main():
     
     st.markdown("---")
     
-    # Load data from Google Sheets (standalone loading)
+    # Show data source info in sidebar
+    st.sidebar.markdown("### 📊 Q1 2026 Data")
+    st.sidebar.caption("HubSpot: Copy of All Reps All Pipelines")
+    st.sidebar.caption("NetSuite: NS Sales Orders (spillover)")
+    
+    # === IMPORT FROM MAIN DASHBOARD ===
+    # The main dashboard already has all the data loading and categorization logic
+    # We import it directly to ensure consistency
     try:
-        from google.oauth2 import service_account
-        from googleapiclient.discovery import build
+        # Import the main dashboard module (it's named sales_dashboard.py in the repo)
+        import sales_dashboard as main_dash
         
-        SPREADSHEET_ID = "12s-BanWrT_N8SuB3IXFp5JF-xPYB2I-YjmYAYaWsxJk"
-        SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
+        # Load sales orders and dashboard data using the EXACT SAME function as the main dashboard
+        deals_df_q4, dashboard_df, invoices_df, sales_orders_df, q4_push_df = main_dash.load_all_data()
         
-        @st.cache_data
-        def load_sheet_data(sheet_name, range_name):
-            """Load data from Google Sheets"""
-            try:
-                if "gcp_service_account" not in st.secrets:
-                    return pd.DataFrame()
-                
-                creds_dict = dict(st.secrets["gcp_service_account"])
-                creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-                service = build('sheets', 'v4', credentials=creds)
-                sheet = service.spreadsheets()
-                
-                result = sheet.values().get(
-                    spreadsheetId=SPREADSHEET_ID,
-                    range=f"{sheet_name}!{range_name}"
-                ).execute()
-                
-                values = result.get('values', [])
-                
-                if not values:
-                    return pd.DataFrame()
-                
-                # Pad shorter rows
-                if len(values) > 1:
-                    max_cols = max(len(row) for row in values)
-                    for row in values:
-                        while len(row) < max_cols:
-                            row.append('')
-                
-                return pd.DataFrame(values[1:], columns=values[0])
-            except Exception as e:
-                st.error(f"Error loading {sheet_name}: {e}")
-                return pd.DataFrame()
+        # Get the categorization function
+        categorize_sales_orders = main_dash.categorize_sales_orders
         
-        # Load necessary data
-        deals_df = load_sheet_data("All Reps All Pipelines", "A:R")
-        dashboard_df = load_sheet_data("Dashboard Info", "A:C")
-        sales_orders_df = load_sheet_data("NS Sales Orders", "A:AF")
+        # NOW: Load Q1 2026 deals from "Copy of All Reps All Pipelines" 
+        # This sheet includes BOTH Q4 2025 and Q1 2026 close dates
+        deals_df = main_dash.load_google_sheets_data("Copy of All Reps All Pipelines", "A:R", version=main_dash.CACHE_VERSION)
         
-    except ImportError as e:
-        st.error(f"❌ Unable to import Google Sheets libraries: {e}")
-        st.info("Make sure google-auth and google-api-python-client are installed")
-        return
-    
-    # Process deals data
-    if not deals_df.empty and len(deals_df.columns) >= 6:
-        # CRITICAL: Remove duplicate columns first
-        if deals_df.columns.duplicated().any():
-            deals_df = deals_df.loc[:, ~deals_df.columns.duplicated()]
-        
-        # Column mapping (same as main dashboard)
-        col_names = deals_df.columns.tolist()
-        rename_dict = {}
-        
-        for col in col_names:
-            if col == 'Record ID':
-                rename_dict[col] = 'Record ID'
-            elif col == 'Deal Name':
-                rename_dict[col] = 'Deal Name'
-            elif col == 'Close Date':
-                rename_dict[col] = 'Close Date'
-            elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
-                rename_dict[col] = 'Deal Owner'
-            elif col == 'Deal Owner First Name':
-                rename_dict[col] = 'Deal Owner First Name'
-            elif col == 'Deal Owner Last Name':
-                rename_dict[col] = 'Deal Owner Last Name'
-            elif col == 'Amount':
-                rename_dict[col] = 'Amount'
-            elif col == 'Close Status':
-                rename_dict[col] = 'Status'
-            elif col == 'Pipeline':
-                rename_dict[col] = 'Pipeline'
-            elif col == 'Deal Type':
-                rename_dict[col] = 'Product Type'
-            elif col == 'Pending Approval Date':
-                rename_dict[col] = 'Pending Approval Date'
-        
-        deals_df = deals_df.rename(columns=rename_dict)
-        
-        # Remove duplicates after rename
-        if deals_df.columns.duplicated().any():
-            deals_df = deals_df.loc[:, ~deals_df.columns.duplicated()]
-        
-        # Create Deal Owner if not exists
-        if 'Deal Owner' not in deals_df.columns:
-            if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
-                deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+        # Process the deals data (same logic as main dashboard)
+        if not deals_df.empty and len(deals_df.columns) >= 6:
+            col_names = deals_df.columns.tolist()
+            rename_dict = {}
+            
+            for col in col_names:
+                if col == 'Record ID':
+                    rename_dict[col] = 'Record ID'
+                elif col == 'Deal Name':
+                    rename_dict[col] = 'Deal Name'
+                elif col == 'Deal Stage':
+                    rename_dict[col] = 'Deal Stage'
+                elif col == 'Close Date':
+                    rename_dict[col] = 'Close Date'
+                elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
+                    rename_dict[col] = 'Deal Owner'
+                elif col == 'Deal Owner First Name':
+                    rename_dict[col] = 'Deal Owner First Name'
+                elif col == 'Deal Owner Last Name':
+                    rename_dict[col] = 'Deal Owner Last Name'
+                elif col == 'Amount':
+                    rename_dict[col] = 'Amount'
+                elif col == 'Close Status':
+                    rename_dict[col] = 'Status'
+                elif col == 'Pipeline':
+                    rename_dict[col] = 'Pipeline'
+                elif col == 'Deal Type':
+                    rename_dict[col] = 'Product Type'
+                elif col == 'Pending Approval Date':
+                    rename_dict[col] = 'Pending Approval Date'
+                elif col == 'Q1 2026 Spillover':
+                    rename_dict[col] = 'Q1 2026 Spillover'
+            
+            deals_df = deals_df.rename(columns=rename_dict)
+            
+            # Create Deal Owner if not exists
+            if 'Deal Owner' not in deals_df.columns:
+                if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
+                    deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+                    deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
+            else:
                 deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-        
-        # Clean amount
-        def clean_numeric(value):
-            if pd.isna(value) or str(value).strip() == '':
-                return 0
-            cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-            try:
-                return float(cleaned)
-            except:
-                return 0
-        
-        if 'Amount' in deals_df.columns:
-            deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
-        
-        # Convert dates
-        if 'Close Date' in deals_df.columns:
-            deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
-        
-        if 'Pending Approval Date' in deals_df.columns:
-            deals_df['Pending Approval Date'] = pd.to_datetime(deals_df['Pending Approval Date'], errors='coerce')
-    
-    # Process dashboard data
-    if not dashboard_df.empty and len(dashboard_df.columns) >= 3:
-        dashboard_df.columns = ['Rep Name', 'Quota', 'NetSuite Orders']
-        dashboard_df = dashboard_df[dashboard_df['Rep Name'].notna() & (dashboard_df['Rep Name'] != '')]
-    
-    # Process sales orders data
-    if not sales_orders_df.empty:
-        # CRITICAL: Remove duplicate columns first
-        if sales_orders_df.columns.duplicated().any():
-            sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
-        
-        # Map columns similar to main dashboard
-        if len(sales_orders_df.columns) > 29:
-            # Rename key columns
-            col_mapping = {
-                sales_orders_df.columns[1]: 'SO Number',
-                sales_orders_df.columns[3]: 'Status',
-                sales_orders_df.columns[6]: 'Customer',
-                sales_orders_df.columns[10]: 'Amount',
-                sales_orders_df.columns[11]: 'Customer Promise Date',
-                sales_orders_df.columns[12]: 'Projected Date',
-                sales_orders_df.columns[17]: 'Order Type',
-                sales_orders_df.columns[29]: 'Pending Approval Date',
-            }
             
-            if len(sales_orders_df.columns) > 30:
-                col_mapping[sales_orders_df.columns[30]] = 'Calyx External Order'
-            if len(sales_orders_df.columns) > 31:
-                col_mapping[sales_orders_df.columns[31]] = 'Sales Rep'
-            
-            sales_orders_df = sales_orders_df.rename(columns=col_mapping)
-            
-            # CRITICAL: Remove duplicates AGAIN after renaming (in case target names already existed)
-            if sales_orders_df.columns.duplicated().any():
-                sales_orders_df = sales_orders_df.loc[:, ~sales_orders_df.columns.duplicated()]
-            
-            # Clean Amount
+            # Clean amount
             def clean_numeric(value):
                 if pd.isna(value) or str(value).strip() == '':
                     return 0
@@ -628,13 +396,36 @@ def main():
                 except:
                     return 0
             
-            if 'Amount' in sales_orders_df.columns:
-                sales_orders_df['Amount'] = sales_orders_df['Amount'].apply(clean_numeric)
+            if 'Amount' in deals_df.columns:
+                deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
             
             # Convert dates
-            for date_col in ['Customer Promise Date', 'Projected Date', 'Pending Approval Date']:
-                if date_col in sales_orders_df.columns:
-                    sales_orders_df[date_col] = pd.to_datetime(sales_orders_df[date_col], errors='coerce')
+            if 'Close Date' in deals_df.columns:
+                deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+            
+            if 'Pending Approval Date' in deals_df.columns:
+                deals_df['Pending Approval Date'] = pd.to_datetime(deals_df['Pending Approval Date'], errors='coerce')
+            
+            # Filter out excluded deal stages
+            excluded_stages = [
+                '', '(Blanks)', None, 'Cancelled', 'checkout abandoned', 
+                'closed lost', 'closed won', 'sales order created in NS', 
+                'NCR', 'Shipped'
+            ]
+            
+            if 'Deal Stage' in deals_df.columns:
+                deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
+                deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
+                deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
+        
+    except ImportError as e:
+        st.error(f"❌ Unable to import main dashboard: {e}")
+        st.info("Make sure sales_dashboard.py is in the same directory")
+        return
+    except Exception as e:
+        st.error(f"❌ Error loading data: {e}")
+        st.exception(e)
+        return
     
     # Get rep list
     reps = dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else []
@@ -651,7 +442,7 @@ def main():
     
     goal_key = f"q1_goal_{rep_name}"
     if goal_key not in st.session_state:
-        st.session_state[goal_key] = 1000000  # Default $1M
+        st.session_state[goal_key] = 1000000
     
     col1, col2 = st.columns([2, 1])
     with col1:
@@ -671,24 +462,26 @@ def main():
     
     st.markdown("---")
     
-    # === BUILD YOUR OWN FORECAST SECTION ===
-    st.markdown("### 🎯 Build Your Q1 2026 Forecast")
-    st.caption("Select components to include in your Q1 2026 forecast.")
+    # === GET Q1 2026 DATA ===
+    # The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
+    # - pf_spillover = PF orders with Q1 2026 Promise/Projected dates
+    # - pa_spillover = PA orders with PA Date in Q1 2026
     
-    # Load Q1 2026 data
-    q1_data = load_q1_data(sales_orders_df, deals_df, dashboard_df)
+    so_categories = categorize_sales_orders(sales_orders_df, rep_name)
     
-    # Categorize sales orders for this rep
-    so_categories = categorize_sales_orders_q1(sales_orders_df, rep_name)
-    
-    # === CATEGORY DEFINITIONS ===
+    # Map spillover to Q1 categories
     ns_categories = {
-        'PF_Date_Ext': {'label': 'PF (Q1 Date) - External'},
-        'PF_Date_Int': {'label': 'PF (Q1 Date) - Internal'},
-        'PA_Date': {'label': 'PA (Q1 Date)'},
-        'PF_Q2_Spillover': {'label': '⚠️ PF Spillover (Q2 2026+)'},
+        'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': so_categories['pf_spillover'], 'amount': so_categories['pf_spillover_amount']},
+        'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': so_categories['pa_spillover'], 'amount': so_categories['pa_spillover_amount']},
     }
     
+    # Format for display
+    ns_dfs = {
+        'PF_Spillover': format_ns_view(so_categories['pf_spillover'], 'Promise'),
+        'PA_Spillover': format_ns_view(so_categories['pa_spillover'], 'PA_Date'),
+    }
+    
+    # === HUBSPOT Q1 2026 PIPELINE ===
     hs_categories = {
         'Q1_Expect': {'label': 'Q1 Close - Expect'},
         'Q1_Commit': {'label': 'Q1 Close - Commit'},
@@ -700,142 +493,76 @@ def main():
         'Q4_Spillover_Opp': {'label': 'Q4 Spillover - Opportunity'},
     }
     
-    # Helper function to format NS view
-    def format_ns_view(df, date_col_name):
-        if df.empty:
-            return df
-        d = df.copy()
-        
-        if 'Sales Rep' not in d.columns and 'Rep Master' in d.columns:
-            d['Sales Rep'] = d['Rep Master']
-        
-        # Add display columns
-        def get_col_by_index(df, index):
-            if df is not None and len(df.columns) > index:
-                return df.iloc[:, index]
-            return pd.Series()
-        
-        if 'Internal ID' in d.columns:
-            d['Link'] = d['Internal ID'].apply(lambda x: f"https://7086864.app.netsuite.com/app/accounting/transactions/salesord.nl?id={x}" if pd.notna(x) else "")
-        
-        if 'Display_SO_Num' in d.columns:
-            d['SO #'] = d['Display_SO_Num']
-        elif 'SO Number' in d.columns:
-            d['SO #'] = d['SO Number']
-        
-        if 'Display_Type' in d.columns:
-            d['Type'] = d['Display_Type']
-        elif 'Order Type' in d.columns:
-            d['Type'] = d['Order Type']
-        
-        # Ship Date
-        if date_col_name == 'Promise':
-            d['Ship Date'] = ''
-            if 'Display_Promise_Date' in d.columns:
-                promise_dates = pd.to_datetime(d['Display_Promise_Date'], errors='coerce')
-                d.loc[promise_dates.notna(), 'Ship Date'] = promise_dates.dt.strftime('%Y-%m-%d')
-            if 'Display_Projected_Date' in d.columns:
-                projected_dates = pd.to_datetime(d['Display_Projected_Date'], errors='coerce')
-                mask = (d['Ship Date'] == '') & projected_dates.notna()
-                if mask.any():
-                    d.loc[mask, 'Ship Date'] = projected_dates.loc[mask].dt.strftime('%Y-%m-%d')
-        elif date_col_name == 'PA_Date':
-            if 'Display_PA_Date' in d.columns:
-                pa_dates = pd.to_datetime(d['Display_PA_Date'], errors='coerce')
-                d['Ship Date'] = pa_dates.dt.strftime('%Y-%m-%d').fillna('')
-            else:
-                d['Ship Date'] = ''
-        else:
-            d['Ship Date'] = ''
-        
-        return d.sort_values('Amount', ascending=False) if 'Amount' in d.columns else d
-    
-    # Map NS categories to dataframes
-    ns_dfs = {
-        'PF_Date_Ext': format_ns_view(so_categories['pf_date_ext'], 'Promise'),
-        'PF_Date_Int': format_ns_view(so_categories['pf_date_int'], 'Promise'),
-        'PA_Date': format_ns_view(so_categories['pa_date'], 'PA_Date'),
-        'PF_Q2_Spillover': format_ns_view(so_categories['pf_q2_spillover'], 'Promise'),
-    }
-    
-    # Process HubSpot data for this rep
     hs_dfs = {}
     
-    # Q1 2026 Close Date deals
-    q1_close = q1_data['hubspot_q1_close']
-    if not q1_close.empty and 'Deal Owner' in q1_close.columns:
-        rep_q1 = q1_close[q1_close['Deal Owner'] == rep_name]
+    if not deals_df.empty and 'Deal Owner' in deals_df.columns:
+        rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
         
-        def format_hs_view(df):
-            if df.empty:
-                return df
-            d = df.copy()
-            if 'Record ID' in d.columns:
-                d['Deal ID'] = d['Record ID']
-                d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
-            if 'Close Date' in d.columns:
-                d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-            if 'Amount' in d.columns:
-                d['Amount_Numeric'] = pd.to_numeric(d['Amount'], errors='coerce').fillna(0)
-            return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
-        
-        hs_dfs['Q1_Expect'] = format_hs_view(rep_q1[rep_q1['Status'] == 'Expect']) if 'Status' in rep_q1.columns else pd.DataFrame()
-        hs_dfs['Q1_Commit'] = format_hs_view(rep_q1[rep_q1['Status'] == 'Commit']) if 'Status' in rep_q1.columns else pd.DataFrame()
-        hs_dfs['Q1_BestCase'] = format_hs_view(rep_q1[rep_q1['Status'] == 'Best Case']) if 'Status' in rep_q1.columns else pd.DataFrame()
-        hs_dfs['Q1_Opp'] = format_hs_view(rep_q1[rep_q1['Status'] == 'Opportunity']) if 'Status' in rep_q1.columns else pd.DataFrame()
-    else:
-        hs_dfs['Q1_Expect'] = pd.DataFrame()
-        hs_dfs['Q1_Commit'] = pd.DataFrame()
-        hs_dfs['Q1_BestCase'] = pd.DataFrame()
-        hs_dfs['Q1_Opp'] = pd.DataFrame()
+        if 'Close Date' in rep_deals.columns:
+            # Q1 2026 Close Date deals
+            q1_close_mask = (rep_deals['Close Date'] >= Q1_2026_START) & (rep_deals['Close Date'] <= Q1_2026_END)
+            q1_deals = rep_deals[q1_close_mask]
+            
+            # Q4 2025 Spillover - use the Q1 2026 Spillover column from spreadsheet
+            if 'Q1 2026 Spillover' in rep_deals.columns:
+                q4_spillover = rep_deals[rep_deals['Q1 2026 Spillover'] == 'Q1 2026']
+            else:
+                q4_spillover = pd.DataFrame()
+            
+            # Q1 Close deals by status
+            if 'Status' in q1_deals.columns:
+                hs_dfs['Q1_Expect'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Expect'])
+                hs_dfs['Q1_Commit'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Commit'])
+                hs_dfs['Q1_BestCase'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Best Case'])
+                hs_dfs['Q1_Opp'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Opportunity'])
+            
+            # Q4 Spillover deals by status
+            if not q4_spillover.empty and 'Status' in q4_spillover.columns:
+                hs_dfs['Q4_Spillover_Expect'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Expect'])
+                hs_dfs['Q4_Spillover_Commit'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Commit'])
+                hs_dfs['Q4_Spillover_BestCase'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Best Case'])
+                hs_dfs['Q4_Spillover_Opp'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Opportunity'])
     
-    # Q4 2025 Spillover deals
-    q4_spillover = q1_data['hubspot_q4_spillover']
-    if not q4_spillover.empty and 'Deal Owner' in q4_spillover.columns:
-        rep_spillover = q4_spillover[q4_spillover['Deal Owner'] == rep_name]
-        
-        def format_hs_view(df):
-            if df.empty:
-                return df
-            d = df.copy()
-            if 'Record ID' in d.columns:
-                d['Deal ID'] = d['Record ID']
-                d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
-            if 'Close Date' in d.columns:
-                d['Close'] = pd.to_datetime(d['Close Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-            if 'PA_Date_Parsed' in d.columns:
-                d['PA Date'] = pd.to_datetime(d['PA_Date_Parsed'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
-            if 'Amount' in d.columns:
-                d['Amount_Numeric'] = pd.to_numeric(d['Amount'], errors='coerce').fillna(0)
-            return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
-        
-        hs_dfs['Q4_Spillover_Expect'] = format_hs_view(rep_spillover[rep_spillover['Status'] == 'Expect']) if 'Status' in rep_spillover.columns else pd.DataFrame()
-        hs_dfs['Q4_Spillover_Commit'] = format_hs_view(rep_spillover[rep_spillover['Status'] == 'Commit']) if 'Status' in rep_spillover.columns else pd.DataFrame()
-        hs_dfs['Q4_Spillover_BestCase'] = format_hs_view(rep_spillover[rep_spillover['Status'] == 'Best Case']) if 'Status' in rep_spillover.columns else pd.DataFrame()
-        hs_dfs['Q4_Spillover_Opp'] = format_hs_view(rep_spillover[rep_spillover['Status'] == 'Opportunity']) if 'Status' in rep_spillover.columns else pd.DataFrame()
-    else:
-        hs_dfs['Q4_Spillover_Expect'] = pd.DataFrame()
-        hs_dfs['Q4_Spillover_Commit'] = pd.DataFrame()
-        hs_dfs['Q4_Spillover_BestCase'] = pd.DataFrame()
-        hs_dfs['Q4_Spillover_Opp'] = pd.DataFrame()
+    # Fill missing
+    for key in hs_categories.keys():
+        if key not in hs_dfs:
+            hs_dfs[key] = pd.DataFrame()
     
-    # === EXPORT BUCKETS ===
+    # === BUILD YOUR OWN FORECAST ===
+    st.markdown("### 🎯 Build Your Q1 2026 Forecast")
+    st.caption("Select components to include in your Q1 2026 forecast. NetSuite spillover orders are already scheduled for Q1.")
+    
     export_buckets = {}
     
-    # === SELECT ALL / UNSELECT ALL BUTTONS ===
+    # === CLEAR ALL SELECTIONS BUTTON (top right) ===
+    clear_col1, clear_col2 = st.columns([3, 1])
+    with clear_col2:
+        if st.button("🗑️ Clear All Selections", key=f"q1_clear_all_{rep_name}"):
+            # Clear all category checkboxes
+            for key in ns_categories.keys():
+                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
+                # Also clear row-level selections
+                st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
+            for key in hs_categories.keys():
+                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
+                st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
+            st.rerun()
+    
+    # === SELECT ALL / UNSELECT ALL ===
     sel_col1, sel_col2, sel_col3 = st.columns([1, 1, 2])
     with sel_col1:
         if st.button("☑️ Select All", key=f"q1_select_all_{rep_name}", use_container_width=True):
             for key in ns_categories.keys():
-                df = ns_dfs.get(key, pd.DataFrame())
-                val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
-                if val > 0:
+                if ns_categories[key]['amount'] > 0:
                     st.session_state[f"q1_chk_{key}_{rep_name}"] = True
+                    # Also clear row-level unselections so all rows are selected
+                    st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
             for key in hs_categories.keys():
                 df = hs_dfs.get(key, pd.DataFrame())
                 val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
                 if val > 0:
                     st.session_state[f"q1_chk_{key}_{rep_name}"] = True
+                    st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
             st.rerun()
     
     with sel_col2:
@@ -852,11 +579,12 @@ def main():
         
         # === NETSUITE COLUMN ===
         with col_ns:
-            st.markdown("#### 📦 NetSuite Orders (Scheduled for Q1)")
+            st.markdown("#### 📦 NetSuite Orders (Q1 2026 Scheduled)")
+            st.caption("These are spillover orders from Q4 with Q1 2026 ship/PA dates")
             
             for key, data in ns_categories.items():
                 df = ns_dfs.get(key, pd.DataFrame())
-                val = df['Amount'].sum() if not df.empty and 'Amount' in df.columns else 0
+                val = data['amount']
                 
                 checkbox_key = f"q1_chk_{key}_{rep_name}"
                 
@@ -869,6 +597,7 @@ def main():
                     if is_checked:
                         with st.expander(f"🔎 View Orders ({data['label']})"):
                             if not df.empty:
+                                # Customize toggle
                                 enable_edit = st.toggle("Customize", key=f"q1_tgl_{key}_{rep_name}")
                                 
                                 display_cols = []
@@ -882,6 +611,7 @@ def main():
                                 if enable_edit and display_cols:
                                     df_edit = df.copy()
                                     
+                                    # Session state for unselected rows
                                     unselected_key = f"q1_unselected_{key}_{rep_name}"
                                     if unselected_key not in st.session_state:
                                         st.session_state[unselected_key] = set()
@@ -900,6 +630,7 @@ def main():
                                                 st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
                                             st.rerun()
                                     
+                                    # Add Select column
                                     if id_col and id_col in df_edit.columns:
                                         df_edit.insert(0, "Select", df_edit[id_col].apply(
                                             lambda x: str(x) not in st.session_state[unselected_key]
@@ -933,6 +664,7 @@ def main():
                                                 current_unselected.add(str(row[id_col]))
                                         st.session_state[unselected_key] = current_unselected
                                     
+                                    # Get selected rows for export
                                     selected_indices = edited[edited['Select']].index
                                     selected_rows = df.loc[selected_indices].copy()
                                     export_buckets[key] = selected_rows
@@ -940,6 +672,7 @@ def main():
                                     current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
+                                    # Read-only view
                                     if display_cols:
                                         st.dataframe(
                                             df[display_cols],
@@ -954,10 +687,13 @@ def main():
                                             use_container_width=True
                                         )
                                     export_buckets[key] = df
+                else:
+                    st.caption(f"{data['label']}: $0")
         
         # === HUBSPOT COLUMN ===
         with col_hs:
             st.markdown("#### 🎯 HubSpot Pipeline (Q1 2026)")
+            st.caption("Q1 close dates + Q4 spillover deals")
             
             for key, data in hs_categories.items():
                 df = hs_dfs.get(key, pd.DataFrame())
@@ -974,6 +710,7 @@ def main():
                     if is_checked:
                         with st.expander(f"🔎 View Deals ({data['label']})"):
                             if not df.empty:
+                                # Customize toggle
                                 enable_edit = st.toggle("Customize", key=f"q1_tgl_{key}_{rep_name}")
                                 
                                 display_cols = ['Link', 'Deal ID', 'Deal Name', 'Close', 'Amount_Numeric']
@@ -983,6 +720,7 @@ def main():
                                 if enable_edit:
                                     df_edit = df.copy()
                                     
+                                    # Session state for unselected rows
                                     unselected_key = f"q1_unselected_{key}_{rep_name}"
                                     if unselected_key not in st.session_state:
                                         st.session_state[unselected_key] = set()
@@ -1001,6 +739,7 @@ def main():
                                                 st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
                                             st.rerun()
                                     
+                                    # Add Select column
                                     if id_col and id_col in df_edit.columns:
                                         df_edit.insert(0, "Select", df_edit[id_col].apply(
                                             lambda x: str(x) not in st.session_state[unselected_key]
@@ -1035,6 +774,7 @@ def main():
                                                 current_unselected.add(str(row[id_col]))
                                         st.session_state[unselected_key] = current_unselected
                                     
+                                    # Get selected rows for export
                                     selected_indices = edited[edited['Select']].index
                                     selected_rows = df.loc[selected_indices].copy()
                                     export_buckets[key] = selected_rows
@@ -1042,6 +782,7 @@ def main():
                                     current_total = selected_rows['Amount_Numeric'].sum() if 'Amount_Numeric' in selected_rows.columns else 0
                                     st.caption(f"Selected: ${current_total:,.0f}")
                                 else:
+                                    # Read-only view
                                     avail_cols = [c for c in display_cols if c in df.columns]
                                     if avail_cols:
                                         st.dataframe(
@@ -1075,7 +816,7 @@ def main():
     total_forecast = selected_scheduled + selected_pipeline
     gap_to_goal = q1_goal - total_forecast
     
-    # === STICKY FORECAST SUMMARY BAR ===
+    # === STICKY SUMMARY BAR ===
     gap_class = "gap-behind" if gap_to_goal > 0 else "gap-ahead"
     gap_label = "GAP" if gap_to_goal > 0 else "AHEAD"
     gap_display = f"${abs(gap_to_goal):,.0f}"
@@ -1104,7 +845,7 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # === FORECAST RESULTS SECTION ===
+    # === RESULTS SECTION ===
     st.markdown("---")
     st.markdown("### 🔮 Q1 2026 Forecast Results")
     
@@ -1121,7 +862,7 @@ def main():
         else:
             st.metric("Gap to Goal", f"${abs(gap_to_goal):,.0f}", delta="Ahead!", delta_color="normal")
     
-    # Gauge chart
+    # Gauge
     col1, col2 = st.columns([2, 1])
     with col1:
         fig = create_q1_gauge(total_forecast, q1_goal, "Q1 2026 Progress to Goal")
@@ -1131,18 +872,19 @@ def main():
         st.markdown("#### 📊 Breakdown")
         st.markdown(f"""
         **Scheduled Orders (NetSuite):** ${selected_scheduled:,.0f}
-        - Orders already in NetSuite with Q1 2026 dates
+        - PF Spillover: Orders with Q1 2026 ship dates
+        - PA Spillover: Orders with Q1 2026 PA dates
         
         **Pipeline (HubSpot):** ${selected_pipeline:,.0f}
         - Q1 2026 close date deals
-        - Q4 2025 spillover (PA date in 2026)
+        - Q4 2025 spillover deals
         
         **Your Q1 Goal:** ${q1_goal:,.0f}
         """)
     
     # === EXPORT SECTION ===
     st.markdown("---")
-    st.markdown("### 📤 Export Forecast")
+    st.markdown("### 📤 Export Q1 2026 Forecast")
     
     if export_buckets:
         # Combine all selected data for export
@@ -1154,11 +896,13 @@ def main():
                 continue
             
             export_df = df.copy()
-            export_df['Category'] = ns_categories.get(key, hs_categories.get(key, {})).get('label', key)
             
+            # Add category label
             if key in ns_categories:
+                export_df['Category'] = ns_categories[key]['label']
                 all_ns_data.append(export_df)
-            else:
+            elif key in hs_categories:
+                export_df['Category'] = hs_categories[key]['label']
                 all_hs_data.append(export_df)
         
         col1, col2 = st.columns(2)
@@ -1174,7 +918,10 @@ def main():
                     mime="text/csv",
                     use_container_width=True
                 )
-                st.caption(f"{len(ns_export)} orders, ${ns_export['Amount'].sum() if 'Amount' in ns_export.columns else 0:,.0f}")
+                ns_total = ns_export['Amount'].sum() if 'Amount' in ns_export.columns else 0
+                st.caption(f"{len(ns_export)} orders, ${ns_total:,.0f}")
+            else:
+                st.info("No NetSuite orders selected")
         
         with col2:
             if all_hs_data:
@@ -1187,9 +934,24 @@ def main():
                     mime="text/csv",
                     use_container_width=True
                 )
-                st.caption(f"{len(hs_export)} deals, ${hs_export['Amount_Numeric'].sum() if 'Amount_Numeric' in hs_export.columns else 0:,.0f}")
+                hs_total = hs_export['Amount_Numeric'].sum() if 'Amount_Numeric' in hs_export.columns else 0
+                st.caption(f"{len(hs_export)} deals, ${hs_total:,.0f}")
+            else:
+                st.info("No HubSpot deals selected")
     else:
-        st.info("Select some items above to enable export")
+        st.info("Select items above to enable export")
+    
+    # === DEBUG INFO ===
+    with st.expander("🔧 Debug: Data Summary"):
+        st.write("**Data Source:** Copy of All Reps All Pipelines (Q4 2025 + Q1 2026 deals)")
+        st.write(f"**Total Deals Loaded:** {len(deals_df)}")
+        st.write(f"**PF Spillover:** {len(so_categories['pf_spillover'])} orders, ${so_categories['pf_spillover_amount']:,.0f}")
+        st.write(f"**PA Spillover:** {len(so_categories['pa_spillover'])} orders, ${so_categories['pa_spillover_amount']:,.0f}")
+        
+        for key in hs_categories.keys():
+            df = hs_dfs.get(key, pd.DataFrame())
+            val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
+            st.write(f"**{key}:** {len(df)} deals, ${val:,.0f}")
 
 
 # Run if called directly
