@@ -607,6 +607,81 @@ st.markdown("""
         color: #4ade80;
         font-weight: 600;
     }
+    
+    /* ========== STICKY FORECAST SUMMARY ========== */
+    .sticky-forecast-bar {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 9999;
+        background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.98) 100%);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-top: 1px solid rgba(59, 130, 246, 0.3);
+        padding: 12px 24px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+    }
+    
+    .sticky-forecast-item {
+        text-align: center;
+        flex: 1;
+    }
+    
+    .sticky-forecast-label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        opacity: 0.7;
+        margin-bottom: 2px;
+    }
+    
+    .sticky-forecast-value {
+        font-size: 18px;
+        font-weight: 700;
+    }
+    
+    .sticky-forecast-value.invoiced {
+        color: #4ade80;
+    }
+    
+    .sticky-forecast-value.pending {
+        color: #fbbf24;
+    }
+    
+    .sticky-forecast-value.pipeline {
+        color: #60a5fa;
+    }
+    
+    .sticky-forecast-value.total {
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    .sticky-forecast-value.gap-behind {
+        color: #f87171;
+    }
+    
+    .sticky-forecast-value.gap-ahead {
+        color: #4ade80;
+    }
+    
+    .sticky-forecast-divider {
+        width: 1px;
+        height: 40px;
+        background: rgba(255, 255, 255, 0.1);
+    }
+    
+    /* Add padding at bottom of page to prevent content from hiding behind sticky bar */
+    .main .block-container {
+        padding-bottom: 100px !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -2640,6 +2715,40 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     
     total_forecast = invoiced_shipped + selected_pending + selected_pipeline
     gap_to_quota = quota - total_forecast
+    
+    # --- STICKY FORECAST SUMMARY BAR ---
+    gap_class = "gap-behind" if gap_to_quota > 0 else "gap-ahead"
+    gap_label = "GAP" if gap_to_quota > 0 else "AHEAD"
+    gap_display = f"${abs(gap_to_quota):,.0f}"
+    
+    st.markdown(f"""
+    <div class="sticky-forecast-bar">
+        <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">Invoiced</div>
+            <div class="sticky-forecast-value invoiced">${invoiced_shipped:,.0f}</div>
+        </div>
+        <div class="sticky-forecast-divider"></div>
+        <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">+ Pending</div>
+            <div class="sticky-forecast-value pending">${selected_pending:,.0f}</div>
+        </div>
+        <div class="sticky-forecast-divider"></div>
+        <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">+ Pipeline</div>
+            <div class="sticky-forecast-value pipeline">${selected_pipeline:,.0f}</div>
+        </div>
+        <div class="sticky-forecast-divider"></div>
+        <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">= Forecast</div>
+            <div class="sticky-forecast-value total">${total_forecast:,.0f}</div>
+        </div>
+        <div class="sticky-forecast-divider"></div>
+        <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">{gap_label}</div>
+            <div class="sticky-forecast-value {gap_class}">{gap_display}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     st.markdown("---")
     st.markdown("### 🔮 Forecast Scenario Results")
