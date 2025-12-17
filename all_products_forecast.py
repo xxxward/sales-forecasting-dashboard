@@ -461,7 +461,7 @@ def load_invoices(main_dash, rep_name):
     - Column U: Rep Master
     """
     
-    invoice_df = main_dash.load_google_sheets_data("NS Invoice", "A:U", version=main_dash.CACHE_VERSION)
+    invoice_df = main_dash.load_google_sheets_data("NS Invoices", "A:U", version=main_dash.CACHE_VERSION)
     
     if invoice_df.empty:
         return pd.DataFrame()
