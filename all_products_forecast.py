@@ -444,7 +444,7 @@ def load_historical_orders(main_dash, rep_name):
     if len(col_names) > 1:
         so_col = col_names[1]
         if so_col in historical_df.columns:
-            historical_df['SO_Number'] = historical_df[so_col].astype(str).str.strip()
+            historical_df['SO_Number'] = historical_df[so_col].astype(str).str.strip().str.upper()
     
     return historical_df
 
@@ -543,11 +543,9 @@ def load_invoices(main_dash, rep_name):
             (invoice_df['Invoice_Date'] <= year_2025_end)
         ]
     
-    # Clean SO_Number for matching
+    # Clean SO_Number for matching - keep full format
     if 'SO_Number' in invoice_df.columns:
-        invoice_df['SO_Number'] = invoice_df['SO_Number'].astype(str).str.strip()
-        # Extract just the SO number (might be formatted like "Sales Order #12345")
-        invoice_df['SO_Number'] = invoice_df['SO_Number'].str.extract(r'(\d+)', expand=False).fillna('')
+        invoice_df['SO_Number'] = invoice_df['SO_Number'].astype(str).str.strip().str.upper()
     
     return invoice_df
 
@@ -594,12 +592,11 @@ def load_line_items(main_dash):
     if line_items_df.columns.duplicated().any():
         line_items_df = line_items_df.loc[:, ~line_items_df.columns.duplicated()]
     
-    # Clean SO_Number
+    # Clean SO_Number - keep full format (e.g., "SO13778")
     if 'SO_Number' in line_items_df.columns:
-        line_items_df['SO_Number'] = line_items_df['SO_Number'].astype(str).str.strip()
-        # Extract just the number
-        line_items_df['SO_Number'] = line_items_df['SO_Number'].str.extract(r'(\d+)', expand=False).fillna('')
+        line_items_df['SO_Number'] = line_items_df['SO_Number'].astype(str).str.strip().str.upper()
         line_items_df = line_items_df[line_items_df['SO_Number'] != '']
+        line_items_df = line_items_df[line_items_df['SO_Number'].str.lower() != 'nan']
     
     # Clean Item
     if 'Item' in line_items_df.columns:
@@ -645,12 +642,12 @@ def merge_orders_with_invoices(orders_df, invoices_df):
         orders_df['Invoice_Amount'] = orders_df['Amount']
         return orders_df
     
-    # Clean SO numbers for matching
-    orders_df['SO_Number_Clean'] = orders_df['SO_Number'].astype(str).str.extract(r'(\d+)', expand=False).fillna('')
+    # Clean SO numbers for matching - keep full format, uppercase for consistency
+    orders_df['SO_Number_Clean'] = orders_df['SO_Number'].astype(str).str.strip().str.upper()
     
     # Aggregate invoice amounts by SO#
-    invoice_totals = invoices_df.groupby('SO_Number')['Invoice_Amount'].sum().reset_index()
-    invoice_totals.columns = ['SO_Number_Clean', 'Invoice_Amount']
+    invoices_df['SO_Number_Clean'] = invoices_df['SO_Number'].astype(str).str.strip().str.upper()
+    invoice_totals = invoices_df.groupby('SO_Number_Clean')['Invoice_Amount'].sum().reset_index()
     
     # Merge
     merged = orders_df.merge(invoice_totals, on='SO_Number_Clean', how='left')
@@ -833,11 +830,8 @@ def get_customer_line_items(so_numbers, line_items_df):
     if not so_numbers or line_items_df.empty:
         return pd.DataFrame()
     
-    # Clean SO numbers for matching
-    so_numbers_clean = [str(so).strip() for so in so_numbers]
-    # Extract just digits
-    so_numbers_clean = [s if s.isdigit() else ''.join(filter(str.isdigit, s)) for s in so_numbers_clean]
-    so_numbers_clean = [s for s in so_numbers_clean if s]  # Remove empty
+    # Clean SO numbers for matching - keep full format (e.g., "SO13778")
+    so_numbers_clean = [str(so).strip().upper() for so in so_numbers if str(so).strip()]
     
     if not so_numbers_clean:
         return pd.DataFrame()
