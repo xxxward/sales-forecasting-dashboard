@@ -2326,6 +2326,18 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     # FIX: Determine ID column for matching
                                     id_col = 'SO #' if 'SO #' in df_edit.columns else 'Deal ID'
                                     
+                                    # --- ROW-LEVEL SELECT ALL / UNSELECT ALL BUTTONS ---
+                                    row_sel_col1, row_sel_col2, row_sel_col3 = st.columns([1, 1, 2])
+                                    with row_sel_col1:
+                                        if st.button("☑️ All", key=f"row_select_all_{key}_{rep_name}"):
+                                            st.session_state[unselected_key] = set()
+                                            st.rerun()
+                                    with row_sel_col2:
+                                        if st.button("☐ None", key=f"row_unselect_all_{key}_{rep_name}"):
+                                            if id_col in df_edit.columns:
+                                                st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
+                                            st.rerun()
+                                    
                                     # FIX: Set "Select" based on persisted state (default True unless in unselected set)
                                     if id_col in df_edit.columns:
                                         df_edit.insert(0, "Select", df_edit[id_col].apply(
@@ -2489,6 +2501,18 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     # FIX: Determine ID column for matching
                                     id_col = 'Deal ID' if 'Deal ID' in df_edit.columns else 'SO #'
+                                    
+                                    # --- ROW-LEVEL SELECT ALL / UNSELECT ALL BUTTONS ---
+                                    row_sel_col1, row_sel_col2, row_sel_col3 = st.columns([1, 1, 2])
+                                    with row_sel_col1:
+                                        if st.button("☑️ All", key=f"row_select_all_{key}_{rep_name}"):
+                                            st.session_state[unselected_key] = set()
+                                            st.rerun()
+                                    with row_sel_col2:
+                                        if st.button("☐ None", key=f"row_unselect_all_{key}_{rep_name}"):
+                                            if id_col in df_edit.columns:
+                                                st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
+                                            st.rerun()
                                     
                                     # FIX: Set "Select" based on persisted state (default True unless in unselected set)
                                     if id_col in df_edit.columns:
