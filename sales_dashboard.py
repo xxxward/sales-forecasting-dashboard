@@ -612,19 +612,19 @@ st.markdown("""
     .sticky-forecast-bar {
         position: fixed;
         bottom: 0;
-        left: 0;
+        left: 22rem;  /* Account for sidebar width */
         right: 0;
         z-index: 9999;
         background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.98) 100%);
         backdrop-filter: blur(20px);
         -webkit-backdrop-filter: blur(20px);
-        border-top: 1px solid rgba(59, 130, 246, 0.3);
-        padding: 12px 24px;
+        border-top: 2px solid rgba(59, 130, 246, 0.5);
+        padding: 16px 32px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 20px;
-        box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+        gap: 24px;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
     }
     
     .sticky-forecast-item {
@@ -633,49 +633,65 @@ st.markdown("""
     }
     
     .sticky-forecast-label {
-        font-size: 10px;
+        font-size: 11px;
         text-transform: uppercase;
-        letter-spacing: 1px;
-        opacity: 0.7;
-        margin-bottom: 2px;
+        letter-spacing: 1.5px;
+        opacity: 0.8;
+        margin-bottom: 4px;
+        font-weight: 600;
     }
     
     .sticky-forecast-value {
-        font-size: 18px;
-        font-weight: 700;
+        font-size: 26px;
+        font-weight: 800;
+        letter-spacing: -0.5px;
     }
     
     .sticky-forecast-value.invoiced {
         color: #4ade80;
+        text-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
     }
     
     .sticky-forecast-value.pending {
         color: #fbbf24;
+        text-shadow: 0 0 20px rgba(251, 191, 36, 0.5);
     }
     
     .sticky-forecast-value.pipeline {
         color: #60a5fa;
+        text-shadow: 0 0 20px rgba(96, 165, 250, 0.5);
     }
     
     .sticky-forecast-value.total {
+        font-size: 30px;
         background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         background-clip: text;
+        filter: drop-shadow(0 0 20px rgba(139, 92, 246, 0.5));
     }
     
     .sticky-forecast-value.gap-behind {
         color: #f87171;
+        text-shadow: 0 0 20px rgba(248, 113, 113, 0.5);
     }
     
     .sticky-forecast-value.gap-ahead {
         color: #4ade80;
+        text-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
     }
     
     .sticky-forecast-divider {
         width: 1px;
-        height: 40px;
-        background: rgba(255, 255, 255, 0.1);
+        height: 50px;
+        background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    }
+    
+    /* When sidebar is collapsed, adjust position */
+    @media (max-width: 768px) {
+        .sticky-forecast-bar {
+            left: 0;
+        }
     }
     
     /* Add padding at bottom of page to prevent content from hiding behind sticky bar */
