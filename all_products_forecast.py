@@ -320,6 +320,325 @@ def format_hs_view(df):
     return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
 
 
+# ========== HISTORICAL ANALYSIS FUNCTIONS ==========
+
+def load_historical_orders(main_dash, rep_name):
+    """
+    Load 2025 completed orders for historical analysis
+    
+    Filters:
+    - Date Range: 2025-01-01 to 2025-12-31
+    - Status: "Billed" or "Closed" only
+    - Rep Master: Match selected rep
+    - Amount > 0
+    """
+    
+    # Load raw sales orders data
+    historical_df = main_dash.load_google_sheets_data("NS Sales Orders", "A:AF", version=main_dash.CACHE_VERSION)
+    
+    if historical_df.empty:
+        return pd.DataFrame()
+    
+    col_names = historical_df.columns.tolist()
+    
+    # Map columns by position (same as main dashboard)
+    rename_dict = {}
+    
+    # Column A: Internal ID
+    if len(col_names) > 0:
+        rename_dict[col_names[0]] = 'Internal ID'
+    
+    # Column C: Status
+    if len(col_names) > 2:
+        rename_dict[col_names[2]] = 'Status'
+    
+    # Column H: Amount (Transaction Total)
+    if len(col_names) > 7:
+        rename_dict[col_names[7]] = 'Amount'
+    
+    # Column I: Order Start Date
+    if len(col_names) > 8:
+        rename_dict[col_names[8]] = 'Order Start Date'
+    
+    # Column R: Order Type (Product Type)
+    if len(col_names) > 17:
+        rename_dict[col_names[17]] = 'Order Type'
+    
+    # Column AE: Corrected Customer Name
+    if len(col_names) > 30:
+        rename_dict[col_names[30]] = 'Customer'
+    
+    # Column AF: Rep Master
+    if len(col_names) > 31:
+        rename_dict[col_names[31]] = 'Rep Master'
+    
+    historical_df = historical_df.rename(columns=rename_dict)
+    
+    # Remove duplicate columns
+    if historical_df.columns.duplicated().any():
+        historical_df = historical_df.loc[:, ~historical_df.columns.duplicated()]
+    
+    # Clean Status column
+    if 'Status' in historical_df.columns:
+        historical_df['Status'] = historical_df['Status'].astype(str).str.strip()
+        # Filter to Billed and Closed only
+        historical_df = historical_df[historical_df['Status'].isin(['Billed', 'Closed'])]
+    else:
+        return pd.DataFrame()
+    
+    # Clean Rep Master and filter to selected rep
+    if 'Rep Master' in historical_df.columns:
+        historical_df['Rep Master'] = historical_df['Rep Master'].astype(str).str.strip()
+        invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+        historical_df = historical_df[~historical_df['Rep Master'].isin(invalid_values)]
+        historical_df = historical_df[historical_df['Rep Master'] == rep_name]
+    else:
+        return pd.DataFrame()
+    
+    # Clean Customer column
+    if 'Customer' in historical_df.columns:
+        historical_df['Customer'] = historical_df['Customer'].astype(str).str.strip()
+        invalid_values = ['', 'nan', 'None', '#N/A', '#REF!', '#VALUE!', '#ERROR!']
+        historical_df = historical_df[~historical_df['Customer'].isin(invalid_values)]
+    
+    # Clean Amount
+    def clean_numeric(value):
+        if pd.isna(value) or str(value).strip() == '':
+            return 0
+        cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+        try:
+            return float(cleaned)
+        except:
+            return 0
+    
+    if 'Amount' in historical_df.columns:
+        historical_df['Amount'] = historical_df['Amount'].apply(clean_numeric)
+        historical_df = historical_df[historical_df['Amount'] > 0]
+    
+    # Parse Order Start Date and filter to 2025
+    if 'Order Start Date' in historical_df.columns:
+        historical_df['Order Start Date'] = pd.to_datetime(historical_df['Order Start Date'], errors='coerce')
+        
+        # Fix 2-digit year issue
+        if historical_df['Order Start Date'].notna().any():
+            mask = (historical_df['Order Start Date'].dt.year < 2000) & (historical_df['Order Start Date'].notna())
+            if mask.any():
+                historical_df.loc[mask, 'Order Start Date'] = historical_df.loc[mask, 'Order Start Date'] + pd.DateOffset(years=100)
+        
+        # Filter to 2025 only
+        year_2025_start = pd.Timestamp('2025-01-01')
+        year_2025_end = pd.Timestamp('2025-12-31')
+        historical_df = historical_df[
+            (historical_df['Order Start Date'] >= year_2025_start) & 
+            (historical_df['Order Start Date'] <= year_2025_end)
+        ]
+    
+    # Clean Order Type
+    if 'Order Type' in historical_df.columns:
+        historical_df['Order Type'] = historical_df['Order Type'].astype(str).str.strip()
+        historical_df.loc[historical_df['Order Type'].isin(['', 'nan', 'None']), 'Order Type'] = 'Standard'
+    else:
+        historical_df['Order Type'] = 'Standard'
+    
+    return historical_df
+
+
+def calculate_customer_metrics(historical_df):
+    """
+    Calculate metrics for each customer based on historical orders
+    
+    Returns DataFrame with:
+    - Customer name
+    - Total orders in 2025
+    - Total revenue
+    - Weighted avg order value (H2 weighted 1.25x)
+    - Avg days between orders (cadence)
+    - Last order date
+    - Days since last order
+    - Product types purchased
+    - Confidence tier
+    """
+    
+    if historical_df.empty:
+        return pd.DataFrame()
+    
+    today = pd.Timestamp.now()
+    
+    # Group by customer
+    customer_metrics = []
+    
+    for customer in historical_df['Customer'].unique():
+        cust_orders = historical_df[historical_df['Customer'] == customer].copy()
+        cust_orders = cust_orders.sort_values('Order Start Date')
+        
+        # Basic metrics
+        order_count = len(cust_orders)
+        total_revenue = cust_orders['Amount'].sum()
+        
+        # Order dates for cadence calculation
+        order_dates = cust_orders['Order Start Date'].dropna().tolist()
+        
+        # Weighted average order value (H2 = 1.25x weight)
+        weighted_sum = 0
+        weight_total = 0
+        for _, row in cust_orders.iterrows():
+            order_date = row['Order Start Date']
+            amount = row['Amount']
+            if pd.notna(order_date) and order_date.month >= 7:  # H2
+                weight = 1.25
+            else:  # H1
+                weight = 1.0
+            weighted_sum += amount * weight
+            weight_total += weight
+        
+        weighted_avg = weighted_sum / weight_total if weight_total > 0 else 0
+        
+        # Cadence calculation (avg days between orders)
+        cadence_days = None
+        if len(order_dates) >= 2:
+            gaps = []
+            for i in range(len(order_dates) - 1):
+                gap = (order_dates[i + 1] - order_dates[i]).days
+                if gap > 0:  # Ignore same-day orders
+                    gaps.append(gap)
+            if gaps:
+                cadence_days = sum(gaps) / len(gaps)
+        
+        # Last order info
+        last_order_date = cust_orders['Order Start Date'].max()
+        days_since_last = (today - last_order_date).days if pd.notna(last_order_date) else 999
+        
+        # Product types
+        product_types = cust_orders['Order Type'].value_counts().to_dict()
+        product_types_str = ', '.join([f"{k} ({v})" for k, v in product_types.items()])
+        
+        # Confidence tier
+        if order_count >= 3:
+            confidence_tier = 'Likely'
+            confidence_pct = 0.75
+        elif order_count >= 2:
+            confidence_tier = 'Possible'
+            confidence_pct = 0.50
+        else:
+            confidence_tier = 'Long Shot'
+            confidence_pct = 0.25
+        
+        # Projected value
+        projected_value = weighted_avg * confidence_pct
+        
+        customer_metrics.append({
+            'Customer': customer,
+            'Order_Count': order_count,
+            'Total_Revenue': total_revenue,
+            'Weighted_Avg_Order': weighted_avg,
+            'Cadence_Days': cadence_days,
+            'Last_Order_Date': last_order_date,
+            'Days_Since_Last': days_since_last,
+            'Product_Types': product_types_str,
+            'Product_Types_Dict': product_types,
+            'Confidence_Tier': confidence_tier,
+            'Confidence_Pct': confidence_pct,
+            'Projected_Value': projected_value
+        })
+    
+    return pd.DataFrame(customer_metrics)
+
+
+def identify_reorder_opportunities(customer_metrics_df, pending_customers, pipeline_customers):
+    """
+    Filter out customers who already have pending orders or pipeline deals
+    
+    Args:
+        customer_metrics_df: DataFrame from calculate_customer_metrics()
+        pending_customers: Set of customer names with pending NS orders
+        pipeline_customers: Set of customer names in Q1 HubSpot pipeline
+    
+    Returns:
+        DataFrame with only customers who are reorder opportunities
+    """
+    
+    if customer_metrics_df.empty:
+        return customer_metrics_df
+    
+    # Normalize customer names for matching
+    def normalize(name):
+        return str(name).lower().strip()
+    
+    pending_normalized = {normalize(c) for c in pending_customers}
+    pipeline_normalized = {normalize(c) for c in pipeline_customers}
+    active_customers = pending_normalized | pipeline_normalized
+    
+    # Filter out active customers
+    opportunities_df = customer_metrics_df[
+        ~customer_metrics_df['Customer'].apply(normalize).isin(active_customers)
+    ].copy()
+    
+    return opportunities_df
+
+
+def get_product_type_summary(historical_df, opportunities_df):
+    """
+    Summarize reorder opportunities by product type
+    
+    Returns dict with:
+    {
+        'FlexPack': {
+            'customers': ['AYR Wellness', 'Curaleaf'],
+            'historical_total': 150000,
+            'projected_total': 75000,
+            'order_count': 15
+        },
+        ...
+    }
+    """
+    
+    if historical_df.empty or opportunities_df.empty:
+        return {}
+    
+    # Get list of opportunity customers
+    opp_customers = set(opportunities_df['Customer'].tolist())
+    
+    # Filter historical to only opportunity customers
+    opp_historical = historical_df[historical_df['Customer'].isin(opp_customers)]
+    
+    if opp_historical.empty:
+        return {}
+    
+    # Group by product type
+    product_summary = {}
+    
+    for product_type in opp_historical['Order Type'].unique():
+        prod_orders = opp_historical[opp_historical['Order Type'] == product_type]
+        
+        # Get unique customers for this product type
+        prod_customers = prod_orders['Customer'].unique().tolist()
+        
+        # Calculate totals
+        historical_total = prod_orders['Amount'].sum()
+        order_count = len(prod_orders)
+        
+        # Calculate projected based on customer confidence levels
+        projected_total = 0
+        for customer in prod_customers:
+            cust_metrics = opportunities_df[opportunities_df['Customer'] == customer]
+            if not cust_metrics.empty:
+                conf_pct = cust_metrics['Confidence_Pct'].iloc[0]
+                cust_prod_avg = prod_orders[prod_orders['Customer'] == customer]['Amount'].mean()
+                projected_total += cust_prod_avg * conf_pct
+        
+        product_summary[product_type] = {
+            'customers': prod_customers,
+            'historical_total': historical_total,
+            'projected_total': projected_total,
+            'order_count': order_count
+        }
+    
+    # Sort by projected total descending
+    product_summary = dict(sorted(product_summary.items(), key=lambda x: x[1]['projected_total'], reverse=True))
+    
+    return product_summary
+
+
 # ========== MAIN FUNCTION ==========
 def main():
     """Main function for Q1 2026 Forecasting module"""
@@ -826,6 +1145,356 @@ def main():
                                         )
                                     export_buckets[key] = df
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # SECTION 3: REORDER FORECAST (Historical Analysis)
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    st.markdown("---")
+    st.markdown("### 🔄 Reorder Forecast (Historical Analysis)")
+    st.caption("Customers who ordered in 2025 but have no pending orders or Q1 pipeline deals")
+    
+    # Initialize reorder buckets (will be populated if historical data exists)
+    reorder_buckets = {}
+    
+    # Load historical data
+    with st.spinner("Analyzing 2025 order history..."):
+        historical_df = load_historical_orders(main_dash, rep_name)
+    
+    if historical_df.empty:
+        st.info("No 2025 historical orders found for this rep")
+    else:
+        # Calculate customer metrics
+        customer_metrics_df = calculate_customer_metrics(historical_df)
+        
+        # Get list of customers with pending orders (from Section 1)
+        pending_customers = set()
+        for key in ns_categories.keys():
+            df = ns_dfs.get(key, pd.DataFrame())
+            if not df.empty and 'Customer' in df.columns:
+                pending_customers.update(df['Customer'].dropna().tolist())
+        
+        # Get list of customers in Q1 pipeline (from Section 2)
+        pipeline_customers = set()
+        for key in hs_categories.keys():
+            df = hs_dfs.get(key, pd.DataFrame())
+            if not df.empty and 'Deal Name' in df.columns:
+                # Extract customer name from deal name (often format: "Customer - Product")
+                pipeline_customers.update(df['Deal Name'].dropna().tolist())
+        
+        # Identify reorder opportunities
+        opportunities_df = identify_reorder_opportunities(customer_metrics_df, pending_customers, pipeline_customers)
+        
+        if opportunities_df.empty:
+            st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
+        else:
+            # 2025 Performance Summary
+            st.markdown("#### 📊 Your 2025 Performance")
+            perf_col1, perf_col2, perf_col3, perf_col4 = st.columns(4)
+            with perf_col1:
+                st.metric("Total Revenue", f"${historical_df['Amount'].sum():,.0f}")
+            with perf_col2:
+                st.metric("Unique Customers", f"{historical_df['Customer'].nunique()}")
+            with perf_col3:
+                st.metric("Total Orders", f"{len(historical_df)}")
+            with perf_col4:
+                avg_order = historical_df['Amount'].mean()
+                st.metric("Avg Order", f"${avg_order:,.0f}")
+            
+            st.markdown("---")
+            
+            # Customer Filter (Multi-select) - Only affects Section 3
+            all_opportunity_customers = sorted(opportunities_df['Customer'].unique().tolist())
+            
+            filter_col1, filter_col2 = st.columns([3, 1])
+            with filter_col1:
+                selected_customers = st.multiselect(
+                    "🔍 Filter by Customer (Section 3 only):",
+                    options=all_opportunity_customers,
+                    default=[],
+                    placeholder="All customers (click to filter)",
+                    key=f"q1_customer_filter_{rep_name}"
+                )
+            with filter_col2:
+                if st.button("Clear Filter", key=f"q1_clear_filter_{rep_name}"):
+                    st.session_state[f"q1_customer_filter_{rep_name}"] = []
+                    st.rerun()
+            
+            # Apply customer filter
+            if selected_customers:
+                filtered_opportunities = opportunities_df[opportunities_df['Customer'].isin(selected_customers)]
+                filtered_historical = historical_df[historical_df['Customer'].isin(selected_customers)]
+                st.info(f"Showing {len(selected_customers)} selected customer(s)")
+            else:
+                filtered_opportunities = opportunities_df
+                filtered_historical = historical_df
+            
+            # Get product type summary
+            product_summary = get_product_type_summary(filtered_historical, filtered_opportunities)
+            
+            # View Toggle
+            view_mode = st.radio(
+                "View by:",
+                options=["Confidence Tier", "Product Type"],
+                horizontal=True,
+                key=f"q1_view_mode_{rep_name}"
+            )
+            
+            st.markdown("---")
+            
+            # Initialize reorder buckets for tracking selections
+            reorder_buckets = {}
+            
+            if view_mode == "Confidence Tier":
+                # === VIEW BY CONFIDENCE TIER ===
+                
+                tiers = [
+                    ('Likely', '🔴', 0.75, 'Orders 3+ times in 2025 - very likely to reorder'),
+                    ('Possible', '🟡', 0.50, 'Ordered 2 times in 2025 - good chance of reorder'),
+                    ('Long Shot', '⚪', 0.25, 'Ordered once in 2025 - worth reaching out')
+                ]
+                
+                for tier_name, tier_emoji, tier_pct, tier_desc in tiers:
+                    tier_customers = filtered_opportunities[filtered_opportunities['Confidence_Tier'] == tier_name]
+                    
+                    if tier_customers.empty:
+                        continue
+                    
+                    tier_historical = tier_customers['Total_Revenue'].sum()
+                    tier_projected = tier_customers['Projected_Value'].sum()
+                    
+                    checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
+                    
+                    is_checked = st.checkbox(
+                        f"{tier_emoji} {tier_name} ({int(tier_pct*100)}%): {len(tier_customers)} customers, ${tier_historical:,.0f} hist → **${tier_projected:,.0f} projected**",
+                        key=checkbox_key,
+                        help=tier_desc
+                    )
+                    
+                    if is_checked:
+                        with st.expander(f"🔎 View {tier_name} Customers"):
+                            # Customize toggle
+                            enable_edit = st.toggle("Customize", key=f"q1_reorder_tgl_{tier_name}_{rep_name}")
+                            
+                            if enable_edit:
+                                # Session state for unselected customers
+                                unselected_key = f"q1_reorder_unsel_{tier_name}_{rep_name}"
+                                if unselected_key not in st.session_state:
+                                    st.session_state[unselected_key] = set()
+                                
+                                # Row-level select/unselect buttons
+                                row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
+                                with row_col1:
+                                    if st.button("☑️ All", key=f"q1_reorder_sel_{tier_name}_{rep_name}"):
+                                        st.session_state[unselected_key] = set()
+                                        st.rerun()
+                                with row_col2:
+                                    if st.button("☐ None", key=f"q1_reorder_unsel_btn_{tier_name}_{rep_name}"):
+                                        st.session_state[unselected_key] = set(tier_customers['Customer'].tolist())
+                                        st.rerun()
+                                
+                                # Build display dataframe
+                                display_data = []
+                                for _, row in tier_customers.iterrows():
+                                    is_selected = row['Customer'] not in st.session_state[unselected_key]
+                                    display_data.append({
+                                        'Select': is_selected,
+                                        'Customer': row['Customer'],
+                                        '2025 Orders': row['Order_Count'],
+                                        '2025 Revenue': row['Total_Revenue'],
+                                        'Avg Order': row['Weighted_Avg_Order'],
+                                        'Cadence': f"~{int(row['Cadence_Days'])} days" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
+                                        'Days Ago': row['Days_Since_Last'],
+                                        'Products': row['Product_Types'],
+                                        'Projected': row['Projected_Value']
+                                    })
+                                
+                                display_df = pd.DataFrame(display_data)
+                                
+                                edited = st.data_editor(
+                                    display_df,
+                                    column_config={
+                                        "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                        "2025 Revenue": st.column_config.NumberColumn("2025 Rev", format="$%d"),
+                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                        "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
+                                        "Products": st.column_config.TextColumn("Products", width="medium"),
+                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                    },
+                                    disabled=['Customer', '2025 Orders', '2025 Revenue', 'Avg Order', 'Cadence', 'Last Order', 'Days Ago', 'Products', 'Projected'],
+                                    hide_index=True,
+                                    key=f"q1_reorder_edit_{tier_name}_{rep_name}",
+                                    use_container_width=True
+                                )
+                                
+                                # Update unselected set
+                                current_unselected = set()
+                                for _, row in edited.iterrows():
+                                    if not row['Select']:
+                                        current_unselected.add(row['Customer'])
+                                st.session_state[unselected_key] = current_unselected
+                                
+                                # Calculate selected total
+                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                selected_total = tier_customers[tier_customers['Customer'].isin(selected_customers_list)]['Projected_Value'].sum()
+                                st.caption(f"Selected: {len(selected_customers_list)} customers, ${selected_total:,.0f} projected")
+                                
+                                # Store for export
+                                reorder_buckets[f"reorder_{tier_name}"] = tier_customers[tier_customers['Customer'].isin(selected_customers_list)]
+                            else:
+                                # Read-only view
+                                display_data = []
+                                for _, row in tier_customers.iterrows():
+                                    display_data.append({
+                                        'Customer': row['Customer'],
+                                        '2025 Orders': row['Order_Count'],
+                                        '2025 Revenue': row['Total_Revenue'],
+                                        'Avg Order': row['Weighted_Avg_Order'],
+                                        'Cadence': f"~{int(row['Cadence_Days'])} days" if pd.notna(row['Cadence_Days']) else "N/A",
+                                        'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
+                                        'Days Ago': row['Days_Since_Last'],
+                                        'Products': row['Product_Types'],
+                                        'Projected': row['Projected_Value']
+                                    })
+                                
+                                st.dataframe(
+                                    pd.DataFrame(display_data),
+                                    column_config={
+                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                        "2025 Revenue": st.column_config.NumberColumn("2025 Rev", format="$%d"),
+                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                        "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
+                                        "Products": st.column_config.TextColumn("Products", width="medium"),
+                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                    },
+                                    hide_index=True,
+                                    use_container_width=True
+                                )
+                                
+                                # Store full tier for export
+                                reorder_buckets[f"reorder_{tier_name}"] = tier_customers
+            
+            else:
+                # === VIEW BY PRODUCT TYPE ===
+                
+                for product_type, data in product_summary.items():
+                    checkbox_key = f"q1_reorder_prod_{product_type}_{rep_name}"
+                    
+                    is_checked = st.checkbox(
+                        f"📦 {product_type}: {len(data['customers'])} customers, ${data['historical_total']:,.0f} hist → **${data['projected_total']:,.0f} projected**",
+                        key=checkbox_key
+                    )
+                    
+                    if is_checked:
+                        with st.expander(f"🔎 View {product_type} Customers"):
+                            # Get customers for this product type
+                            prod_customers = data['customers']
+                            prod_opportunities = filtered_opportunities[filtered_opportunities['Customer'].isin(prod_customers)]
+                            
+                            # Customize toggle
+                            enable_edit = st.toggle("Customize", key=f"q1_reorder_prod_tgl_{product_type}_{rep_name}")
+                            
+                            if enable_edit:
+                                # Session state for unselected customers
+                                unselected_key = f"q1_reorder_prod_unsel_{product_type}_{rep_name}"
+                                if unselected_key not in st.session_state:
+                                    st.session_state[unselected_key] = set()
+                                
+                                # Row-level buttons
+                                row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
+                                with row_col1:
+                                    if st.button("☑️ All", key=f"q1_reorder_prod_sel_{product_type}_{rep_name}"):
+                                        st.session_state[unselected_key] = set()
+                                        st.rerun()
+                                with row_col2:
+                                    if st.button("☐ None", key=f"q1_reorder_prod_unsel_btn_{product_type}_{rep_name}"):
+                                        st.session_state[unselected_key] = set(prod_customers)
+                                        st.rerun()
+                                
+                                # Build display dataframe
+                                display_data = []
+                                for _, row in prod_opportunities.iterrows():
+                                    is_selected = row['Customer'] not in st.session_state[unselected_key]
+                                    display_data.append({
+                                        'Select': is_selected,
+                                        'Customer': row['Customer'],
+                                        'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
+                                        '2025 Orders': row['Order_Count'],
+                                        'Avg Order': row['Weighted_Avg_Order'],
+                                        'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
+                                        'Projected': row['Projected_Value']
+                                    })
+                                
+                                display_df = pd.DataFrame(display_data)
+                                
+                                edited = st.data_editor(
+                                    display_df,
+                                    column_config={
+                                        "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                        "Confidence": st.column_config.TextColumn("Confidence", width="small"),
+                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                    },
+                                    disabled=['Customer', 'Confidence', '2025 Orders', 'Avg Order', 'Last Order', 'Projected'],
+                                    hide_index=True,
+                                    key=f"q1_reorder_prod_edit_{product_type}_{rep_name}",
+                                    use_container_width=True
+                                )
+                                
+                                # Update unselected set
+                                current_unselected = set()
+                                for _, row in edited.iterrows():
+                                    if not row['Select']:
+                                        current_unselected.add(row['Customer'])
+                                st.session_state[unselected_key] = current_unselected
+                                
+                                # Calculate selected total
+                                selected_customers_list = [row['Customer'] for _, row in edited.iterrows() if row['Select']]
+                                selected_total = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)]['Projected_Value'].sum()
+                                st.caption(f"Selected: {len(selected_customers_list)} customers, ${selected_total:,.0f} projected")
+                                
+                                # Store for export
+                                reorder_buckets[f"reorder_prod_{product_type}"] = prod_opportunities[prod_opportunities['Customer'].isin(selected_customers_list)]
+                            else:
+                                # Read-only view
+                                display_data = []
+                                for _, row in prod_opportunities.iterrows():
+                                    display_data.append({
+                                        'Customer': row['Customer'],
+                                        'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
+                                        '2025 Orders': row['Order_Count'],
+                                        'Avg Order': row['Weighted_Avg_Order'],
+                                        'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
+                                        'Projected': row['Projected_Value']
+                                    })
+                                
+                                st.dataframe(
+                                    pd.DataFrame(display_data),
+                                    column_config={
+                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                        "Confidence": st.column_config.TextColumn("Confidence", width="small"),
+                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                        "Projected": st.column_config.NumberColumn("Projected", format="$%d")
+                                    },
+                                    hide_index=True,
+                                    use_container_width=True
+                                )
+                                
+                                # Store for export
+                                reorder_buckets[f"reorder_prod_{product_type}"] = prod_opportunities
+    
     # === CALCULATE RESULTS ===
     def safe_sum(df):
         if df.empty:
@@ -836,10 +1505,23 @@ def main():
             return df['Amount'].sum()
         return 0
     
+    def safe_sum_projected(df):
+        """Sum projected values for reorder buckets"""
+        if df.empty:
+            return 0
+        if 'Projected_Value' in df.columns:
+            return df['Projected_Value'].sum()
+        return 0
+    
     selected_scheduled = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
     selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
     
-    total_forecast = selected_scheduled + selected_pipeline
+    # Calculate reorder forecast total
+    selected_reorder = 0
+    if reorder_buckets:
+        selected_reorder = sum(safe_sum_projected(df) for df in reorder_buckets.values())
+    
+    total_forecast = selected_scheduled + selected_pipeline + selected_reorder
     gap_to_goal = q1_goal - total_forecast
     
     # === STICKY SUMMARY BAR ===
@@ -860,6 +1542,11 @@ def main():
         </div>
         <div class="sticky-forecast-divider"></div>
         <div class="sticky-forecast-item">
+            <div class="sticky-forecast-label">+ Reorder</div>
+            <div class="sticky-forecast-value" style="color: #f59e0b; text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);">${selected_reorder:,.0f}</div>
+        </div>
+        <div class="sticky-forecast-divider"></div>
+        <div class="sticky-forecast-item">
             <div class="sticky-forecast-label">= Forecast</div>
             <div class="sticky-forecast-value total">${total_forecast:,.0f}</div>
         </div>
@@ -875,14 +1562,16 @@ def main():
     st.markdown("---")
     st.markdown("### 🔮 Q1 2026 Forecast Results")
     
-    m1, m2, m3, m4 = st.columns(4)
+    m1, m2, m3, m4, m5 = st.columns(5)
     with m1:
-        st.metric("1. Scheduled (NS)", f"${selected_scheduled:,.0f}")
+        st.metric("1. Scheduled", f"${selected_scheduled:,.0f}", help="NetSuite orders with Q1 dates")
     with m2:
-        st.metric("2. Pipeline (HS)", f"${selected_pipeline:,.0f}")
+        st.metric("2. Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals for Q1")
     with m3:
-        st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}", delta="Sum of 1+2")
+        st.metric("3. Reorder", f"${selected_reorder:,.0f}", help="Historical opportunity (probability-weighted)")
     with m4:
+        st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}", delta="Sum of 1+2+3")
+    with m5:
         if gap_to_goal > 0:
             st.metric("Gap to Goal", f"${gap_to_goal:,.0f}", delta="Behind", delta_color="inverse")
         else:
@@ -905,6 +1594,11 @@ def main():
         - Q1 2026 close date deals
         - Q4 2025 spillover deals
         
+        **Reorder Forecast:** ${selected_reorder:,.0f}
+        - Historical customers with no pending orders
+        - Probability-weighted by order frequency
+        - 🔴 Likely (75%) | 🟡 Possible (50%) | ⚪ Long Shot (25%)
+        
         **Your Q1 Goal:** ${q1_goal:,.0f}
         """)
     
@@ -912,10 +1606,11 @@ def main():
     st.markdown("---")
     st.markdown("### 📤 Export Q1 2026 Forecast")
     
-    if export_buckets:
+    if export_buckets or reorder_buckets:
         # Combine all selected data for export
         all_ns_data = []
         all_hs_data = []
+        all_reorder_data = []
         
         for key, df in export_buckets.items():
             if df.empty:
@@ -931,7 +1626,16 @@ def main():
                 export_df['Category'] = hs_categories[key]['label']
                 all_hs_data.append(export_df)
         
-        col1, col2 = st.columns(2)
+        # Add reorder bucket data
+        if reorder_buckets:
+            for key, df in reorder_buckets.items():
+                if df.empty:
+                    continue
+                export_df = df.copy()
+                export_df['Category'] = key.replace('reorder_', '').replace('_', ' ').title()
+                all_reorder_data.append(export_df)
+        
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             if all_ns_data:
@@ -964,6 +1668,22 @@ def main():
                 st.caption(f"{len(hs_export)} deals, ${hs_total:,.0f}")
             else:
                 st.info("No HubSpot deals selected")
+        
+        with col3:
+            if all_reorder_data:
+                reorder_export = pd.concat(all_reorder_data, ignore_index=True)
+                csv_reorder = reorder_export.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Reorder Prospects (CSV)",
+                    data=csv_reorder,
+                    file_name=f"q1_2026_reorder_prospects_{rep_name.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+                reorder_total = reorder_export['Projected_Value'].sum() if 'Projected_Value' in reorder_export.columns else 0
+                st.caption(f"{len(reorder_export)} prospects, ${reorder_total:,.0f} projected")
+            else:
+                st.info("No reorder prospects selected")
     else:
         st.info("Select items above to enable export")
     
