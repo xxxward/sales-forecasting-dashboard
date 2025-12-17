@@ -539,8 +539,12 @@ def calculate_customer_metrics(historical_df):
         # Projected value = Avg Order × Expected Orders × Confidence %
         projected_value = weighted_avg * expected_orders_q1 * confidence_pct
         
+        # Get rep name if available (for team view)
+        rep_for_customer = cust_orders['Rep'].iloc[0] if 'Rep' in cust_orders.columns else ''
+        
         customer_metrics.append({
             'Customer': customer,
+            'Rep': rep_for_customer,
             'Order_Count': order_count,
             'Total_Revenue': total_revenue,
             'Weighted_Avg_Order': weighted_avg,
@@ -793,20 +797,39 @@ def main():
         st.warning("No reps found in Dashboard Info")
         return
     
+    # Define the team reps for "All Reps" aggregate view
+    TEAM_REPS = ['Alex Gonzalez', 'Jake Lynch', 'Dave Borkowski', 'Lance Mitton', 'Shopify E-commerce', 'Brad Sherman']
+    
+    # Add "All Reps" option at the beginning
+    rep_options = ["👥 All Reps (Team View)"] + reps
+    
     # Rep selector
-    rep_name = st.selectbox("Select Sales Rep:", options=reps, key="q1_rep_selector")
+    selected_option = st.selectbox("Select Sales Rep:", options=rep_options, key="q1_rep_selector")
+    
+    # Determine if we're in team view mode
+    is_team_view = selected_option == "👥 All Reps (Team View)"
+    
+    if is_team_view:
+        rep_name = "All Reps"
+        # Filter to only team reps that exist in the data
+        active_team_reps = [r for r in TEAM_REPS if r in reps]
+        st.info(f"📊 Team View: Showing aggregate data for {len(active_team_reps)} reps: {', '.join(active_team_reps)}")
+    else:
+        rep_name = selected_option
+        active_team_reps = [rep_name]  # Single rep
     
     # === USER-DEFINED GOAL INPUT ===
     st.markdown("### 🎯 Set Your Q1 2026 Goal")
     
     goal_key = f"q1_goal_{rep_name}"
     if goal_key not in st.session_state:
-        st.session_state[goal_key] = 1000000
+        # Default goal: higher for team view
+        st.session_state[goal_key] = 5000000 if is_team_view else 1000000
     
     col1, col2 = st.columns([2, 1])
     with col1:
         q1_goal = st.number_input(
-            "Enter your Q1 2026 quota/goal ($):",
+            "Enter your Q1 2026 quota/goal ($):" if not is_team_view else "Enter Team Q1 2026 quota/goal ($):",
             min_value=0,
             max_value=50000000,
             value=st.session_state[goal_key],
@@ -817,7 +840,7 @@ def main():
         st.session_state[goal_key] = q1_goal
     
     with col2:
-        st.metric("Your Q1 Goal", f"${q1_goal:,.0f}")
+        st.metric("Team Q1 Goal" if is_team_view else "Your Q1 Goal", f"${q1_goal:,.0f}")
     
     st.markdown("---")
     
@@ -826,18 +849,35 @@ def main():
     # - pf_spillover = PF orders with Q1 2026 Promise/Projected dates
     # - pa_spillover = PA orders with PA Date in Q1 2026
     
-    so_categories = categorize_sales_orders(sales_orders_df, rep_name)
+    # Aggregate data from all active reps
+    all_pf_spillover = []
+    all_pa_spillover = []
+    total_pf_amount = 0
+    total_pa_amount = 0
+    
+    for r in active_team_reps:
+        so_cats = categorize_sales_orders(sales_orders_df, r)
+        if not so_cats['pf_spillover'].empty:
+            all_pf_spillover.append(so_cats['pf_spillover'])
+            total_pf_amount += so_cats['pf_spillover_amount']
+        if not so_cats['pa_spillover'].empty:
+            all_pa_spillover.append(so_cats['pa_spillover'])
+            total_pa_amount += so_cats['pa_spillover_amount']
+    
+    # Combine into single dataframes
+    combined_pf = pd.concat(all_pf_spillover, ignore_index=True) if all_pf_spillover else pd.DataFrame()
+    combined_pa = pd.concat(all_pa_spillover, ignore_index=True) if all_pa_spillover else pd.DataFrame()
     
     # Map spillover to Q1 categories
     ns_categories = {
-        'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': so_categories['pf_spillover'], 'amount': so_categories['pf_spillover_amount']},
-        'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': so_categories['pa_spillover'], 'amount': so_categories['pa_spillover_amount']},
+        'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
+        'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': combined_pa, 'amount': total_pa_amount},
     }
     
     # Format for display
     ns_dfs = {
-        'PF_Spillover': format_ns_view(so_categories['pf_spillover'], 'Promise'),
-        'PA_Spillover': format_ns_view(so_categories['pa_spillover'], 'PA_Date'),
+        'PF_Spillover': format_ns_view(combined_pf, 'Promise'),
+        'PA_Spillover': format_ns_view(combined_pa, 'PA_Date'),
     }
     
     # === HUBSPOT Q1 2026 PIPELINE ===
@@ -855,7 +895,8 @@ def main():
     hs_dfs = {}
     
     if not deals_df.empty and 'Deal Owner' in deals_df.columns:
-        rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
+        # Filter to active team reps (supports both single rep and team view)
+        rep_deals = deals_df[deals_df['Deal Owner'].isin(active_team_reps)].copy()
         
         if 'Close Date' in rep_deals.columns:
             # Q1 2026 Close Date deals (Close Date in Q1 2026)
@@ -874,7 +915,9 @@ def main():
             
             # Debug info
             with st.expander("🔧 Debug: HubSpot Deal Counts"):
-                st.write(f"**Total rep deals loaded:** {len(rep_deals)}")
+                if is_team_view:
+                    st.write(f"**Team View - Reps included:** {', '.join(active_team_reps)}")
+                st.write(f"**Total deals loaded:** {len(rep_deals)}")
                 st.write(f"**Q1 Close Date deals:** {len(q1_deals)} (Close Date in Jan-Mar 2026)")
                 st.write(f"**Q4 Spillover deals:** {len(q4_spillover)} (Q4 Close Date + Spillover flag)")
                 if 'Amount' in rep_deals.columns:
@@ -882,7 +925,7 @@ def main():
                     q4_spill_total = q4_spillover['Amount'].sum() if not q4_spillover.empty else 0
                     st.write(f"**Q1 deals total:** ${q1_total:,.0f}")
                     st.write(f"**Q4 spillover total:** ${q4_spill_total:,.0f}")
-                    st.write(f"**Combined (should match ~$800K for Jake):** ${q1_total + q4_spill_total:,.0f}")
+                    st.write(f"**Combined total:** ${q1_total + q4_spill_total:,.0f}")
             
             # Q1 Close deals by status
             if 'Status' in q1_deals.columns:
@@ -1186,9 +1229,21 @@ def main():
     # Initialize reorder buckets (will be populated if historical data exists)
     reorder_buckets = {}
     
-    # Load historical data
+    # Load historical data - aggregate if team view
     with st.spinner("Analyzing 2025 order history..."):
-        historical_df = load_historical_orders(main_dash, rep_name)
+        if is_team_view:
+            # Aggregate historical data from all team reps
+            all_historical = []
+            for r in active_team_reps:
+                rep_historical = load_historical_orders(main_dash, r)
+                if not rep_historical.empty:
+                    rep_historical['Rep'] = r  # Add rep column for reference
+                    all_historical.append(rep_historical)
+            historical_df = pd.concat(all_historical, ignore_index=True) if all_historical else pd.DataFrame()
+        else:
+            historical_df = load_historical_orders(main_dash, rep_name)
+            if not historical_df.empty:
+                historical_df['Rep'] = rep_name
     
     if historical_df.empty:
         st.info("No 2025 historical orders found for this rep")
@@ -1335,9 +1390,14 @@ def main():
                                     is_selected = row['Customer'] not in st.session_state[unselected_key]
                                     # Use edited projected value if available
                                     proj_val = st.session_state[edited_proj_key].get(row['Customer'], row['Projected_Value'])
-                                    display_data.append({
+                                    row_data = {
                                         'Select': is_selected,
                                         'Customer': row['Customer'],
+                                    }
+                                    # Add Rep column for team view
+                                    if is_team_view and 'Rep' in row and row['Rep']:
+                                        row_data['Rep'] = row['Rep']
+                                    row_data.update({
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
                                         'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
@@ -1346,23 +1406,33 @@ def main():
                                         'Days Ago': row['Days_Since_Last'],
                                         'Forecast': proj_val
                                     })
+                                    display_data.append(row_data)
                                 
                                 display_df = pd.DataFrame(display_data)
                                 
+                                # Build column config
+                                col_config = {
+                                    "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                }
+                                disabled_cols = ['Customer', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order', 'Days Ago']
+                                if is_team_view and 'Rep' in display_df.columns:
+                                    col_config["Rep"] = st.column_config.TextColumn("Rep", width="small")
+                                    disabled_cols.append('Rep')
+                                col_config.update({
+                                    "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                    "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                    "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                    "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f", help="Expected orders in Q1 based on cadence"),
+                                    "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                    "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
+                                    "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
+                                })
+                                
                                 edited = st.data_editor(
                                     display_df,
-                                    column_config={
-                                        "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
-                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
-                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f", help="Expected orders in Q1 based on cadence"),
-                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
-                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
-                                    },
-                                    disabled=['Customer', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order', 'Days Ago'],
+                                    column_config=col_config,
+                                    disabled=disabled_cols,
                                     hide_index=True,
                                     key=f"q1_reorder_edit_{tier_name}_{rep_name}",
                                     use_container_width=True
@@ -1398,8 +1468,10 @@ def main():
                                 # Read-only view - shows calculated values, enable Customize to edit
                                 display_data = []
                                 for _, row in tier_customers.iterrows():
-                                    display_data.append({
-                                        'Customer': row['Customer'],
+                                    row_data = {'Customer': row['Customer']}
+                                    if is_team_view and 'Rep' in row and row['Rep']:
+                                        row_data['Rep'] = row['Rep']
+                                    row_data.update({
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
                                         'Cadence': f"~{int(row['Cadence_Days'])}d" if pd.notna(row['Cadence_Days']) else "N/A",
@@ -1408,19 +1480,25 @@ def main():
                                         'Days Ago': row['Days_Since_Last'],
                                         'Forecast': row['Projected_Value']
                                     })
+                                    display_data.append(row_data)
+                                
+                                display_df = pd.DataFrame(display_data)
+                                col_config = {"Customer": st.column_config.TextColumn("Customer", width="medium")}
+                                if is_team_view and 'Rep' in display_df.columns:
+                                    col_config["Rep"] = st.column_config.TextColumn("Rep", width="small")
+                                col_config.update({
+                                    "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                    "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                    "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                    "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
+                                    "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                    "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
+                                    "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
+                                })
                                 
                                 st.dataframe(
-                                    pd.DataFrame(display_data),
-                                    column_config={
-                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
-                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
-                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
-                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
-                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
-                                    },
+                                    display_df,
+                                    column_config=col_config,
                                     hide_index=True,
                                     use_container_width=True
                                 )
@@ -1477,9 +1555,13 @@ def main():
                                     is_selected = row['Customer'] not in st.session_state[unselected_key]
                                     # Use edited projected value if available
                                     proj_val = st.session_state[edited_proj_key].get(row['Customer'], row['Projected_Value'])
-                                    display_data.append({
+                                    row_data = {
                                         'Select': is_selected,
                                         'Customer': row['Customer'],
+                                    }
+                                    if is_team_view and 'Rep' in row and row['Rep']:
+                                        row_data['Rep'] = row['Rep']
+                                    row_data.update({
                                         'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
@@ -1488,23 +1570,32 @@ def main():
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
                                         'Forecast': proj_val
                                     })
+                                    display_data.append(row_data)
                                 
                                 display_df = pd.DataFrame(display_data)
                                 
+                                col_config = {
+                                    "Select": st.column_config.CheckboxColumn("✓", width="small"),
+                                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                }
+                                disabled_cols = ['Customer', 'Confidence', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order']
+                                if is_team_view and 'Rep' in display_df.columns:
+                                    col_config["Rep"] = st.column_config.TextColumn("Rep", width="small")
+                                    disabled_cols.append('Rep')
+                                col_config.update({
+                                    "Confidence": st.column_config.TextColumn("Confidence", width="small"),
+                                    "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                    "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                    "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                    "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
+                                    "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                    "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
+                                })
+                                
                                 edited = st.data_editor(
                                     display_df,
-                                    column_config={
-                                        "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                                        "Confidence": st.column_config.TextColumn("Confidence", width="small"),
-                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
-                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
-                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
-                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d", help="Edit this value to adjust forecast")
-                                    },
-                                    disabled=['Customer', 'Confidence', '2025 Orders', 'Avg Order', 'Cadence', 'Exp Q1', 'Last Order'],
+                                    column_config=col_config,
+                                    disabled=disabled_cols,
                                     hide_index=True,
                                     key=f"q1_reorder_prod_edit_{product_type}_{rep_name}",
                                     use_container_width=True
@@ -1540,8 +1631,10 @@ def main():
                                 # Read-only view - shows calculated values, enable Customize to edit
                                 display_data = []
                                 for _, row in prod_opportunities.iterrows():
-                                    display_data.append({
-                                        'Customer': row['Customer'],
+                                    row_data = {'Customer': row['Customer']}
+                                    if is_team_view and 'Rep' in row and row['Rep']:
+                                        row_data['Rep'] = row['Rep']
+                                    row_data.update({
                                         'Confidence': f"{row['Confidence_Tier']} ({int(row['Confidence_Pct']*100)}%)",
                                         '2025 Orders': row['Order_Count'],
                                         'Avg Order': row['Weighted_Avg_Order'],
@@ -1550,19 +1643,25 @@ def main():
                                         'Last Order': row['Last_Order_Date'].strftime('%Y-%m-%d') if pd.notna(row['Last_Order_Date']) else '',
                                         'Forecast': row['Projected_Value']
                                     })
+                                    display_data.append(row_data)
+                                
+                                display_df = pd.DataFrame(display_data)
+                                col_config = {"Customer": st.column_config.TextColumn("Customer", width="medium")}
+                                if is_team_view and 'Rep' in display_df.columns:
+                                    col_config["Rep"] = st.column_config.TextColumn("Rep", width="small")
+                                col_config.update({
+                                    "Confidence": st.column_config.TextColumn("Confidence", width="small"),
+                                    "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
+                                    "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
+                                    "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                    "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
+                                    "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                    "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
+                                })
                                 
                                 st.dataframe(
-                                    pd.DataFrame(display_data),
-                                    column_config={
-                                        "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                                        "Confidence": st.column_config.TextColumn("Confidence", width="small"),
-                                        "2025 Orders": st.column_config.NumberColumn("Orders", width="small"),
-                                        "Avg Order": st.column_config.NumberColumn("Avg Order", format="$%d"),
-                                        "Cadence": st.column_config.TextColumn("Cadence", width="small"),
-                                        "Exp Q1": st.column_config.NumberColumn("Exp Q1", format="%.1f"),
-                                        "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                        "Forecast": st.column_config.NumberColumn("Forecast $", format="$%d")
-                                    },
+                                    display_df,
+                                    column_config=col_config,
                                     hide_index=True,
                                     use_container_width=True
                                 )
