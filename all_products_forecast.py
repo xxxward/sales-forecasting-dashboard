@@ -1,5 +1,5 @@
 """
-Q1 2026 Sales Forecasting Module
+Q1 2026 Sales Forecasting Module - UI Overhaul
 Based on Sales Dashboard architecture
 
 KEY INSIGHT: The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
@@ -55,116 +55,181 @@ def calculate_business_days_until_q1():
     return business_days
 
 
-# ========== CUSTOM CSS ==========
+# ========== ULTRA-MODERN CSS ==========
 def inject_custom_css():
     st.markdown("""
     <style>
-    .q1-header {
-        background: linear-gradient(135deg, #059669 0%, #10b981 100%);
-        padding: 20px;
+    /* MAIN APP BACKGROUND */
+    .stApp {
+        background: radial-gradient(circle at top left, #1e293b, #0f172a 60%, #020617);
+        color: #e2e8f0;
+        font-family: 'Inter', sans-serif;
+    }
+
+    /* REMOVE DEFAULT STREAMLIT PADDING */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 8rem;
+        max-width: 95% !important;
+    }
+
+    /* CARD STYLING (Glassmorphism) */
+    .glass-card {
+        background: rgba(30, 41, 59, 0.4);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+        transition: transform 0.2s ease, border-color 0.2s ease;
         margin-bottom: 20px;
+    }
+    
+    .glass-card:hover {
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* SECTION HEADERS */
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        background: linear-gradient(90deg, #fff, #94a3b8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    /* HERO METRICS */
+    .hero-metric-container {
+        display: flex;
+        justify-content: space-between;
+        gap: 15px;
+        margin-bottom: 30px;
+    }
+    .hero-metric {
+        background: linear-gradient(145deg, rgba(30, 41, 59, 0.7), rgba(15, 23, 42, 0.8));
+        border-radius: 12px;
+        padding: 15px 25px;
+        flex: 1;
+        border-left: 4px solid #3b82f6;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         text-align: center;
     }
-    
-    .q1-header h1 {
-        color: white;
-        margin: 0;
-        font-size: 28px;
+    .hero-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #94a3b8;
+        margin-bottom: 5px;
     }
-    
-    .q1-header p {
-        color: rgba(255,255,255,0.8);
-        margin: 5px 0 0 0;
+    .hero-value {
+        font-size: 1.8rem;
+        font-weight: 800;
+        color: #fff;
     }
-    
+
+    /* STICKY FOOTER (HUD STYLE) */
     .sticky-forecast-bar-q1 {
         position: fixed;
-        bottom: 0;
-        left: 22rem;
-        right: 0;
-        z-index: 9999;
-        background: linear-gradient(135deg, rgba(5, 46, 22, 0.98) 0%, rgba(20, 83, 45, 0.98) 100%);
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 85%;
+        max-width: 1200px;
+        z-index: 99999;
+        background: rgba(15, 23, 42, 0.95);
         backdrop-filter: blur(20px);
-        -webkit-backdrop-filter: blur(20px);
-        border-top: 2px solid rgba(16, 185, 129, 0.5);
-        padding: 16px 32px;
+        border: 1px solid rgba(59, 130, 246, 0.3);
+        border-radius: 24px;
+        padding: 12px 30px;
         display: flex;
         justify-content: space-between;
         align-items: center;
-        gap: 24px;
-        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+        box-shadow: 0 0 30px rgba(59, 130, 246, 0.15), 0 10px 15px -3px rgba(0, 0, 0, 0.5);
     }
     
-    .sticky-forecast-item {
-        text-align: center;
-        flex: 1;
+    .sticky-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
     }
-    
-    .sticky-forecast-label {
-        font-size: 11px;
+    .sticky-label {
+        font-size: 0.7rem;
+        color: #94a3b8;
         text-transform: uppercase;
-        letter-spacing: 1.5px;
-        opacity: 0.8;
-        margin-bottom: 4px;
-        font-weight: 600;
+        letter-spacing: 1px;
+        margin-bottom: 2px;
+    }
+    .sticky-val {
+        font-size: 1.5rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
     }
     
-    .sticky-forecast-value {
-        font-size: 26px;
-        font-weight: 800;
-        letter-spacing: -0.5px;
-    }
-    
-    .sticky-forecast-value.scheduled {
-        color: #4ade80;
-        text-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
-    }
-    
-    .sticky-forecast-value.pipeline {
-        color: #60a5fa;
-        text-shadow: 0 0 20px rgba(96, 165, 250, 0.5);
-    }
-    
-    .sticky-forecast-value.total {
-        font-size: 30px;
-        background: linear-gradient(135deg, #10b981 0%, #3b82f6 100%);
+    .val-sched { color: #10b981; text-shadow: 0 0 15px rgba(16, 185, 129, 0.4); }
+    .val-pipe { color: #3b82f6; text-shadow: 0 0 15px rgba(59, 130, 246, 0.4); }
+    .val-reorder { color: #f59e0b; text-shadow: 0 0 15px rgba(245, 158, 11, 0.4); }
+    .val-total { 
+        font-size: 1.8rem;
+        background: linear-gradient(135deg, #fff 0%, #cbd5e1 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        background-clip: text;
-        filter: drop-shadow(0 0 20px rgba(16, 185, 129, 0.5));
     }
-    
-    .sticky-forecast-value.gap-behind {
-        color: #f87171;
-        text-shadow: 0 0 20px rgba(248, 113, 113, 0.5);
-    }
-    
-    .sticky-forecast-value.gap-ahead {
-        color: #4ade80;
-        text-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
-    }
-    
-    .sticky-forecast-divider {
+    .sticky-sep {
         width: 1px;
-        height: 50px;
-        background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+        height: 35px;
+        background: linear-gradient(to bottom, transparent, #334155, transparent);
+    }
+
+    /* CUSTOM PROGRESS BARS FOR TIERS */
+    .tier-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-right: 10px;
+    }
+    .tier-likely { background: rgba(16, 185, 129, 0.2); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.4); }
+    .tier-possible { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .tier-longshot { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.4); }
+
+    /* STREAMLIT WIDGET OVERRIDES */
+    div[data-testid="stCheckbox"] label {
+        color: #e2e8f0 !important;
+        font-weight: 500;
+    }
+    div[data-testid="stExpander"] {
+        background-color: transparent !important;
+        border: none !important;
+    }
+    div[data-testid="stExpander"] details {
+        border: 1px solid rgba(255,255,255,0.1);
+        border-radius: 8px;
+        background: rgba(0,0,0,0.2);
     }
     
-    @media (max-width: 768px) {
-        .sticky-forecast-bar-q1 {
-            left: 0;
-        }
+    /* CUSTOM BUTTONS */
+    div.stButton > button {
+        background: linear-gradient(to right, #1e293b, #0f172a);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.1);
+        transition: all 0.3s ease;
     }
-    
-    .main .block-container {
-        padding-bottom: 100px !important;
+    div.stButton > button:hover {
+        border-color: #3b82f6;
+        box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+        color: #3b82f6;
     }
     </style>
     """, unsafe_allow_html=True)
 
 
-# ========== GAUGE CHART ==========
+# ========== GAUGE CHART (UPDATED DESIGN) ==========
 def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
     """Create a clean gauge chart for Q1 2026 progress"""
     
@@ -173,17 +238,20 @@ def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
     
     percentage = (value / goal) * 100
     
-    # Determine color based on progress
-    if percentage >= 100:
-        bar_color = "#4ade80"  # Green - at or above goal
-    elif percentage >= 75:
-        bar_color = "#fbbf24"  # Yellow
-    elif percentage >= 50:
-        bar_color = "#fb923c"  # Orange
-    else:
-        bar_color = "#f87171"  # Red
+    # Modern Color Palette
+    color_success = "#10b981" # Emerald
+    color_warning = "#f59e0b" # Amber
+    color_danger = "#ef4444"  # Red
     
-    # Set gauge range - adapt to actual value if it exceeds goal
+    if percentage >= 100:
+        bar_color = color_success
+    elif percentage >= 75:
+        bar_color = "#3b82f6" # Blue for near
+    elif percentage >= 50:
+        bar_color = color_warning
+    else:
+        bar_color = color_danger
+    
     max_range = max(goal * 1.1, value * 1.05)
     
     fig = go.Figure(go.Indicator(
@@ -192,53 +260,50 @@ def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
         number={
             'prefix': "$", 
             'valueformat': ",.0f",
-            'font': {'size': 48, 'color': 'white'}
+            'font': {'size': 50, 'color': 'white', 'family': 'Inter'}
         },
         title={
-            'text': f"{title}<br><span style='font-size:14px;color:#888'>Goal: ${goal:,.0f}</span>",
-            'font': {'size': 18, 'color': 'white'}
+            'text': f"<span style='font-size:16px;color:#94a3b8;letter-spacing:1px'>{title.upper()}</span>",
+            'font': {'size': 14}
         },
         gauge={
             'axis': {
                 'range': [0, max_range], 
                 'tickmode': 'array',
-                'tickvals': [0, goal * 0.5, goal, max_range],
-                'ticktext': ['$0', f'${goal*0.5/1000:.0f}K', f'${goal/1000:.0f}K', ''],
-                'tickfont': {'size': 10, 'color': '#888'},
+                'tickvals': [0, goal, max_range],
+                'ticktext': ['0', 'GOAL', ''],
+                'tickfont': {'size': 12, 'color': '#64748b'},
                 'showticklabels': True
             },
-            'bar': {'color': bar_color, 'thickness': 0.75},
+            'bar': {'color': bar_color, 'thickness': 0.8},
             'bgcolor': "rgba(255,255,255,0.05)",
             'borderwidth': 0,
             'steps': [
-                {'range': [0, goal * 0.5], 'color': "rgba(248, 113, 113, 0.15)"},
-                {'range': [goal * 0.5, goal * 0.75], 'color': "rgba(251, 191, 36, 0.15)"},
-                {'range': [goal * 0.75, goal], 'color': "rgba(74, 222, 128, 0.15)"},
-                {'range': [goal, max_range], 'color': "rgba(96, 165, 250, 0.15)"},
+                {'range': [0, goal], 'color': "rgba(255,255,255,0.03)"}
             ],
             'threshold': {
-                'line': {'color': "#10b981", 'width': 4},
-                'thickness': 0.85,
+                'line': {'color': "#fff", 'width': 3},
+                'thickness': 0.9,
                 'value': goal
             }
         }
     ))
     
-    # Add percentage annotation
+    # Add percentage annotation with glow
     fig.add_annotation(
-        x=0.5, y=0.25,
-        text=f"{percentage:.0f}% of Goal",
+        x=0.5, y=0.15,
+        text=f"{percentage:.0f}%",
         showarrow=False,
-        font=dict(size=16, color='#888' if percentage < 100 else '#4ade80'),
+        font=dict(size=24, color=bar_color, family="Inter"),
         xref="paper", yref="paper"
     )
     
     fig.update_layout(
-        height=280,
-        margin=dict(l=30, r=30, t=60, b=20),
+        height=300,
+        margin=dict(l=30, r=30, t=50, b=20),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font={'color': 'white'}
+        font={'color': 'white', 'family': 'Inter'}
     )
     
     return fig
@@ -943,195 +1008,143 @@ def get_product_type_summary(historical_df, opportunities_df):
 def main():
     """Main function for Q1 2026 Forecasting module"""
     
+    st.set_page_config(page_title="Q1 2026 Forecast", page_icon="🔮", layout="wide")
     inject_custom_css()
     
-    # Header
-    st.markdown("""
-    <div class="q1-header">
-        <h1>📦 Q1 2026 Sales Forecast</h1>
-        <p>Plan and forecast your Q1 2026 quarter</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Days until Q1
+    # === HEADER / HERO SECTION ===
     days_until_q1 = calculate_business_days_until_q1()
     
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("📅 Q1 2026", "Jan 1 - Mar 31, 2026")
-    with col2:
-        st.metric("⏱️ Business Days Until Q1", days_until_q1)
-    with col3:
-        st.metric("🕐 Last Updated", get_mst_time().strftime('%I:%M %p MST'))
+    st.markdown("""
+        <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="font-size: 3rem; font-weight: 800; background: linear-gradient(to right, #10b981, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0;">
+                Q1 2026 FORECAST
+            </h1>
+            <p style="color: #94a3b8; font-size: 1.1rem; margin-top: 10px;">Strategic Planning & Revenue Projection</p>
+        </div>
+    """, unsafe_allow_html=True)
     
-    st.markdown("---")
-    
-    # Show data source info in sidebar
-    st.sidebar.markdown("### 📊 Q1 2026 Data")
-    st.sidebar.caption("HubSpot: Copy of All Reps All Pipelines")
-    st.sidebar.caption("NetSuite: NS Sales Orders (spillover)")
+    # Hero Metrics Grid
+    col_h1, col_h2, col_h3 = st.columns(3)
+    with col_h1:
+        st.markdown(f"""
+        <div class="hero-metric">
+            <div class="hero-label">Timeline</div>
+            <div class="hero-value">Jan 1 - Mar 31</div>
+            <div style="color: #64748b; font-size: 0.8rem; margin-top: 5px;">2026 Fiscal Quarter</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_h2:
+         st.markdown(f"""
+        <div class="hero-metric" style="border-left-color: #10b981;">
+            <div class="hero-label">Countdown</div>
+            <div class="hero-value">{days_until_q1} Days</div>
+            <div style="color: #64748b; font-size: 0.8rem; margin-top: 5px;">Business days remaining</div>
+        </div>
+        """, unsafe_allow_html=True)
+    with col_h3:
+        st.markdown(f"""
+        <div class="hero-metric" style="border-left-color: #f59e0b;">
+            <div class="hero-label">Last Sync</div>
+            <div class="hero-value">{get_mst_time().strftime('%I:%M %p')}</div>
+            <div style="color: #64748b; font-size: 0.8rem; margin-top: 5px;">Mountain Standard Time</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     # === IMPORT FROM MAIN DASHBOARD ===
-    # The main dashboard already has all the data loading and categorization logic
-    # We import it directly to ensure consistency
     try:
-        # Import the main dashboard module (it's named sales_dashboard.py in the repo)
         import sales_dashboard as main_dash
-        
-        # Load sales orders and dashboard data using the EXACT SAME function as the main dashboard
-        deals_df_q4, dashboard_df, invoices_df, sales_orders_df, q4_push_df = main_dash.load_all_data()
-        
-        # Get the categorization function
-        categorize_sales_orders = main_dash.categorize_sales_orders
-        
-        # NOW: Load Q1 2026 deals from "Copy of All Reps All Pipelines" 
-        # This sheet includes BOTH Q4 2025 and Q1 2026 close dates
-        deals_df = main_dash.load_google_sheets_data("Copy of All Reps All Pipelines", "A:R", version=main_dash.CACHE_VERSION)
-        
-        # Process the deals data (same logic as main dashboard)
-        if not deals_df.empty and len(deals_df.columns) >= 6:
-            col_names = deals_df.columns.tolist()
-            rename_dict = {}
+        with st.spinner("🔄 Accessing Main Dashboard Data Lake..."):
+            deals_df_q4, dashboard_df, invoices_df, sales_orders_df, q4_push_df = main_dash.load_all_data()
+            categorize_sales_orders = main_dash.categorize_sales_orders
+            deals_df = main_dash.load_google_sheets_data("Copy of All Reps All Pipelines", "A:R", version=main_dash.CACHE_VERSION)
             
-            for col in col_names:
-                if col == 'Record ID':
-                    rename_dict[col] = 'Record ID'
-                elif col == 'Deal Name':
-                    rename_dict[col] = 'Deal Name'
-                elif col == 'Deal Stage':
-                    rename_dict[col] = 'Deal Stage'
-                elif col == 'Close Date':
-                    rename_dict[col] = 'Close Date'
-                elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col:
-                    rename_dict[col] = 'Deal Owner'
-                elif col == 'Deal Owner First Name':
-                    rename_dict[col] = 'Deal Owner First Name'
-                elif col == 'Deal Owner Last Name':
-                    rename_dict[col] = 'Deal Owner Last Name'
-                elif col == 'Amount':
-                    rename_dict[col] = 'Amount'
-                elif col == 'Close Status':
-                    rename_dict[col] = 'Status'
-                elif col == 'Pipeline':
-                    rename_dict[col] = 'Pipeline'
-                elif col == 'Deal Type':
-                    rename_dict[col] = 'Product Type'
-                elif col == 'Pending Approval Date':
-                    rename_dict[col] = 'Pending Approval Date'
-                elif col == 'Q1 2026 Spillover':
-                    rename_dict[col] = 'Q1 2026 Spillover'
-            
-            deals_df = deals_df.rename(columns=rename_dict)
-            
-            # Create Deal Owner if not exists
-            if 'Deal Owner' not in deals_df.columns:
-                if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
-                    deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+            # Process deals logic (same as before)
+            if not deals_df.empty and len(deals_df.columns) >= 6:
+                col_names = deals_df.columns.tolist()
+                rename_dict = {}
+                for col in col_names:
+                    if col == 'Record ID': rename_dict[col] = 'Record ID'
+                    elif col == 'Deal Name': rename_dict[col] = 'Deal Name'
+                    elif col == 'Deal Stage': rename_dict[col] = 'Deal Stage'
+                    elif col == 'Close Date': rename_dict[col] = 'Close Date'
+                    elif 'Deal Owner First Name' in col and 'Deal Owner Last Name' in col: rename_dict[col] = 'Deal Owner'
+                    elif col == 'Deal Owner First Name': rename_dict[col] = 'Deal Owner First Name'
+                    elif col == 'Deal Owner Last Name': rename_dict[col] = 'Deal Owner Last Name'
+                    elif col == 'Amount': rename_dict[col] = 'Amount'
+                    elif col == 'Close Status': rename_dict[col] = 'Status'
+                    elif col == 'Pipeline': rename_dict[col] = 'Pipeline'
+                    elif col == 'Deal Type': rename_dict[col] = 'Product Type'
+                    elif col == 'Pending Approval Date': rename_dict[col] = 'Pending Approval Date'
+                    elif col == 'Q1 2026 Spillover': rename_dict[col] = 'Q1 2026 Spillover'
+                
+                deals_df = deals_df.rename(columns=rename_dict)
+                if 'Deal Owner' not in deals_df.columns:
+                    if 'Deal Owner First Name' in deals_df.columns and 'Deal Owner Last Name' in deals_df.columns:
+                        deals_df['Deal Owner'] = deals_df['Deal Owner First Name'].fillna('') + ' ' + deals_df['Deal Owner Last Name'].fillna('')
+                        deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
+                else:
                     deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-            else:
-                deals_df['Deal Owner'] = deals_df['Deal Owner'].str.strip()
-            
-            # Clean amount
-            def clean_numeric(value):
-                if pd.isna(value) or str(value).strip() == '':
-                    return 0
-                cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
-                try:
-                    return float(cleaned)
-                except:
-                    return 0
-            
-            if 'Amount' in deals_df.columns:
-                deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
-            
-            # Convert dates
-            if 'Close Date' in deals_df.columns:
-                deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
-            
-            if 'Pending Approval Date' in deals_df.columns:
-                deals_df['Pending Approval Date'] = pd.to_datetime(deals_df['Pending Approval Date'], errors='coerce')
-            
-            # Filter out excluded deal stages
-            excluded_stages = [
-                '', '(Blanks)', None, 'Cancelled', 'checkout abandoned', 
-                'closed lost', 'closed won', 'sales order created in NS', 
-                'NCR', 'Shipped'
-            ]
-            
-            if 'Deal Stage' in deals_df.columns:
-                deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
-                deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
-                deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
-        
-    except ImportError as e:
-        st.error(f"❌ Unable to import main dashboard: {e}")
-        st.info("Make sure sales_dashboard.py is in the same directory")
-        return
+                
+                def clean_numeric(value):
+                    if pd.isna(value) or str(value).strip() == '': return 0
+                    cleaned = str(value).replace(',', '').replace('$', '').replace(' ', '').strip()
+                    try: return float(cleaned)
+                    except: return 0
+                
+                if 'Amount' in deals_df.columns:
+                    deals_df['Amount'] = deals_df['Amount'].apply(clean_numeric)
+                if 'Close Date' in deals_df.columns:
+                    deals_df['Close Date'] = pd.to_datetime(deals_df['Close Date'], errors='coerce')
+                if 'Pending Approval Date' in deals_df.columns:
+                    deals_df['Pending Approval Date'] = pd.to_datetime(deals_df['Pending Approval Date'], errors='coerce')
+                
+                excluded_stages = ['', '(Blanks)', None, 'Cancelled', 'checkout abandoned', 'closed lost', 'closed won', 'sales order created in NS', 'NCR', 'Shipped']
+                if 'Deal Stage' in deals_df.columns:
+                    deals_df['Deal Stage'] = deals_df['Deal Stage'].fillna('')
+                    deals_df['Deal Stage'] = deals_df['Deal Stage'].astype(str).str.strip()
+                    deals_df = deals_df[~deals_df['Deal Stage'].str.lower().isin([s.lower() if s else '' for s in excluded_stages])]
     except Exception as e:
         st.error(f"❌ Error loading data: {e}")
-        st.exception(e)
         return
+
+    # === CONTROLS SECTION ===
+    st.markdown('<div class="section-header">🛠️ Mission Control</div>', unsafe_allow_html=True)
     
-    # Get rep list
-    reps = dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else []
-    
-    if not reps:
-        st.warning("No reps found in Dashboard Info")
-        return
-    
-    # Define the team reps for "All Reps" aggregate view
-    TEAM_REPS = ['Alex Gonzalez', 'Jake Lynch', 'Dave Borkowski', 'Lance Mitton', 'Shopify E-commerce', 'Brad Sherman']
-    
-    # Add "All Reps" option at the beginning
-    rep_options = ["👥 All Reps (Team View)"] + reps
-    
-    # Rep selector
-    selected_option = st.selectbox("Select Sales Rep:", options=rep_options, key="q1_rep_selector")
-    
-    # Determine if we're in team view mode
-    is_team_view = selected_option == "👥 All Reps (Team View)"
-    
-    if is_team_view:
-        rep_name = "All Reps"
-        # Filter to only team reps that exist in the data
-        active_team_reps = [r for r in TEAM_REPS if r in reps]
-        st.info(f"📊 Team View: Showing aggregate data for {len(active_team_reps)} reps: {', '.join(active_team_reps)}")
-    else:
-        rep_name = selected_option
-        active_team_reps = [rep_name]  # Single rep
-    
-    # === USER-DEFINED GOAL INPUT ===
-    st.markdown("### 🎯 Set Your Q1 2026 Goal")
-    
-    goal_key = f"q1_goal_{rep_name}"
-    if goal_key not in st.session_state:
-        # Default goal: higher for team view
-        st.session_state[goal_key] = 5000000 if is_team_view else 1000000
-    
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        q1_goal = st.number_input(
-            "Enter your Q1 2026 quota/goal ($):" if not is_team_view else "Enter Team Q1 2026 quota/goal ($):",
-            min_value=0,
-            max_value=50000000,
-            value=st.session_state[goal_key],
-            step=50000,
-            format="%d",
-            key=f"q1_goal_input_{rep_name}"
-        )
-        st.session_state[goal_key] = q1_goal
-    
-    with col2:
-        st.metric("Team Q1 Goal" if is_team_view else "Your Q1 Goal", f"${q1_goal:,.0f}")
-    
-    st.markdown("---")
-    
-    # === GET Q1 2026 DATA ===
-    # The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
-    # - pf_spillover = PF orders with Q1 2026 Promise/Projected dates
-    # - pa_spillover = PA orders with PA Date in Q1 2026
-    
-    # Aggregate data from all active reps
+    with st.container():
+        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+        c1, c2 = st.columns([1, 1])
+        
+        reps = dashboard_df['Rep Name'].tolist() if not dashboard_df.empty else []
+        TEAM_REPS = ['Alex Gonzalez', 'Jake Lynch', 'Dave Borkowski', 'Lance Mitton', 'Shopify E-commerce', 'Brad Sherman']
+        rep_options = ["👥 All Reps (Team View)"] + reps
+        
+        with c1:
+            selected_option = st.selectbox("Select Agent / Team View", options=rep_options, key="q1_rep_selector")
+            is_team_view = selected_option == "👥 All Reps (Team View)"
+            if is_team_view:
+                rep_name = "All Reps"
+                active_team_reps = [r for r in TEAM_REPS if r in reps]
+                st.caption(f"Viewing data for: {', '.join(active_team_reps)}")
+            else:
+                rep_name = selected_option
+                active_team_reps = [rep_name]
+
+        with c2:
+            goal_key = f"q1_goal_{rep_name}"
+            if goal_key not in st.session_state:
+                st.session_state[goal_key] = 5000000 if is_team_view else 1000000
+            
+            q1_goal = st.number_input(
+                "Q1 2026 Revenue Target ($)",
+                min_value=0, max_value=50000000, value=st.session_state[goal_key], step=50000,
+                key=f"q1_goal_input_{rep_name}"
+            )
+            st.session_state[goal_key] = q1_goal
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # === PREPARE DATA ===
+    # NetSuite Data
     all_pf_spillover = []
     all_pa_spillover = []
     total_pf_amount = 0
@@ -1146,23 +1159,19 @@ def main():
             all_pa_spillover.append(so_cats['pa_spillover'])
             total_pa_amount += so_cats['pa_spillover_amount']
     
-    # Combine into single dataframes
     combined_pf = pd.concat(all_pf_spillover, ignore_index=True) if all_pf_spillover else pd.DataFrame()
     combined_pa = pd.concat(all_pa_spillover, ignore_index=True) if all_pa_spillover else pd.DataFrame()
     
-    # Map spillover to Q1 categories
     ns_categories = {
-        'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
-        'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': combined_pa, 'amount': total_pa_amount},
+        'PF_Spillover': {'label': 'PF Scheduled (Q1 Date)', 'df': combined_pf, 'amount': total_pf_amount, 'icon': '📦'},
+        'PA_Spillover': {'label': 'PA Pending (Q1 PA Date)', 'df': combined_pa, 'amount': total_pa_amount, 'icon': '⏳'},
     }
-    
-    # Format for display
     ns_dfs = {
         'PF_Spillover': format_ns_view(combined_pf, 'Promise'),
         'PA_Spillover': format_ns_view(combined_pa, 'PA_Date'),
     }
-    
-    # === HUBSPOT Q1 2026 PIPELINE ===
+
+    # HubSpot Data
     hs_categories = {
         'Q1_Expect': {'label': 'Q1 Close - Expect'},
         'Q1_Commit': {'label': 'Q1 Close - Commit'},
@@ -1173,347 +1182,206 @@ def main():
         'Q4_Spillover_BestCase': {'label': 'Q4 Spillover - Best Case'},
         'Q4_Spillover_Opp': {'label': 'Q4 Spillover - Opportunity'},
     }
-    
     hs_dfs = {}
     
     if not deals_df.empty and 'Deal Owner' in deals_df.columns:
-        # Filter to active team reps (supports both single rep and team view)
         rep_deals = deals_df[deals_df['Deal Owner'].isin(active_team_reps)].copy()
-        
         if 'Close Date' in rep_deals.columns:
-            # Q1 2026 Close Date deals (Close Date in Q1 2026)
             q1_close_mask = (rep_deals['Close Date'] >= Q1_2026_START) & (rep_deals['Close Date'] <= Q1_2026_END)
             q1_deals = rep_deals[q1_close_mask]
             
-            # Q4 2025 Spillover - deals with Q4 close date BUT marked as Q1 2026 Spillover
-            # IMPORTANT: Only include deals with Q4 close dates to avoid double counting with Q1 deals
             q4_close_mask = (rep_deals['Close Date'] >= Q4_2025_START) & (rep_deals['Close Date'] <= Q4_2025_END)
-            
             if 'Q1 2026 Spillover' in rep_deals.columns:
-                # Q4 Spillover = Q4 close date AND spillover flag is set
                 q4_spillover = rep_deals[q4_close_mask & (rep_deals['Q1 2026 Spillover'] == 'Q1 2026')]
             else:
                 q4_spillover = pd.DataFrame()
             
-            # Debug info
-            with st.expander("🔧 Debug: HubSpot Deal Counts"):
-                if is_team_view:
-                    st.write(f"**Team View - Reps included:** {', '.join(active_team_reps)}")
-                st.write(f"**Total deals loaded:** {len(rep_deals)}")
-                st.write(f"**Q1 Close Date deals:** {len(q1_deals)} (Close Date in Jan-Mar 2026)")
-                st.write(f"**Q4 Spillover deals:** {len(q4_spillover)} (Q4 Close Date + Spillover flag)")
-                if 'Amount' in rep_deals.columns:
-                    q1_total = q1_deals['Amount'].sum() if not q1_deals.empty else 0
-                    q4_spill_total = q4_spillover['Amount'].sum() if not q4_spillover.empty else 0
-                    st.write(f"**Q1 deals total:** ${q1_total:,.0f}")
-                    st.write(f"**Q4 spillover total:** ${q4_spill_total:,.0f}")
-                    st.write(f"**Combined total:** ${q1_total + q4_spill_total:,.0f}")
-            
-            # Q1 Close deals by status
             if 'Status' in q1_deals.columns:
                 hs_dfs['Q1_Expect'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Expect'])
                 hs_dfs['Q1_Commit'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Commit'])
                 hs_dfs['Q1_BestCase'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Best Case'])
                 hs_dfs['Q1_Opp'] = format_hs_view(q1_deals[q1_deals['Status'] == 'Opportunity'])
             
-            # Q4 Spillover deals by status
             if not q4_spillover.empty and 'Status' in q4_spillover.columns:
                 hs_dfs['Q4_Spillover_Expect'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Expect'])
                 hs_dfs['Q4_Spillover_Commit'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Commit'])
                 hs_dfs['Q4_Spillover_BestCase'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Best Case'])
                 hs_dfs['Q4_Spillover_Opp'] = format_hs_view(q4_spillover[q4_spillover['Status'] == 'Opportunity'])
-    
-    # Fill missing
+
     for key in hs_categories.keys():
-        if key not in hs_dfs:
-            hs_dfs[key] = pd.DataFrame()
-    
-    # === BUILD YOUR OWN FORECAST ===
-    st.markdown("### 🎯 Build Your Q1 2026 Forecast")
-    st.caption("Select components to include in your Q1 2026 forecast. NetSuite spillover orders are already scheduled for Q1.")
-    
+        if key not in hs_dfs: hs_dfs[key] = pd.DataFrame()
+
     export_buckets = {}
+
+    # === FORECAST BUILDER UI ===
+    st.markdown('<div class="section-header">🧱 Forecast Builder</div>', unsafe_allow_html=True)
     
-    # === CLEAR ALL SELECTIONS BUTTON (top right) ===
-    clear_col1, clear_col2 = st.columns([3, 1])
-    with clear_col2:
-        if st.button("🗑️ Clear All Selections", key=f"q1_clear_all_{rep_name}"):
-            # Clear all category checkboxes
-            for key in ns_categories.keys():
-                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
-                # Also clear row-level selections
-                st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
-            for key in hs_categories.keys():
-                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
-                st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
-            st.rerun()
+    # Selection Tools
+    col_tools1, col_tools2 = st.columns([4, 1])
+    with col_tools1:
+        c_a, c_b = st.columns(2)
+        with c_a:
+            if st.button("☑️ Select All Sources", key=f"q1_select_all_{rep_name}", use_container_width=True):
+                for key in ns_categories.keys():
+                    if ns_categories[key]['amount'] > 0:
+                        st.session_state[f"q1_chk_{key}_{rep_name}"] = True
+                        st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
+                for key in hs_categories.keys():
+                    df = hs_dfs.get(key, pd.DataFrame())
+                    val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
+                    if val > 0:
+                        st.session_state[f"q1_chk_{key}_{rep_name}"] = True
+                        st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
+                st.rerun()
+        with c_b:
+            if st.button("☐ Reset Selection", key=f"q1_unselect_all_{rep_name}", use_container_width=True):
+                for key in ns_categories.keys(): st.session_state[f"q1_chk_{key}_{rep_name}"] = False
+                for key in hs_categories.keys(): st.session_state[f"q1_chk_{key}_{rep_name}"] = False
+                st.rerun()
     
-    # === SELECT ALL / UNSELECT ALL ===
-    sel_col1, sel_col2, sel_col3 = st.columns([1, 1, 2])
-    with sel_col1:
-        if st.button("☑️ Select All", key=f"q1_select_all_{rep_name}", use_container_width=True):
-            for key in ns_categories.keys():
-                if ns_categories[key]['amount'] > 0:
-                    st.session_state[f"q1_chk_{key}_{rep_name}"] = True
-                    # Also clear row-level unselections so all rows are selected
-                    st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
-            for key in hs_categories.keys():
-                df = hs_dfs.get(key, pd.DataFrame())
-                val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
-                if val > 0:
-                    st.session_state[f"q1_chk_{key}_{rep_name}"] = True
-                    st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
-            st.rerun()
+    # Split Layout for Sources
+    col_ns_main, col_hs_main = st.columns(2)
     
-    with sel_col2:
-        if st.button("☐ Unselect All", key=f"q1_unselect_all_{rep_name}", use_container_width=True):
-            for key in ns_categories.keys():
-                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
-            for key in hs_categories.keys():
-                st.session_state[f"q1_chk_{key}_{rep_name}"] = False
-            st.rerun()
-    
-    # === RENDER UI ===
-    with st.container():
-        col_ns, col_hs = st.columns(2)
+    # --- NETSUITE CARD ---
+    with col_ns_main:
+        st.markdown('<div class="glass-card" style="border-top: 4px solid #10b981;">', unsafe_allow_html=True)
+        st.markdown("### 📦 Scheduled (NetSuite)")
+        st.caption("Confirmed orders spilling over from Q4")
         
-        # === NETSUITE COLUMN ===
-        with col_ns:
-            st.markdown("#### 📦 NetSuite Orders (Q1 2026 Scheduled)")
-            st.caption("These are spillover orders from Q4 with Q1 2026 ship/PA dates")
+        for key, data in ns_categories.items():
+            df = ns_dfs.get(key, pd.DataFrame())
+            val = data['amount']
+            checkbox_key = f"q1_chk_{key}_{rep_name}"
             
-            for key, data in ns_categories.items():
-                df = ns_dfs.get(key, pd.DataFrame())
-                val = data['amount']
-                
-                checkbox_key = f"q1_chk_{key}_{rep_name}"
-                
-                if val > 0:
-                    is_checked = st.checkbox(
-                        f"{data['label']}: ${val:,.0f}",
-                        key=checkbox_key
-                    )
-                    
-                    if is_checked:
-                        with st.expander(f"🔎 View Orders ({data['label']})"):
-                            if not df.empty:
-                                # Customize toggle
-                                enable_edit = st.toggle("Customize", key=f"q1_tgl_{key}_{rep_name}")
+            if val > 0:
+                is_checked = st.checkbox(f"{data['label']} (${val:,.0f})", key=checkbox_key)
+                if is_checked:
+                    with st.expander("🔎 Details", expanded=False):
+                        # ... (Keep existing edit/view logic)
+                        if not df.empty:
+                            enable_edit = st.toggle("Filter Rows", key=f"q1_tgl_{key}_{rep_name}")
+                            display_cols = []
+                            if 'Link' in df.columns: display_cols.append('Link')
+                            if 'SO #' in df.columns: display_cols.append('SO #')
+                            if 'Customer' in df.columns: display_cols.append('Customer')
+                            if 'Ship Date' in df.columns: display_cols.append('Ship Date')
+                            if 'Amount' in df.columns: display_cols.append('Amount')
+                            
+                            if enable_edit and display_cols:
+                                df_edit = df.copy()
+                                unselected_key = f"q1_unselected_{key}_{rep_name}"
+                                if unselected_key not in st.session_state: st.session_state[unselected_key] = set()
+                                id_col = 'SO #' if 'SO #' in df_edit.columns else None
                                 
-                                display_cols = []
-                                if 'Link' in df.columns: display_cols.append('Link')
-                                if 'SO #' in df.columns: display_cols.append('SO #')
-                                if 'Type' in df.columns: display_cols.append('Type')
-                                if 'Customer' in df.columns: display_cols.append('Customer')
-                                if 'Ship Date' in df.columns: display_cols.append('Ship Date')
-                                if 'Amount' in df.columns: display_cols.append('Amount')
+                                r1, r2 = st.columns(2)
+                                with r1: 
+                                    if st.button("All", key=f"q1_row_sel_{key}_{rep_name}"): 
+                                        st.session_state[unselected_key] = set(); st.rerun()
+                                with r2: 
+                                    if st.button("None", key=f"q1_row_unsel_{key}_{rep_name}"): 
+                                        if id_col: st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist()); st.rerun()
                                 
-                                if enable_edit and display_cols:
-                                    df_edit = df.copy()
-                                    
-                                    # Session state for unselected rows
-                                    unselected_key = f"q1_unselected_{key}_{rep_name}"
-                                    if unselected_key not in st.session_state:
-                                        st.session_state[unselected_key] = set()
-                                    
-                                    id_col = 'SO #' if 'SO #' in df_edit.columns else None
-                                    
-                                    # Row-level select/unselect buttons
-                                    row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
-                                    with row_col1:
-                                        if st.button("☑️ All", key=f"q1_row_sel_{key}_{rep_name}"):
-                                            st.session_state[unselected_key] = set()
-                                            st.rerun()
-                                    with row_col2:
-                                        if st.button("☐ None", key=f"q1_row_unsel_{key}_{rep_name}"):
-                                            if id_col and id_col in df_edit.columns:
-                                                st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
-                                            st.rerun()
-                                    
-                                    # Add Select column
-                                    if id_col and id_col in df_edit.columns:
-                                        df_edit.insert(0, "Select", df_edit[id_col].apply(
-                                            lambda x: str(x) not in st.session_state[unselected_key]
-                                        ))
-                                    else:
-                                        df_edit.insert(0, "Select", True)
-                                    
-                                    display_with_select = ['Select'] + display_cols
-                                    
-                                    edited = st.data_editor(
-                                        df_edit[display_with_select],
-                                        column_config={
-                                            "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "SO #": st.column_config.TextColumn("SO #", width="small"),
-                                            "Type": st.column_config.TextColumn("Type", width="small"),
-                                            "Ship Date": st.column_config.TextColumn("Ship Date", width="small"),
-                                            "Amount": st.column_config.NumberColumn("Amount", format="$%d")
-                                        },
-                                        disabled=[c for c in display_with_select if c != 'Select'],
-                                        hide_index=True,
-                                        key=f"q1_edit_{key}_{rep_name}",
-                                        num_rows="fixed"
-                                    )
-                                    
-                                    # Update unselected set
-                                    if id_col and id_col in edited.columns:
-                                        current_unselected = set()
-                                        for idx, row in edited.iterrows():
-                                            if not row['Select']:
-                                                current_unselected.add(str(row[id_col]))
-                                        st.session_state[unselected_key] = current_unselected
-                                    
-                                    # Get selected rows for export
-                                    selected_indices = edited[edited['Select']].index
-                                    selected_rows = df.loc[selected_indices].copy()
-                                    export_buckets[key] = selected_rows
-                                    
-                                    current_total = selected_rows['Amount'].sum() if 'Amount' in selected_rows.columns else 0
-                                    st.caption(f"Selected: ${current_total:,.0f}")
+                                if id_col:
+                                    df_edit.insert(0, "Select", df_edit[id_col].apply(lambda x: str(x) not in st.session_state[unselected_key]))
                                 else:
-                                    # Read-only view
-                                    if display_cols:
-                                        st.dataframe(
-                                            df[display_cols],
-                                            column_config={
-                                                "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                                "SO #": st.column_config.TextColumn("SO #", width="small"),
-                                                "Type": st.column_config.TextColumn("Type", width="small"),
-                                                "Ship Date": st.column_config.TextColumn("Ship Date", width="small"),
-                                                "Amount": st.column_config.NumberColumn("Amount", format="$%d")
-                                            },
-                                            hide_index=True,
-                                            use_container_width=True
-                                        )
-                                    export_buckets[key] = df
-                else:
-                    st.caption(f"{data['label']}: $0")
+                                    df_edit.insert(0, "Select", True)
+                                
+                                display_with_select = ['Select'] + display_cols
+                                edited = st.data_editor(
+                                    df_edit[display_with_select],
+                                    column_config={"Select": st.column_config.CheckboxColumn("✓", width="small"), "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"), "Amount": st.column_config.NumberColumn("Amount", format="$%d")},
+                                    disabled=[c for c in display_with_select if c != 'Select'],
+                                    hide_index=True, key=f"q1_edit_{key}_{rep_name}"
+                                )
+                                
+                                if id_col:
+                                    current_unselected = set()
+                                    for idx, row in edited.iterrows():
+                                        if not row['Select']: current_unselected.add(str(row[id_col]))
+                                    st.session_state[unselected_key] = current_unselected
+                                
+                                selected_indices = edited[edited['Select']].index
+                                export_buckets[key] = df.loc[selected_indices].copy()
+                            else:
+                                if display_cols:
+                                    st.dataframe(df[display_cols], column_config={"Link": st.column_config.LinkColumn("🔗", display_text="Open"), "Amount": st.column_config.NumberColumn(format="$%d")}, hide_index=True, use_container_width=True)
+                                export_buckets[key] = df
+            else:
+                st.caption(f"{data['label']}: $0")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # --- HUBSPOT CARD ---
+    with col_hs_main:
+        st.markdown('<div class="glass-card" style="border-top: 4px solid #3b82f6;">', unsafe_allow_html=True)
+        st.markdown("### 🎯 Pipeline (HubSpot)")
+        st.caption("Q1 Opportunities & Spillover Deals")
         
-        # === HUBSPOT COLUMN ===
-        with col_hs:
-            st.markdown("#### 🎯 HubSpot Pipeline (Q1 2026)")
-            st.caption("Q1 close dates + Q4 spillover deals")
+        # 
+
+[Image of Sales Funnel Diagram]
+
+        
+        for key, data in hs_categories.items():
+            df = hs_dfs.get(key, pd.DataFrame())
+            val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
+            checkbox_key = f"q1_chk_{key}_{rep_name}"
             
-            for key, data in hs_categories.items():
-                df = hs_dfs.get(key, pd.DataFrame())
-                val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
-                
-                checkbox_key = f"q1_chk_{key}_{rep_name}"
-                
-                if val > 0:
-                    is_checked = st.checkbox(
-                        f"{data['label']}: ${val:,.0f}",
-                        key=checkbox_key
-                    )
-                    
-                    if is_checked:
-                        with st.expander(f"🔎 View Deals ({data['label']})"):
-                            if not df.empty:
-                                # Customize toggle
-                                enable_edit = st.toggle("Customize", key=f"q1_tgl_{key}_{rep_name}")
+            if val > 0:
+                is_checked = st.checkbox(f"{data['label']} (${val:,.0f})", key=checkbox_key)
+                if is_checked:
+                    with st.expander("🔎 Details", expanded=False):
+                        if not df.empty:
+                            enable_edit = st.toggle("Filter Rows", key=f"q1_tgl_{key}_{rep_name}")
+                            display_cols = ['Link', 'Deal Name', 'Close', 'Amount_Numeric']
+                            if 'PA Date' in df.columns: display_cols.insert(3, 'PA Date')
+                            
+                            if enable_edit:
+                                df_edit = df.copy()
+                                unselected_key = f"q1_unselected_{key}_{rep_name}"
+                                if unselected_key not in st.session_state: st.session_state[unselected_key] = set()
+                                id_col = 'Deal ID' if 'Deal ID' in df_edit.columns else None
                                 
-                                display_cols = ['Link', 'Deal ID', 'Deal Name', 'Close', 'Amount_Numeric']
-                                if 'PA Date' in df.columns:
-                                    display_cols.insert(4, 'PA Date')
+                                r1, r2 = st.columns(2)
+                                with r1: 
+                                    if st.button("All", key=f"q1_row_sel_{key}_{rep_name}"): st.session_state[unselected_key] = set(); st.rerun()
+                                with r2: 
+                                    if st.button("None", key=f"q1_row_unsel_{key}_{rep_name}"): 
+                                        if id_col: st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist()); st.rerun()
                                 
-                                if enable_edit:
-                                    df_edit = df.copy()
-                                    
-                                    # Session state for unselected rows
-                                    unselected_key = f"q1_unselected_{key}_{rep_name}"
-                                    if unselected_key not in st.session_state:
-                                        st.session_state[unselected_key] = set()
-                                    
-                                    id_col = 'Deal ID' if 'Deal ID' in df_edit.columns else None
-                                    
-                                    # Row-level select/unselect buttons
-                                    row_col1, row_col2, row_col3 = st.columns([1, 1, 2])
-                                    with row_col1:
-                                        if st.button("☑️ All", key=f"q1_row_sel_{key}_{rep_name}"):
-                                            st.session_state[unselected_key] = set()
-                                            st.rerun()
-                                    with row_col2:
-                                        if st.button("☐ None", key=f"q1_row_unsel_{key}_{rep_name}"):
-                                            if id_col and id_col in df_edit.columns:
-                                                st.session_state[unselected_key] = set(df_edit[id_col].astype(str).tolist())
-                                            st.rerun()
-                                    
-                                    # Add Select column
-                                    if id_col and id_col in df_edit.columns:
-                                        df_edit.insert(0, "Select", df_edit[id_col].apply(
-                                            lambda x: str(x) not in st.session_state[unselected_key]
-                                        ))
-                                    else:
-                                        df_edit.insert(0, "Select", True)
-                                    
-                                    display_with_select = ['Select'] + [c for c in display_cols if c in df_edit.columns]
-                                    
-                                    edited = st.data_editor(
-                                        df_edit[display_with_select],
-                                        column_config={
-                                            "Select": st.column_config.CheckboxColumn("✓", width="small"),
-                                            "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                            "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
-                                            "Deal Name": st.column_config.TextColumn("Deal Name", width="medium"),
-                                            "Close": st.column_config.TextColumn("Close Date", width="small"),
-                                            "PA Date": st.column_config.TextColumn("PA Date", width="small"),
-                                            "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
-                                        },
-                                        disabled=[c for c in display_with_select if c != 'Select'],
-                                        hide_index=True,
-                                        key=f"q1_edit_{key}_{rep_name}",
-                                        num_rows="fixed"
-                                    )
-                                    
-                                    # Update unselected set
-                                    if id_col and id_col in edited.columns:
-                                        current_unselected = set()
-                                        for idx, row in edited.iterrows():
-                                            if not row['Select']:
-                                                current_unselected.add(str(row[id_col]))
-                                        st.session_state[unselected_key] = current_unselected
-                                    
-                                    # Get selected rows for export
-                                    selected_indices = edited[edited['Select']].index
-                                    selected_rows = df.loc[selected_indices].copy()
-                                    export_buckets[key] = selected_rows
-                                    
-                                    current_total = selected_rows['Amount_Numeric'].sum() if 'Amount_Numeric' in selected_rows.columns else 0
-                                    st.caption(f"Selected: ${current_total:,.0f}")
+                                if id_col:
+                                    df_edit.insert(0, "Select", df_edit[id_col].apply(lambda x: str(x) not in st.session_state[unselected_key]))
                                 else:
-                                    # Read-only view
-                                    avail_cols = [c for c in display_cols if c in df.columns]
-                                    if avail_cols:
-                                        st.dataframe(
-                                            df[avail_cols],
-                                            column_config={
-                                                "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
-                                                "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
-                                                "Deal Name": st.column_config.TextColumn("Deal Name", width="medium"),
-                                                "Close": st.column_config.TextColumn("Close Date", width="small"),
-                                                "PA Date": st.column_config.TextColumn("PA Date", width="small"),
-                                                "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")
-                                            },
-                                            hide_index=True,
-                                            use_container_width=True
-                                        )
-                                    export_buckets[key] = df
+                                    df_edit.insert(0, "Select", True)
+                                
+                                display_with_select = ['Select'] + [c for c in display_cols if c in df_edit.columns]
+                                edited = st.data_editor(
+                                    df_edit[display_with_select],
+                                    column_config={"Select": st.column_config.CheckboxColumn("✓", width="small"), "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"), "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")},
+                                    disabled=[c for c in display_with_select if c != 'Select'],
+                                    hide_index=True, key=f"q1_edit_{key}_{rep_name}"
+                                )
+                                
+                                if id_col:
+                                    current_unselected = set()
+                                    for idx, row in edited.iterrows():
+                                        if not row['Select']: current_unselected.add(str(row[id_col]))
+                                    st.session_state[unselected_key] = current_unselected
+                                
+                                selected_indices = edited[edited['Select']].index
+                                export_buckets[key] = df.loc[selected_indices].copy()
+                            else:
+                                avail_cols = [c for c in display_cols if c in df.columns]
+                                if avail_cols:
+                                    st.dataframe(df[avail_cols], column_config={"Link": st.column_config.LinkColumn("🔗", display_text="Open"), "Amount_Numeric": st.column_config.NumberColumn("Amount", format="$%d")}, hide_index=True, use_container_width=True)
+                                export_buckets[key] = df
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # === REORDER SECTION (HISTORICAL) ===
+    st.markdown('<div class="section-header">🔄 Reorder Analysis</div>', unsafe_allow_html=True)
     
-    # ═══════════════════════════════════════════════════════════════════════════
-    # SECTION 3: REORDER FORECAST (Historical Analysis)
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    st.markdown("---")
-    st.markdown("### 🔄 Reorder Forecast (Historical Analysis)")
-    st.caption("Build your Q1 forecast from 2025 customer line items. Edit quantities and rates to refine projections.")
-    
-    # Initialize reorder buckets
     reorder_buckets = {}
     
-    # Load all data
-    with st.spinner("Loading historical data and line items..."):
-        # Load historical orders
+    with st.spinner("Analyzing historical patterns..."):
         if is_team_view:
             all_historical = []
             all_invoices = []
@@ -1530,296 +1398,108 @@ def main():
         else:
             historical_df = load_historical_orders(main_dash, rep_name)
             invoices_df = load_invoices(main_dash, rep_name)
-            if not historical_df.empty:
-                historical_df['Rep'] = rep_name
+            if not historical_df.empty: historical_df['Rep'] = rep_name
         
-        # Merge with invoices for accurate revenue
-        if not historical_df.empty:
-            historical_df = merge_orders_with_invoices(historical_df, invoices_df)
-        
-        # Load line items - THIS IS THE KEY DATA
+        if not historical_df.empty: historical_df = merge_orders_with_invoices(historical_df, invoices_df)
         line_items_df = load_line_items(main_dash)
     
-    # Debug section - EXPANDED
-    with st.expander("🔧 Debug: Data Loading Status", expanded=True):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.write("**Historical Orders (NS Sales Orders):**")
-            if historical_df.empty:
-                st.error("❌ No historical orders loaded")
-            else:
-                st.success(f"✅ {len(historical_df)} orders loaded")
-                st.write(f"Columns: {historical_df.columns.tolist()}")
-                if 'SO_Number' in historical_df.columns:
-                    sample_sos = historical_df['SO_Number'].dropna().head(10).tolist()
-                    st.write(f"**Sample SO Numbers:** {sample_sos}")
-                    st.write(f"**Unique SOs:** {historical_df['SO_Number'].nunique()}")
-                else:
-                    st.error("❌ SO_Number column MISSING from historical_df!")
-        
-        with col2:
-            st.write("**Line Items (Sales Order Line Item):**")
-            if line_items_df.empty:
-                st.error("❌ No line items loaded - check tab name 'Sales Order Line Item'")
-            else:
-                st.success(f"✅ {len(line_items_df)} line items loaded")
-                st.write(f"Columns: {line_items_df.columns.tolist()}")
-                if 'SO_Number' in line_items_df.columns:
-                    sample_sos = line_items_df['SO_Number'].dropna().head(10).tolist()
-                    st.write(f"**Sample SO Numbers:** {sample_sos}")
-                    st.write(f"**Unique SOs:** {line_items_df['SO_Number'].nunique()}")
-                else:
-                    st.error("❌ SO_Number column MISSING!")
-                
-                if 'Item' in line_items_df.columns:
-                    st.write(f"**Sample Items:** {line_items_df['Item'].head(5).tolist()}")
-                if 'Quantity' in line_items_df.columns:
-                    st.write(f"**Sample Qty:** {line_items_df['Quantity'].head(5).tolist()}")
-                if 'Item_Rate' in line_items_df.columns:
-                    st.write(f"**Sample Rates:** {line_items_df['Item_Rate'].head(5).tolist()}")
-        
-        # Test matching
-        if not historical_df.empty and not line_items_df.empty:
-            if 'SO_Number' in historical_df.columns and 'SO_Number' in line_items_df.columns:
-                hist_sos = set(historical_df['SO_Number'].dropna().unique())
-                line_sos = set(line_items_df['SO_Number'].dropna().unique())
-                matching = hist_sos.intersection(line_sos)
-                st.write(f"**SO Number Matching Test:**")
-                st.write(f"- Historical unique SOs: {len(hist_sos)}")
-                st.write(f"- Line Item unique SOs: {len(line_sos)}")
-                st.write(f"- **Matching SOs: {len(matching)}**")
-                if len(matching) == 0:
-                    st.error("❌ NO MATCHING SO NUMBERS! Check format - Historical: " + 
-                             str(list(hist_sos)[:3]) + " vs Line Items: " + str(list(line_sos)[:3]))
-                else:
-                    st.success(f"✅ {len(matching)} SOs match between datasets")
-                    st.write(f"Sample matches: {list(matching)[:5]}")
-    
+    # 
+
     if historical_df.empty:
-        st.info("No 2025 historical orders found for this rep")
+        st.info("No 2025 historical data found.")
     elif line_items_df.empty:
-        st.warning("⚠️ Line item data not available. Please check the 'Sales Order Line Item' tab in your spreadsheet.")
+        st.warning("⚠️ Line item data missing.")
     else:
-        # Calculate customer metrics
         customer_metrics_df = calculate_customer_metrics(historical_df)
-        
-        # Exclude customers with pending orders or pipeline deals
         pending_customers = set()
         for key in ns_categories.keys():
             df = ns_dfs.get(key, pd.DataFrame())
-            if not df.empty and 'Customer' in df.columns:
-                pending_customers.update(df['Customer'].dropna().tolist())
-        
+            if not df.empty and 'Customer' in df.columns: pending_customers.update(df['Customer'].dropna().tolist())
         pipeline_customers = set()
         for key in hs_categories.keys():
             df = hs_dfs.get(key, pd.DataFrame())
-            if not df.empty and 'Deal Name' in df.columns:
-                pipeline_customers.update(df['Deal Name'].dropna().tolist())
+            if not df.empty and 'Deal Name' in df.columns: pipeline_customers.update(df['Deal Name'].dropna().tolist())
         
         opportunities_df = identify_reorder_opportunities(customer_metrics_df, pending_customers, pipeline_customers)
         
         if opportunities_df.empty:
-            st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
+            st.success("✅ All customers covered!")
         else:
-            # Show 2025 summary
-            st.markdown("#### 📊 2025 Performance Summary")
+            # 2025 Summary Card
+            st.markdown('<div class="glass-card">', unsafe_allow_html=True)
             amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Invoiced Revenue", f"${historical_df[amount_col].sum():,.0f}")
-            with c2:
-                st.metric("Customers", f"{historical_df['Customer'].nunique()}")
-            with c3:
-                st.metric("Orders", f"{len(historical_df)}")
-            with c4:
-                st.metric("Reorder Opportunities", f"{len(opportunities_df)}")
+            sc1, sc2, sc3, sc4 = st.columns(4)
+            sc1.metric("2025 Revenue", f"${historical_df[amount_col].sum():,.0f}")
+            sc2.metric("Active Customers", f"{historical_df['Customer'].nunique()}")
+            sc3.metric("Total Orders", f"{len(historical_df)}")
+            sc4.metric("Reorder Opps", f"{len(opportunities_df)}")
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            st.markdown("---")
-            
-            # === LINE ITEM BASED FORECASTING ===
-            st.markdown("#### 📋 Customer Line Items")
-            st.caption("Select customers and edit Q1 quantities/rates. Forecast = (Qty × Rate) × Confidence %")
-            
-            # Group by confidence tier
+            # Confidence Tiers
             tiers = [
-                ('Likely', '🔴', 0.75, '3+ orders in 2025'),
-                ('Possible', '🟡', 0.50, '2 orders in 2025'),
-                ('Long Shot', '⚪', 0.25, '1 order in 2025')
+                ('Likely', 'tier-likely', 0.75, '3+ orders in 2025'),
+                ('Possible', 'tier-possible', 0.50, '2 orders in 2025'),
+                ('Long Shot', 'tier-longshot', 0.25, '1 order in 2025')
             ]
             
-            for tier_name, emoji, conf_pct, tier_desc in tiers:
+            for tier_name, tier_class, conf_pct, tier_desc in tiers:
                 tier_customers = opportunities_df[opportunities_df['Confidence_Tier'] == tier_name]
+                if tier_customers.empty: continue
                 
-                if tier_customers.empty:
-                    continue
-                
-                # Get all SO numbers for this tier's customers
-                tier_so_numbers = []
-                so_numbers_debug = []
-                for _, cust_row in tier_customers.iterrows():
-                    if 'SO_Numbers' in tier_customers.columns:
-                        so_nums = cust_row['SO_Numbers']
-                        so_numbers_debug.append(f"{cust_row['Customer']}: {type(so_nums).__name__} = {so_nums}")
-                        if isinstance(so_nums, list):
-                            tier_so_numbers.extend(so_nums)
-                
-                # Get line items for these SOs
-                if tier_so_numbers:
-                    tier_line_items = line_items_df[line_items_df['SO_Number'].isin(tier_so_numbers)].copy()
-                else:
-                    tier_line_items = pd.DataFrame()
-                
-                # Calculate tier totals for header
                 tier_historical = tier_customers['Total_Revenue'].sum()
                 tier_projected = tier_customers['Projected_Value'].sum()
                 
-                # Checkbox for tier with line item count
+                # Custom Tier Card
+                st.markdown(f"""
+                <div class="glass-card" style="border-left: 4px solid {'#10b981' if conf_pct==0.75 else '#f59e0b' if conf_pct==0.5 else '#94a3b8'}; padding: 15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <div>
+                            <span class="tier-badge {tier_class}">{tier_name.upper()}</span>
+                            <span style="color:#94a3b8; font-size:0.9rem;">{tier_desc}</span>
+                        </div>
+                        <div style="text-align:right;">
+                            <div style="font-size:1.2rem; font-weight:700;">${tier_projected:,.0f}</div>
+                            <div style="font-size:0.7rem; color:#64748b;">Projected</div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Checkbox logic
                 checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
-                line_item_info = f" | {len(tier_line_items)} line items" if not tier_line_items.empty else " | ⚠️ No line items"
-                is_checked = st.checkbox(
-                    f"{emoji} **{tier_name}** ({int(conf_pct*100)}%): {len(tier_customers)} customers | ${tier_historical:,.0f} hist → ${tier_projected:,.0f} projected{line_item_info}",
-                    key=checkbox_key,
-                    help=f"{tier_desc}. SOs found: {len(tier_so_numbers)}"
-                )
+                is_checked = st.checkbox(f"Include {tier_name} Tier in Forecast", key=checkbox_key)
                 
                 if is_checked:
-                    with st.expander(f"📋 {tier_name} Customer Line Items", expanded=True):
-                        # Debug: Show what we're working with
-                        with st.expander("🔍 Debug: SO Numbers for this tier"):
-                            st.write(f"**Tier customers columns:** {tier_customers.columns.tolist()}")
-                            st.write(f"**Has SO_Numbers column:** {'SO_Numbers' in tier_customers.columns}")
-                            if 'SO_Numbers' in tier_customers.columns:
-                                for idx, row in tier_customers.head(3).iterrows():
-                                    st.write(f"- {row['Customer']}: {type(row['SO_Numbers']).__name__} = {row['SO_Numbers']}")
-                            st.write(f"**Total tier SOs collected:** {len(tier_so_numbers)}")
-                            st.write(f"**Sample tier SOs:** {tier_so_numbers[:10] if tier_so_numbers else 'None'}")
-                            st.write(f"**Line items found:** {len(tier_line_items)}")
-                        
-                        # Session state for this tier
+                    tier_so_numbers = []
+                    for _, cust_row in tier_customers.iterrows():
+                        if 'SO_Numbers' in tier_customers.columns and isinstance(cust_row['SO_Numbers'], list):
+                            tier_so_numbers.extend(cust_row['SO_Numbers'])
+                    
+                    if tier_so_numbers:
+                        tier_line_items = line_items_df[line_items_df['SO_Number'].isin(tier_so_numbers)].copy()
+                    else:
+                        tier_line_items = pd.DataFrame()
+
+                    with st.expander(f"📋 Edit Line Items ({tier_name})", expanded=True):
                         edited_key = f"q1_line_items_{tier_name}_{rep_name}"
-                        if edited_key not in st.session_state:
-                            st.session_state[edited_key] = {}
+                        if edited_key not in st.session_state: st.session_state[edited_key] = {}
                         
-                        # === CUSTOMER CADENCE SUMMARY ===
-                        st.markdown("**📅 Customer Ordering Patterns**")
-                        
-                        cadence_data = []
-                        for _, cust_row in tier_customers.iterrows():
-                            customer = cust_row['Customer']
-                            order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 0
-                            cadence_days = cust_row['Cadence_Days'] if 'Cadence_Days' in tier_customers.columns else None
-                            last_order = cust_row['Last_Order_Date'] if 'Last_Order_Date' in tier_customers.columns else None
-                            days_since = cust_row['Days_Since_Last'] if 'Days_Since_Last' in tier_customers.columns else 999
-                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
-                            
-                            # Format cadence
-                            if pd.notna(cadence_days) and cadence_days > 0:
-                                cadence_str = f"~{int(cadence_days)}d"
-                                # Calculate if overdue
-                                if days_since > cadence_days * 1.5:
-                                    status = f"🔴 Overdue ({int(days_since - cadence_days)}d)"
-                                elif days_since > cadence_days:
-                                    status = f"🟡 Due now"
-                                elif days_since > cadence_days * 0.75:
-                                    status = f"🟢 Due soon"
-                                else:
-                                    status = f"⚪ On track"
-                            else:
-                                cadence_str = "N/A (1 order)"
-                                status = "⚪ New customer"
-                            
-                            # Format last order date
-                            if pd.notna(last_order):
-                                last_order_str = last_order.strftime('%Y-%m-%d')
-                            else:
-                                last_order_str = "Unknown"
-                            
-                            cadence_data.append({
-                                'Customer': customer,
-                                '2025 Orders': order_count,
-                                'Cadence': cadence_str,
-                                'Last Order': last_order_str,
-                                'Days Ago': int(days_since) if pd.notna(days_since) else 999,
-                                'Exp Q1': round(exp_q1, 1),
-                                'Status': status
-                            })
-                        
-                        cadence_df = pd.DataFrame(cadence_data)
-                        st.dataframe(
-                            cadence_df,
-                            column_config={
-                                "Customer": st.column_config.TextColumn("Customer", width="medium"),
-                                "2025 Orders": st.column_config.NumberColumn("2025", width="small"),
-                                "Cadence": st.column_config.TextColumn("Cadence", width="small", help="Average days between orders"),
-                                "Last Order": st.column_config.TextColumn("Last Order", width="small"),
-                                "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
-                                "Exp Q1": st.column_config.NumberColumn("Exp Q1", width="small", help="Expected orders in Q1 based on cadence"),
-                                "Status": st.column_config.TextColumn("Status", width="small", help="🔴 Overdue | 🟡 Due now | 🟢 Due soon | ⚪ On track")
-                            },
-                            hide_index=True,
-                            use_container_width=True
-                        )
-                        
-                        st.markdown("---")
-                        st.markdown("**📦 Line Items (Edit Q1 Qty & Rate)**")
-                        
-                        # Build line item table with customer info
                         line_display = []
-                        
                         for _, cust_row in tier_customers.iterrows():
                             customer = cust_row['Customer']
                             so_numbers = cust_row['SO_Numbers'] if 'SO_Numbers' in tier_customers.columns else []
                             
-                            if not isinstance(so_numbers, list) or len(so_numbers) == 0:
-                                # No line items - add a summary row
-                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
-                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
-                                line_display.append({
-                                    'Select': True,
-                                    'Customer': customer,
-                                    'Item': '(No line item detail)',
-                                    '2025 Qty': 0,
-                                    'Q1 Qty': 0,
-                                    'Rate': weighted_avg,
-                                    'Line Total': proj_val / conf_pct if conf_pct > 0 else 0
-                                })
-                                continue
-                            
-                            # Get line items for this customer
+                            if not isinstance(so_numbers, list) or len(so_numbers) == 0: continue
                             cust_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)]
+                            if cust_items.empty: continue
                             
-                            if cust_items.empty:
-                                # No matching line items
-                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
-                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
-                                line_display.append({
-                                    'Select': True,
-                                    'Customer': customer,
-                                    'Item': '(No line item match)',
-                                    '2025 Qty': 0,
-                                    'Q1 Qty': 0,
-                                    'Rate': weighted_avg,
-                                    'Line Total': proj_val / conf_pct if conf_pct > 0 else 0
-                                })
-                                continue
-                            
-                            # Aggregate by item
-                            item_agg = cust_items.groupby('Item').agg({
-                                'Quantity': 'sum',
-                                'Item_Rate': 'mean',
-                                'Line_Total': 'sum'
-                            }).reset_index()
-                            
-                            # Calculate Q1 scale factor based on expected orders
+                            item_agg = cust_items.groupby('Item').agg({'Quantity': 'sum', 'Item_Rate': 'mean'}).reset_index()
                             exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
                             order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 1
                             scale = exp_q1 / max(order_count, 1)
                             
                             for _, item_row in item_agg.iterrows():
                                 item_key = f"{customer}|{item_row['Item']}"
-                                
-                                # Use edited values if available
                                 if item_key in st.session_state[edited_key]:
                                     q1_qty = st.session_state[edited_key][item_key]['qty']
                                     rate = st.session_state[edited_key][item_key]['rate']
@@ -1828,200 +1508,136 @@ def main():
                                     rate = item_row['Item_Rate']
                                 
                                 line_display.append({
-                                    'Select': True,
-                                    'Customer': customer,
-                                    'Item': item_row['Item'],
-                                    '2025 Qty': item_row['Quantity'],
-                                    'Q1 Qty': q1_qty,
-                                    'Rate': rate,
+                                    'Select': True, 'Customer': customer, 'Item': item_row['Item'],
+                                    '2025 Qty': item_row['Quantity'], 'Q1 Qty': q1_qty, 'Rate': rate,
                                     'Line Total': q1_qty * rate
                                 })
                         
                         if line_display:
                             line_df = pd.DataFrame(line_display)
-                            
-                            # Editable data editor
                             edited_df = st.data_editor(
                                 line_df,
                                 column_config={
                                     "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                     "Customer": st.column_config.TextColumn("Customer", width="medium"),
                                     "Item": st.column_config.TextColumn("Item", width="large"),
-                                    "2025 Qty": st.column_config.NumberColumn("2025 Qty", format="%,.0f", width="small"),
-                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty", format="%,.0f", width="small", help="Edit: Forecast qty"),
-                                    "Rate": st.column_config.NumberColumn("Rate $", format="$%.2f", width="small", help="Edit: Unit price"),
-                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%,.0f", width="small")
+                                    "2025 Qty": st.column_config.NumberColumn("2025", format="%,.0f", width="small"),
+                                    "Q1 Qty": st.column_config.NumberColumn("Q1 (Edit)", format="%,.0f", width="small"),
+                                    "Rate": st.column_config.NumberColumn("Rate (Edit)", format="$%.2f", width="small"),
+                                    "Line Total": st.column_config.NumberColumn("Total", format="$%,.0f", width="small")
                                 },
                                 disabled=['Customer', 'Item', '2025 Qty', 'Line Total'],
-                                hide_index=True,
-                                use_container_width=True,
-                                key=f"q1_line_editor_{tier_name}_{rep_name}"
+                                hide_index=True, use_container_width=True, key=f"q1_line_editor_{tier_name}_{rep_name}"
                             )
                             
-                            # Store edited values and calculate totals
                             selected_total = 0
                             customer_forecasts = {}
-                            
                             for _, row in edited_df.iterrows():
                                 item_key = f"{row['Customer']}|{row['Item']}"
-                                st.session_state[edited_key][item_key] = {
-                                    'qty': row['Q1 Qty'],
-                                    'rate': row['Rate']
-                                }
-                                
+                                st.session_state[edited_key][item_key] = {'qty': row['Q1 Qty'], 'rate': row['Rate']}
                                 if row['Select']:
                                     line_total = row['Q1 Qty'] * row['Rate']
-                                    if row['Customer'] not in customer_forecasts:
-                                        customer_forecasts[row['Customer']] = 0
+                                    if row['Customer'] not in customer_forecasts: customer_forecasts[row['Customer']] = 0
                                     customer_forecasts[row['Customer']] += line_total
                                     selected_total += line_total
                             
-                            # Apply confidence percentage
                             forecast_with_conf = selected_total * conf_pct
                             
-                            st.success(f"**{tier_name} Forecast:** ${selected_total:,.0f} × {int(conf_pct*100)}% = **${forecast_with_conf:,.0f}**")
-                            
-                            # Build export dataframe with updated projections
                             export_data = []
                             for cust, forecast in customer_forecasts.items():
                                 cust_row = tier_customers[tier_customers['Customer'] == cust]
                                 if not cust_row.empty:
                                     export_data.append({
-                                        'Customer': cust,
-                                        'Confidence_Tier': tier_name,
-                                        'Confidence_Pct': conf_pct,
-                                        'Line_Item_Total': forecast,
-                                        'Projected_Value': forecast * conf_pct
+                                        'Customer': cust, 'Confidence_Tier': tier_name, 'Confidence_Pct': conf_pct,
+                                        'Line_Item_Total': forecast, 'Projected_Value': forecast * conf_pct
                                     })
-                            
                             if export_data:
                                 reorder_buckets[f"reorder_{tier_name}"] = pd.DataFrame(export_data)
-                        else:
-                            st.info("No line item data available for this tier")
-    # === CALCULATE RESULTS ===
+
+    # === RESULTS & STICKY FOOTER ===
     def safe_sum(df):
-        if df.empty:
-            return 0
-        if 'Amount_Numeric' in df.columns:
-            return df['Amount_Numeric'].sum()
-        elif 'Amount' in df.columns:
-            return df['Amount'].sum()
+        if df.empty: return 0
+        if 'Amount_Numeric' in df.columns: return df['Amount_Numeric'].sum()
+        elif 'Amount' in df.columns: return df['Amount'].sum()
         return 0
     
     def safe_sum_projected(df):
-        """Sum projected values for reorder buckets"""
-        if df.empty:
-            return 0
-        if 'Projected_Value' in df.columns:
-            return df['Projected_Value'].sum()
+        if df.empty: return 0
+        if 'Projected_Value' in df.columns: return df['Projected_Value'].sum()
         return 0
     
     selected_scheduled = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
     selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
-    
-    # Calculate reorder forecast total
-    selected_reorder = 0
-    if reorder_buckets:
-        selected_reorder = sum(safe_sum_projected(df) for df in reorder_buckets.values())
-    
+    selected_reorder = sum(safe_sum_projected(df) for df in reorder_buckets.values()) if reorder_buckets else 0
     total_forecast = selected_scheduled + selected_pipeline + selected_reorder
     gap_to_goal = q1_goal - total_forecast
-    
-    # === STICKY SUMMARY BAR ===
-    gap_class = "gap-behind" if gap_to_goal > 0 else "gap-ahead"
-    gap_label = "GAP" if gap_to_goal > 0 else "AHEAD"
-    gap_display = f"${abs(gap_to_goal):,.0f}"
-    
+
+    # --- RENDER STICKY FOOTER ---
     st.markdown(f"""
     <div class="sticky-forecast-bar-q1">
-        <div class="sticky-forecast-item">
-            <div class="sticky-forecast-label">Scheduled</div>
-            <div class="sticky-forecast-value scheduled">${selected_scheduled:,.0f}</div>
+        <div class="sticky-item">
+            <div class="sticky-label">Scheduled</div>
+            <div class="sticky-val val-sched">${selected_scheduled:,.0f}</div>
         </div>
-        <div class="sticky-forecast-divider"></div>
-        <div class="sticky-forecast-item">
-            <div class="sticky-forecast-label">+ Pipeline</div>
-            <div class="sticky-forecast-value pipeline">${selected_pipeline:,.0f}</div>
+        <div class="sticky-sep"></div>
+        <div class="sticky-item">
+            <div class="sticky-label">Pipeline</div>
+            <div class="sticky-val val-pipe">${selected_pipeline:,.0f}</div>
         </div>
-        <div class="sticky-forecast-divider"></div>
-        <div class="sticky-forecast-item">
-            <div class="sticky-forecast-label">+ Reorder</div>
-            <div class="sticky-forecast-value" style="color: #f59e0b; text-shadow: 0 0 20px rgba(245, 158, 11, 0.5);">${selected_reorder:,.0f}</div>
+        <div class="sticky-sep"></div>
+        <div class="sticky-item">
+            <div class="sticky-label">Reorder</div>
+            <div class="sticky-val val-reorder">${selected_reorder:,.0f}</div>
         </div>
-        <div class="sticky-forecast-divider"></div>
-        <div class="sticky-forecast-item">
-            <div class="sticky-forecast-label">= Forecast</div>
-            <div class="sticky-forecast-value total">${total_forecast:,.0f}</div>
-        </div>
-        <div class="sticky-forecast-divider"></div>
-        <div class="sticky-forecast-item">
-            <div class="sticky-forecast-label">{gap_label}</div>
-            <div class="sticky-forecast-value {gap_class}">{gap_display}</div>
+        <div class="sticky-sep"></div>
+        <div class="sticky-item">
+            <div class="sticky-label">Total Forecast</div>
+            <div class="sticky-val val-total">${total_forecast:,.0f}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # === RESULTS SECTION ===
-    st.markdown("---")
-    st.markdown("### 🔮 Q1 2026 Forecast Results")
+    # --- VISUALIZATION CARD ---
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    viz_col1, viz_col2 = st.columns([2, 1])
     
-    m1, m2, m3, m4, m5 = st.columns(5)
-    with m1:
-        st.metric("1. Scheduled", f"${selected_scheduled:,.0f}", help="NetSuite orders with Q1 dates")
-    with m2:
-        st.metric("2. Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals for Q1")
-    with m3:
-        st.metric("3. Reorder", f"${selected_reorder:,.0f}", help="Historical opportunity (probability-weighted)")
-    with m4:
-        st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}", delta="Sum of 1+2+3")
-    with m5:
-        if gap_to_goal > 0:
-            st.metric("Gap to Goal", f"${gap_to_goal:,.0f}", delta="Behind", delta_color="inverse")
-        else:
-            st.metric("Gap to Goal", f"${abs(gap_to_goal):,.0f}", delta="Ahead!", delta_color="normal")
-    
-    # Gauge
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        fig = create_q1_gauge(total_forecast, q1_goal, "Q1 2026 Progress to Goal")
+    with viz_col1:
+        fig = create_q1_gauge(total_forecast, q1_goal)
         st.plotly_chart(fig, use_container_width=True)
     
-    with col2:
-        st.markdown("#### 📊 Breakdown")
+    with viz_col2:
+        st.markdown("### 📊 Analysis")
         st.markdown(f"""
-        **Scheduled Orders (NetSuite):** ${selected_scheduled:,.0f}
-        - PF Spillover: Orders with Q1 2026 ship dates
-        - PA Spillover: Orders with Q1 2026 PA dates
+        <div style="margin-top:20px; font-size: 0.95rem; line-height: 1.6;">
+            <strong style="color:#10b981">Scheduled:</strong> ${selected_scheduled:,.0f}<br>
+            <span style="color:#94a3b8; font-size:0.8rem">Hard orders locked in NetSuite.</span><br><br>
+            
+            <strong style="color:#3b82f6">Pipeline:</strong> ${selected_pipeline:,.0f}<br>
+            <span style="color:#94a3b8; font-size:0.8rem">HubSpot deals closing in Q1.</span><br><br>
+            
+            <strong style="color:#f59e0b">Reorder:</strong> ${selected_reorder:,.0f}<br>
+            <span style="color:#94a3b8; font-size:0.8rem">Projected from historical cadence.</span>
+        </div>
+        """, unsafe_allow_html=True)
         
-        **Pipeline (HubSpot):** ${selected_pipeline:,.0f}
-        - Q1 2026 close date deals
-        - Q4 2025 spillover deals
-        
-        **Reorder Forecast:** ${selected_reorder:,.0f}
-        - Historical customers with no pending orders
-        - Probability-weighted by order frequency
-        - 🔴 Likely (75%) | 🟡 Possible (50%) | ⚪ Long Shot (25%)
-        
-        **Your Q1 Goal:** ${q1_goal:,.0f}
-        """)
-    
-    # === EXPORT SECTION ===
-    st.markdown("---")
-    st.markdown("### 📤 Export Q1 2026 Forecast")
+        if gap_to_goal > 0:
+            st.markdown(f"<div style='margin-top:20px; padding:10px; border-radius:8px; background:rgba(239, 68, 68, 0.2); border:1px solid #ef4444; text-align:center; color:#fca5a5;'>⚠️ GAP: ${gap_to_goal:,.0f}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div style='margin-top:20px; padding:10px; border-radius:8px; background:rgba(16, 185, 129, 0.2); border:1px solid #10b981; text-align:center; color:#86efac;'>🎉 AHEAD: ${abs(gap_to_goal):,.0f}</div>", unsafe_allow_html=True)
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # === EXPORT ===
+    st.markdown('<div class="section-header">📥 Export Data</div>', unsafe_allow_html=True)
     
     if export_buckets or reorder_buckets:
-        # Combine all selected data for export
         all_ns_data = []
         all_hs_data = []
         all_reorder_data = []
         
         for key, df in export_buckets.items():
-            if df.empty:
-                continue
-            
+            if df.empty: continue
             export_df = df.copy()
-            
-            # Add category label
             if key in ns_categories:
                 export_df['Category'] = ns_categories[key]['label']
                 all_ns_data.append(export_df)
@@ -2029,82 +1645,26 @@ def main():
                 export_df['Category'] = hs_categories[key]['label']
                 all_hs_data.append(export_df)
         
-        # Add reorder bucket data
         if reorder_buckets:
             for key, df in reorder_buckets.items():
-                if df.empty:
-                    continue
+                if df.empty: continue
                 export_df = df.copy()
                 export_df['Category'] = key.replace('reorder_', '').replace('_', ' ').title()
                 all_reorder_data.append(export_df)
         
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
+        ec1, ec2, ec3 = st.columns(3)
+        with ec1:
             if all_ns_data:
                 ns_export = pd.concat(all_ns_data, ignore_index=True)
-                csv_ns = ns_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download NetSuite Orders (CSV)",
-                    data=csv_ns,
-                    file_name=f"q1_2026_netsuite_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                ns_total = ns_export['Amount'].sum() if 'Amount' in ns_export.columns else 0
-                st.caption(f"{len(ns_export)} orders, ${ns_total:,.0f}")
-            else:
-                st.info("No NetSuite orders selected")
-        
-        with col2:
+                st.download_button("NetSuite CSV", data=ns_export.to_csv(index=False), file_name=f"q1_ns_{rep_name}.csv", mime="text/csv", use_container_width=True)
+        with ec2:
             if all_hs_data:
                 hs_export = pd.concat(all_hs_data, ignore_index=True)
-                csv_hs = hs_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download HubSpot Deals (CSV)",
-                    data=csv_hs,
-                    file_name=f"q1_2026_hubspot_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                hs_total = hs_export['Amount_Numeric'].sum() if 'Amount_Numeric' in hs_export.columns else 0
-                st.caption(f"{len(hs_export)} deals, ${hs_total:,.0f}")
-            else:
-                st.info("No HubSpot deals selected")
-        
-        with col3:
+                st.download_button("HubSpot CSV", data=hs_export.to_csv(index=False), file_name=f"q1_hs_{rep_name}.csv", mime="text/csv", use_container_width=True)
+        with ec3:
             if all_reorder_data:
                 reorder_export = pd.concat(all_reorder_data, ignore_index=True)
-                csv_reorder = reorder_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Reorder Prospects (CSV)",
-                    data=csv_reorder,
-                    file_name=f"q1_2026_reorder_prospects_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                reorder_total = reorder_export['Projected_Value'].sum() if 'Projected_Value' in reorder_export.columns else 0
-                st.caption(f"{len(reorder_export)} prospects, ${reorder_total:,.0f} projected")
-            else:
-                st.info("No reorder prospects selected")
-    else:
-        st.info("Select items above to enable export")
-    
-    # === DEBUG INFO ===
-    with st.expander("🔧 Debug: Data Summary"):
-        st.write("**Data Source:** Copy of All Reps All Pipelines (Q4 2025 + Q1 2026 deals)")
-        if is_team_view:
-            st.write(f"**Team Reps:** {', '.join(active_team_reps)}")
-        st.write(f"**Total Deals Loaded:** {len(deals_df)}")
-        st.write(f"**PF Spillover:** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
-        st.write(f"**PA Spillover:** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
-        
-        for key in hs_categories.keys():
-            df = hs_dfs.get(key, pd.DataFrame())
-            val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
-            st.write(f"**{key}:** {len(df)} deals, ${val:,.0f}")
+                st.download_button("Reorder CSV", data=reorder_export.to_csv(index=False), file_name=f"q1_reorder_{rep_name}.csv", mime="text/csv", use_container_width=True)
 
-
-# Run if called directly
 if __name__ == "__main__":
     main()
