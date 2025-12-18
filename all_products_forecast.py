@@ -1522,6 +1522,21 @@ def main():
         # Load line items for detailed forecasting (loaded once, filtered per customer later)
         line_items_df = load_line_items(main_dash)
     
+    # Debug: Show line items loading status
+    with st.expander("🔧 Debug: Line Items Data"):
+        if line_items_df.empty:
+            st.warning("Line items DataFrame is EMPTY")
+        else:
+            st.success(f"Loaded {len(line_items_df)} line items")
+            st.write(f"**Columns:** {line_items_df.columns.tolist()}")
+            st.write(f"**Sample SO Numbers:** {line_items_df['SO_Number'].head(10).tolist() if 'SO_Number' in line_items_df.columns else 'NO SO_Number column'}")
+            st.write(f"**Sample Items:** {line_items_df['Item'].head(5).tolist() if 'Item' in line_items_df.columns else 'NO Item column'}")
+            st.write(f"**Sample Quantities:** {line_items_df['Quantity'].head(5).tolist() if 'Quantity' in line_items_df.columns else 'NO Quantity column'}")
+            st.write(f"**Sample Rates:** {line_items_df['Item_Rate'].head(5).tolist() if 'Item_Rate' in line_items_df.columns else 'NO Item_Rate column'}")
+        
+        if not historical_df.empty and 'SO_Number' in historical_df.columns:
+            st.write(f"**Historical SO Numbers (sample):** {historical_df['SO_Number'].head(10).tolist()}")
+    
     if historical_df.empty:
         st.info("No 2025 historical orders found for this rep")
     else:
@@ -1751,8 +1766,15 @@ def main():
                                         for cust in selected_customers_list:
                                             cust_row = tier_customers[tier_customers['Customer'] == cust]
                                             if not cust_row.empty:
-                                                so_numbers = cust_row.iloc[0].get('SO_Numbers', [])
-                                                if so_numbers:
+                                                # Access SO_Numbers column properly
+                                                if 'SO_Numbers' in cust_row.columns:
+                                                    so_numbers = cust_row.iloc[0]['SO_Numbers']
+                                                    if so_numbers is None:
+                                                        so_numbers = []
+                                                else:
+                                                    so_numbers = []
+                                                
+                                                if so_numbers and len(so_numbers) > 0:
                                                     cust_items = get_customer_line_items(so_numbers, line_items_df)
                                                     if not cust_items.empty:
                                                         cust_items['Customer'] = cust
@@ -1773,9 +1795,13 @@ def main():
                                                 else:
                                                     # Default: proportional qty for Q1 based on expected orders
                                                     cust_row = tier_customers[tier_customers['Customer'] == item_row['Customer']]
-                                                    exp_q1 = cust_row.iloc[0].get('Expected_Orders_Q1', 1.0) if not cust_row.empty else 1.0
+                                                    if not cust_row.empty:
+                                                        exp_q1 = cust_row.iloc[0]['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in cust_row.columns else 1.0
+                                                        order_count = cust_row.iloc[0]['Order_Count'] if 'Order_Count' in cust_row.columns else 1
+                                                    else:
+                                                        exp_q1 = 1.0
+                                                        order_count = 1
                                                     # Scale by expected orders vs historical orders
-                                                    order_count = cust_row.iloc[0].get('Order_Count', 1) if not cust_row.empty else 1
                                                     scale_factor = exp_q1 / max(order_count, 1)
                                                     qty = item_row['Total_Qty'] * scale_factor
                                                     rate = item_row['Avg_Rate']
@@ -2013,12 +2039,20 @@ def main():
                                         for cust in selected_customers_list:
                                             cust_row = prod_opportunities[prod_opportunities['Customer'] == cust]
                                             if not cust_row.empty:
-                                                so_numbers = cust_row.iloc[0].get('SO_Numbers', [])
-                                                if so_numbers:
+                                                # Access SO_Numbers column properly
+                                                if 'SO_Numbers' in cust_row.columns:
+                                                    so_numbers = cust_row.iloc[0]['SO_Numbers']
+                                                    if so_numbers is None:
+                                                        so_numbers = []
+                                                else:
+                                                    so_numbers = []
+                                                
+                                                if so_numbers and len(so_numbers) > 0:
                                                     cust_items = get_customer_line_items(so_numbers, line_items_df)
                                                     if not cust_items.empty:
                                                         cust_items['Customer'] = cust
-                                                        cust_items['Confidence_Pct'] = cust_row.iloc[0].get('Confidence_Pct', 0.5)
+                                                        conf_pct = cust_row.iloc[0]['Confidence_Pct'] if 'Confidence_Pct' in cust_row.columns else 0.5
+                                                        cust_items['Confidence_Pct'] = conf_pct
                                                         all_line_items.append(cust_items)
                                         
                                         if all_line_items:
@@ -2036,8 +2070,12 @@ def main():
                                                 else:
                                                     # Default: proportional qty for Q1 based on expected orders
                                                     cust_row = prod_opportunities[prod_opportunities['Customer'] == item_row['Customer']]
-                                                    exp_q1 = cust_row.iloc[0].get('Expected_Orders_Q1', 1.0) if not cust_row.empty else 1.0
-                                                    order_count = cust_row.iloc[0].get('Order_Count', 1) if not cust_row.empty else 1
+                                                    if not cust_row.empty:
+                                                        exp_q1 = cust_row.iloc[0]['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in cust_row.columns else 1.0
+                                                        order_count = cust_row.iloc[0]['Order_Count'] if 'Order_Count' in cust_row.columns else 1
+                                                    else:
+                                                        exp_q1 = 1.0
+                                                        order_count = 1
                                                     scale_factor = exp_q1 / max(order_count, 1)
                                                     qty = item_row['Total_Qty'] * scale_factor
                                                     rate = item_row['Avg_Rate']
@@ -2087,7 +2125,10 @@ def main():
                                             total_forecast = 0
                                             for cust, cust_total in customer_totals.items():
                                                 cust_row = prod_opportunities[prod_opportunities['Customer'] == cust]
-                                                conf_pct = cust_row.iloc[0].get('Confidence_Pct', 0.5) if not cust_row.empty else 0.5
+                                                if not cust_row.empty and 'Confidence_Pct' in cust_row.columns:
+                                                    conf_pct = cust_row.iloc[0]['Confidence_Pct']
+                                                else:
+                                                    conf_pct = 0.5
                                                 cust_forecast = cust_total * conf_pct
                                                 st.session_state[edited_proj_key][cust] = cust_forecast
                                                 total_forecast += cust_forecast
