@@ -605,6 +605,23 @@ def load_line_items(main_dash):
         line_items_df['Item'] = line_items_df['Item'].astype(str).str.strip()
         line_items_df = line_items_df[line_items_df['Item'] != '']
         line_items_df = line_items_df[line_items_df['Item'].str.lower() != 'nan']
+        
+        # Filter out non-product items (tax, shipping, fees, etc.)
+        exclude_patterns = [
+            'avatax', 'tax', 'shipping', 'freight', 'fee', 'convenience',
+            'discount', 'credit', 'adjustment', 'handling', 'surcharge',
+            'ecommerce shipping', 'rush', 'expedite'
+        ]
+        
+        # Create case-insensitive filter
+        item_lower = line_items_df['Item'].str.lower()
+        exclude_mask = item_lower.apply(
+            lambda x: any(pattern in x for pattern in exclude_patterns)
+        )
+        
+        # Keep only actual product line items
+        excluded_count = exclude_mask.sum()
+        line_items_df = line_items_df[~exclude_mask]
     
     # Clean numeric columns
     def clean_numeric(value):
