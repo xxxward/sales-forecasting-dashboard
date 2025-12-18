@@ -1940,11 +1940,11 @@ def main():
                                     "Select": st.column_config.CheckboxColumn("✓", width="small", help="Include in forecast"),
                                     "Customer": st.column_config.TextColumn("Customer", width="large"),
                                     "Item": st.column_config.TextColumn("Item/SKU", width="large"),
-                                    "Avg/Order": st.column_config.NumberColumn("Avg/Order", format="%,d", width="small", help="Average qty per order in 2025"),
-                                    "2025 Qty": st.column_config.NumberColumn("2025 Total", format="%,d", width="small", help="Total quantity ordered in 2025"),
-                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty ✏️", format="%,d", width="small", help="EDIT: Your Q1 quantity forecast"),
+                                    "Avg/Order": st.column_config.NumberColumn("Avg/Order", format="%d", width="small", help="Average qty per order in 2025"),
+                                    "2025 Qty": st.column_config.NumberColumn("2025 Total", format="%d", width="small", help="Total quantity ordered in 2025"),
+                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty ✏️", format="%d", width="small", help="EDIT: Your Q1 quantity forecast"),
                                     "Rate": st.column_config.NumberColumn("Rate ✏️", format="$%.2f", width="small", help="EDIT: Price per unit"),
-                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%,d", width="small", help="Q1 Qty × Rate")
+                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%.0f", width="small", help="Q1 Qty × Rate")
                                 },
                                 disabled=['Customer', 'Item', 'Avg/Order', '2025 Qty', 'Line Total'],
                                 hide_index=True,
