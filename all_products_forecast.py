@@ -870,6 +870,127 @@ def calculate_customer_metrics(historical_df):
     return pd.DataFrame(customer_metrics)
 
 
+def calculate_customer_product_metrics(historical_df, line_items_df):
+    """
+    Calculate metrics by Customer + Product Type combination.
+    This gives accurate cadence per product line, not per customer overall.
+    
+    Returns DataFrame with:
+    - Customer, Product Type, Order count, Revenue, Cadence, Expected Q1 orders
+    - Aggregated line item totals (qty, avg rate, total value)
+    """
+    
+    if historical_df.empty:
+        return pd.DataFrame()
+    
+    today = pd.Timestamp.now()
+    amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
+    
+    metrics = []
+    
+    # Group by Customer + Product Type
+    for (customer, product_type), group in historical_df.groupby(['Customer', 'Order Type']):
+        group = group.sort_values('Order Start Date')
+        
+        # Basic metrics
+        order_count = len(group)
+        total_revenue = group[amount_col].sum()
+        avg_order_value = total_revenue / order_count if order_count > 0 else 0
+        
+        # Cadence for THIS product type
+        order_dates = group['Order Start Date'].dropna().tolist()
+        cadence_days = None
+        if len(order_dates) >= 2:
+            gaps = []
+            for i in range(len(order_dates) - 1):
+                gap = (order_dates[i + 1] - order_dates[i]).days
+                if gap > 0:
+                    gaps.append(gap)
+            if gaps:
+                cadence_days = sum(gaps) / len(gaps)
+        
+        # Last order for this product type
+        last_order_date = group['Order Start Date'].max()
+        days_since_last = (today - last_order_date).days if pd.notna(last_order_date) else 999
+        
+        # Expected Q1 orders for this product type
+        q1_days = 90
+        if cadence_days and cadence_days > 0:
+            expected_orders_q1 = q1_days / cadence_days
+            expected_orders_q1 = min(expected_orders_q1, 6.0)
+            expected_orders_q1 = max(expected_orders_q1, 1.0)
+        else:
+            expected_orders_q1 = 1.0
+        
+        # Confidence based on order count for THIS product type
+        if order_count >= 3:
+            confidence_tier = 'Likely'
+            confidence_pct = 0.75
+        elif order_count >= 2:
+            confidence_tier = 'Possible'
+            confidence_pct = 0.50
+        else:
+            confidence_tier = 'Long Shot'
+            confidence_pct = 0.25
+        
+        # Get SO numbers for this customer + product type
+        so_numbers = group['SO_Number'].dropna().unique().tolist() if 'SO_Number' in group.columns else []
+        
+        # Get line items for these SOs and aggregate
+        total_qty = 0
+        total_line_value = 0
+        avg_rate = 0
+        sku_count = 0
+        
+        if so_numbers and not line_items_df.empty:
+            product_line_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)]
+            if not product_line_items.empty:
+                total_qty = int(product_line_items['Quantity'].sum())
+                total_line_value = product_line_items['Line_Total'].sum()
+                avg_rate = total_line_value / total_qty if total_qty > 0 else 0
+                sku_count = product_line_items['Item'].nunique()
+        
+        # Calculate Q1 projection
+        # Use line item data if available, otherwise use order amounts
+        if total_qty > 0:
+            avg_qty_per_order = total_qty / order_count
+            q1_qty = int(round(avg_qty_per_order * expected_orders_q1))
+            q1_value = q1_qty * avg_rate
+        else:
+            q1_qty = 0
+            q1_value = avg_order_value * expected_orders_q1
+        
+        # Apply confidence
+        q1_forecast = q1_value * confidence_pct
+        
+        # Rep
+        rep = group['Rep'].iloc[0] if 'Rep' in group.columns else ''
+        
+        metrics.append({
+            'Customer': customer,
+            'Product_Type': product_type,
+            'Rep': rep,
+            'Order_Count': order_count,
+            'Total_Revenue': total_revenue,
+            'Avg_Order_Value': avg_order_value,
+            'Cadence_Days': cadence_days,
+            'Last_Order_Date': last_order_date,
+            'Days_Since_Last': days_since_last,
+            'Expected_Orders_Q1': expected_orders_q1,
+            'Confidence_Tier': confidence_tier,
+            'Confidence_Pct': confidence_pct,
+            'SO_Numbers': so_numbers,
+            'Total_Qty_2025': total_qty,
+            'Avg_Rate': avg_rate,
+            'SKU_Count': sku_count,
+            'Q1_Qty': q1_qty,
+            'Q1_Value': q1_value,
+            'Q1_Forecast': q1_forecast
+        })
+    
+    return pd.DataFrame(metrics)
+
+
 def identify_reorder_opportunities(customer_metrics_df, pending_customers, pipeline_customers):
     """
     Filter out customers who already have pending orders or pipeline deals
@@ -1596,9 +1717,9 @@ def main():
     st.info("""
     **How this works:**
     - Shows customers who ordered in 2025 but have **no pending NetSuite orders** and **no active HubSpot deals**
-    - Q1 Qty is calculated as: (Avg qty per order) × (Expected Q1 orders based on cadence)
-    - Example: If a customer ordered 1,000 units/order every 30 days → expects 3 orders in Q1 → suggests 3,000 units
-    - Edit quantities based on your account knowledge, then apply confidence tier %
+    - **Grouped by Product Type** - Cadence is calculated per product line (Concentrate Jars, Flexible Pkg, etc.), not overall
+    - Example: AYR orders Concentrate Jars every 30d (3 Q1 orders) but Flexible Pkg every 90d (1 Q1 order)
+    - Edit the Q1 Value column to adjust forecasts, then apply the confidence tier %
     """)
     
     # Initialize reorder buckets
@@ -1694,7 +1815,7 @@ def main():
     elif line_items_df.empty:
         st.warning("⚠️ Line item data not available. Please check the 'Sales Order Line Item' tab in your spreadsheet.")
     else:
-        # Calculate customer metrics
+        # Calculate customer metrics (old method - for exclusion logic)
         customer_metrics_df = calculate_customer_metrics(historical_df)
         
         # Exclude customers with pending orders or pipeline deals
@@ -1710,247 +1831,142 @@ def main():
             if not df.empty and 'Deal Name' in df.columns:
                 pipeline_customers.update(df['Deal Name'].dropna().tolist())
         
-        opportunities_df = identify_reorder_opportunities(customer_metrics_df, pending_customers, pipeline_customers)
+        # Get list of customers to exclude
+        def normalize(name): 
+            return str(name).lower().strip()
+        excluded_customers = {normalize(c) for c in pending_customers | pipeline_customers}
         
-        if opportunities_df.empty:
-            st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
+        # Calculate NEW product-level metrics
+        product_metrics_df = calculate_customer_product_metrics(historical_df, line_items_df)
+        
+        if product_metrics_df.empty:
+            st.warning("No product metrics calculated")
         else:
-            # Show 2025 summary
-            st.markdown("#### 📊 2025 Performance Summary")
-            amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                st.metric("Invoiced Revenue", f"${historical_df[amount_col].sum():,.0f}")
-            with c2:
-                st.metric("Customers", f"{historical_df['Customer'].nunique()}")
-            with c3:
-                st.metric("Orders", f"{len(historical_df)}")
-            with c4:
-                st.metric("Reorder Opportunities", f"{len(opportunities_df)}")
+            # Filter out customers with pending orders/deals
+            product_metrics_df['Customer_Normalized'] = product_metrics_df['Customer'].apply(normalize)
+            opportunities_df = product_metrics_df[
+                ~product_metrics_df['Customer_Normalized'].isin(excluded_customers)
+            ].copy()
             
-            st.markdown("---")
-            
-            # === LINE ITEM BASED FORECASTING ===
-            st.markdown("#### 📋 Customer Line Items")
-            st.caption("Select customers and edit Q1 quantities/rates. Forecast = (Qty × Rate) × Confidence %")
-            
-            # Group by confidence tier
-            tiers = [
-                ('Likely', '🔴', 0.75, '3+ orders in 2025'),
-                ('Possible', '🟡', 0.50, '2 orders in 2025'),
-                ('Long Shot', '⚪', 0.25, '1 order in 2025')
-            ]
-            
-            for tier_name, emoji, conf_pct, tier_desc in tiers:
-                tier_customers = opportunities_df[opportunities_df['Confidence_Tier'] == tier_name]
+            if opportunities_df.empty:
+                st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
+            else:
+                # Show 2025 summary
+                st.markdown("#### 📊 2025 Performance Summary")
+                amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    st.metric("Invoiced Revenue", f"${historical_df[amount_col].sum():,.0f}")
+                with c2:
+                    st.metric("Customers", f"{opportunities_df['Customer'].nunique()}")
+                with c3:
+                    st.metric("Product Lines", f"{len(opportunities_df)}")
+                with c4:
+                    st.metric("Projected Q1", f"${opportunities_df['Q1_Forecast'].sum():,.0f}")
                 
-                if tier_customers.empty:
-                    continue
+                st.markdown("---")
                 
-                # Get all SO numbers for this tier's customers
-                tier_so_numbers = []
-                so_numbers_debug = []
-                for _, cust_row in tier_customers.iterrows():
-                    if 'SO_Numbers' in tier_customers.columns:
-                        so_nums = cust_row['SO_Numbers']
-                        so_numbers_debug.append(f"{cust_row['Customer']}: {type(so_nums).__name__} = {so_nums}")
-                        if isinstance(so_nums, list):
-                            tier_so_numbers.extend(so_nums)
+                # === PRODUCT TYPE BASED FORECASTING ===
+                st.markdown("#### 📋 Forecast by Customer × Product Type")
+                st.caption("Each row = one customer's product line. Cadence calculated per product type, not overall.")
                 
-                # Get line items for these SOs
-                if tier_so_numbers:
-                    tier_line_items = line_items_df[line_items_df['SO_Number'].isin(tier_so_numbers)].copy()
-                else:
-                    tier_line_items = pd.DataFrame()
+                # Group by confidence tier
+                tiers = [
+                    ('Likely', '🟢', 0.75, '3+ orders of this product type in 2025'),
+                    ('Possible', '🟡', 0.50, '2 orders of this product type in 2025'),
+                    ('Long Shot', '⚪', 0.25, '1 order of this product type in 2025')
+                ]
                 
-                # Calculate tier totals for header
-                tier_historical = tier_customers['Total_Revenue'].sum()
-                tier_projected = tier_customers['Projected_Value'].sum()
-                
-                # Checkbox for tier with line item count
-                checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
-                line_item_info = f" | {len(tier_line_items)} line items" if not tier_line_items.empty else " | ⚠️ No line items"
-                is_checked = st.checkbox(
-                    f"{emoji} **{tier_name}** ({int(conf_pct*100)}%): {len(tier_customers)} customers | ${tier_historical:,.0f} hist → ${tier_projected:,.0f} projected{line_item_info}",
-                    key=checkbox_key,
-                    help=f"{tier_desc}. SOs found: {len(tier_so_numbers)}"
-                )
-                
-                if is_checked:
-                    with st.expander(f"📋 {tier_name} Customer Line Items", expanded=True):
-                        # Session state for this tier
-                        edited_key = f"q1_line_items_{tier_name}_{rep_name}"
-                        if edited_key not in st.session_state:
-                            st.session_state[edited_key] = {}
-                        
-                        # === CUSTOMER CADENCE SUMMARY ===
-                        st.markdown("**📅 Customer Ordering Patterns**")
-                        st.caption("Review ordering history to understand expected Q1 behavior")
-                        
-                        cadence_data = []
-                        for _, cust_row in tier_customers.iterrows():
-                            customer = cust_row['Customer']
-                            order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 0
-                            cadence_days = cust_row['Cadence_Days'] if 'Cadence_Days' in tier_customers.columns else None
-                            last_order = cust_row['Last_Order_Date'] if 'Last_Order_Date' in tier_customers.columns else None
-                            days_since = cust_row['Days_Since_Last'] if 'Days_Since_Last' in tier_customers.columns else 999
-                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
+                for tier_name, emoji, conf_pct, tier_desc in tiers:
+                    tier_data = opportunities_df[opportunities_df['Confidence_Tier'] == tier_name].copy()
+                    
+                    if tier_data.empty:
+                        continue
+                    
+                    # Calculate tier totals
+                    tier_historical = tier_data['Total_Revenue'].sum()
+                    tier_projected = tier_data['Q1_Forecast'].sum()
+                    tier_rows = len(tier_data)
+                    tier_customers = tier_data['Customer'].nunique()
+                    
+                    # Tier header checkbox
+                    checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
+                    is_checked = st.checkbox(
+                        f"{emoji} **{tier_name}** ({int(conf_pct*100)}%): {tier_customers} customers, {tier_rows} product lines | ${tier_historical:,.0f} hist → ${tier_projected:,.0f} projected",
+                        key=checkbox_key,
+                        help=tier_desc
+                    )
+                    
+                    if is_checked:
+                        with st.expander(f"📋 {tier_name} - Edit Q1 Forecast", expanded=True):
+                            # Session state for this tier
+                            edited_key = f"q1_products_{tier_name}_{rep_name}"
+                            if edited_key not in st.session_state:
+                                st.session_state[edited_key] = {}
                             
-                            # Format cadence more clearly
-                            if pd.notna(cadence_days) and cadence_days > 0:
-                                cadence_str = f"Every {int(cadence_days)}d"
-                                # Calculate if overdue
-                                overdue_days = int(days_since - cadence_days)
-                                if days_since > cadence_days * 1.5:
-                                    status = f"🔴 {overdue_days}d overdue"
-                                elif days_since > cadence_days:
-                                    status = f"🟡 Due now"
-                                elif days_since > cadence_days * 0.75:
-                                    status = f"🟢 Due soon"
+                            # Build display dataframe
+                            display_data = []
+                            for _, row in tier_data.iterrows():
+                                key = f"{row['Customer']}|{row['Product_Type']}"
+                                
+                                # Use edited value if available
+                                if key in st.session_state[edited_key]:
+                                    q1_value = st.session_state[edited_key][key]
                                 else:
-                                    status = f"⚪ On track"
-                            else:
-                                cadence_str = "1 order only"
-                                status = "⚪ New"
-                            
-                            # Format last order date
-                            if pd.notna(last_order):
-                                last_order_str = last_order.strftime('%b %d')  # Shorter format
-                            else:
-                                last_order_str = "—"
-                            
-                            cadence_data.append({
-                                'Customer': customer,
-                                'Orders': int(order_count),
-                                'Cadence': cadence_str,
-                                'Last': last_order_str,
-                                'Days': int(days_since) if pd.notna(days_since) else 999,
-                                'Q1 Est': round(exp_q1, 1),
-                                'Status': status
-                            })
-                        
-                        cadence_df = pd.DataFrame(cadence_data)
-                        st.dataframe(
-                            cadence_df,
-                            column_config={
-                                "Customer": st.column_config.TextColumn("Customer", width="large"),
-                                "Orders": st.column_config.NumberColumn("2025 #", width="small", help="Orders placed in 2025"),
-                                "Cadence": st.column_config.TextColumn("Freq", width="small", help="How often they order"),
-                                "Last": st.column_config.TextColumn("Last", width="small", help="Last order date"),
-                                "Days": st.column_config.NumberColumn("Days", width="small", help="Days since last order"),
-                                "Q1 Est": st.column_config.NumberColumn("Q1 #", width="small", help="Expected orders in Q1"),
-                                "Status": st.column_config.TextColumn("Status", width="medium")
-                            },
-                            hide_index=True,
-                            use_container_width=True,
-                            height=min(250, 40 + len(cadence_df) * 35)  # Compact height
-                        )
-                        
-                        st.markdown("---")
-                        
-                        # Explanation for reps
-                        st.markdown("**📦 Line Items (Edit Q1 Qty & Rate)**")
-                        st.caption("Q1 Qty = (2025 Total ÷ 2025 Orders) × Expected Q1 Orders. Adjust as needed based on your knowledge of the account.")
-                        
-                        # Build line item table with customer info
-                        line_display = []
-                        
-                        for _, cust_row in tier_customers.iterrows():
-                            customer = cust_row['Customer']
-                            so_numbers = cust_row['SO_Numbers'] if 'SO_Numbers' in tier_customers.columns else []
-                            order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 1
-                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
-                            
-                            if not isinstance(so_numbers, list) or len(so_numbers) == 0:
-                                # No line items - add a summary row
-                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
-                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
-                                line_display.append({
-                                    'Select': True,
-                                    'Customer': customer,
-                                    'Item': '(No line item detail)',
-                                    'Avg/Order': 0,
-                                    '2025 Qty': 0,
-                                    'Q1 Qty': 0,
-                                    'Rate': round(weighted_avg, 2),
-                                    'Line Total': round(proj_val / conf_pct, 0) if conf_pct > 0 else 0
-                                })
-                                continue
-                            
-                            # Get line items for this customer
-                            cust_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)]
-                            
-                            if cust_items.empty:
-                                # No matching line items
-                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
-                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
-                                line_display.append({
-                                    'Select': True,
-                                    'Customer': customer,
-                                    'Item': '(No line item match)',
-                                    'Avg/Order': 0,
-                                    '2025 Qty': 0,
-                                    'Q1 Qty': 0,
-                                    'Rate': round(weighted_avg, 2),
-                                    'Line Total': round(proj_val / conf_pct, 0) if conf_pct > 0 else 0
-                                })
-                                continue
-                            
-                            # Aggregate by item
-                            item_agg = cust_items.groupby('Item').agg({
-                                'Quantity': 'sum',
-                                'Item_Rate': 'mean',
-                                'Line_Total': 'sum'
-                            }).reset_index()
-                            
-                            for _, item_row in item_agg.iterrows():
-                                item_key = f"{customer}|{item_row['Item']}"
+                                    q1_value = int(row['Q1_Value'])
                                 
-                                # Calculate avg qty per order and Q1 projection
-                                total_2025_qty = int(item_row['Quantity'])
-                                avg_per_order = total_2025_qty / max(order_count, 1)
-                                suggested_q1_qty = int(round(avg_per_order * exp_q1))
-                                
-                                # Use edited values if available, otherwise use suggested
-                                if item_key in st.session_state[edited_key]:
-                                    q1_qty = int(st.session_state[edited_key][item_key]['qty'])
-                                    rate = round(st.session_state[edited_key][item_key]['rate'], 2)
+                                # Format cadence
+                                cadence = row['Cadence_Days']
+                                if pd.notna(cadence) and cadence > 0:
+                                    cadence_str = f"Every {int(cadence)}d"
+                                    days_since = row['Days_Since_Last']
+                                    if days_since > cadence * 1.5:
+                                        status = f"🔴 {int(days_since - cadence)}d overdue"
+                                    elif days_since > cadence:
+                                        status = "🟡 Due now"
+                                    elif days_since > cadence * 0.75:
+                                        status = "🟢 Due soon"
+                                    else:
+                                        status = "⚪ On track"
                                 else:
-                                    q1_qty = suggested_q1_qty
-                                    rate = round(item_row['Item_Rate'], 2)
+                                    cadence_str = "1 order"
+                                    status = "⚪ New"
                                 
-                                line_display.append({
+                                display_data.append({
                                     'Select': True,
-                                    'Customer': customer,
-                                    'Item': item_row['Item'],
-                                    'Avg/Order': int(round(avg_per_order)),
-                                    '2025 Qty': total_2025_qty,
-                                    'Q1 Qty': q1_qty,
-                                    'Rate': rate,
-                                    'Line Total': int(q1_qty * rate)
+                                    'Customer': row['Customer'],
+                                    'Product Type': row['Product_Type'],
+                                    '2025 #': int(row['Order_Count']),
+                                    '2025 $': int(row['Total_Revenue']),
+                                    'Cadence': cadence_str,
+                                    'Q1 Est': round(row['Expected_Orders_Q1'], 1),
+                                    'Status': status,
+                                    'Q1 Value': q1_value,
+                                    'SKUs': int(row['SKU_Count']) if row['SKU_Count'] > 0 else 0
                                 })
-                        
-                        if line_display:
-                            line_df = pd.DataFrame(line_display)
                             
-                            # Editable data editor with better formatting
+                            display_df = pd.DataFrame(display_data)
+                            
+                            # Editable data editor
                             edited_df = st.data_editor(
-                                line_df,
+                                display_df,
                                 column_config={
                                     "Select": st.column_config.CheckboxColumn("✓", width="small", help="Include in forecast"),
                                     "Customer": st.column_config.TextColumn("Customer", width="large"),
-                                    "Item": st.column_config.TextColumn("Item/SKU", width="large"),
-                                    "Avg/Order": st.column_config.NumberColumn("Avg/Order", format="%d", width="small", help="Average qty per order in 2025"),
-                                    "2025 Qty": st.column_config.NumberColumn("2025 Total", format="%d", width="small", help="Total quantity ordered in 2025"),
-                                    "Q1 Qty": st.column_config.NumberColumn("Q1 Qty ✏️", format="%d", width="small", help="EDIT: Your Q1 quantity forecast"),
-                                    "Rate": st.column_config.NumberColumn("Rate ✏️", format="$%.2f", width="small", help="EDIT: Price per unit"),
-                                    "Line Total": st.column_config.NumberColumn("Total $", format="$%.0f", width="small", help="Q1 Qty × Rate")
+                                    "Product Type": st.column_config.TextColumn("Product", width="medium"),
+                                    "2025 #": st.column_config.NumberColumn("2025 #", format="%d", width="small", help="Orders in 2025"),
+                                    "2025 $": st.column_config.NumberColumn("2025 $", format="$%d", width="small", help="Revenue in 2025"),
+                                    "Cadence": st.column_config.TextColumn("Cadence", width="small"),
+                                    "Q1 Est": st.column_config.NumberColumn("Q1 Est", format="%.1f", width="small", help="Expected orders in Q1"),
+                                    "Status": st.column_config.TextColumn("Status", width="medium"),
+                                    "Q1 Value": st.column_config.NumberColumn("Q1 Value ✏️", format="$%d", width="small", help="EDIT: Your Q1 forecast for this product line"),
+                                    "SKUs": st.column_config.NumberColumn("SKUs", format="%d", width="small", help="Unique items in this product type")
                                 },
-                                disabled=['Customer', 'Item', 'Avg/Order', '2025 Qty', 'Line Total'],
+                                disabled=['Customer', 'Product Type', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status', 'SKUs'],
                                 hide_index=True,
                                 use_container_width=True,
-                                key=f"q1_line_editor_{tier_name}_{rep_name}",
-                                height=min(400, 50 + len(line_df) * 35)  # Dynamic height
+                                key=f"q1_product_editor_{tier_name}_{rep_name}",
+                                height=min(500, 50 + len(display_df) * 35)
                             )
                             
                             # Store edited values and calculate totals
@@ -1958,25 +1974,21 @@ def main():
                             customer_forecasts = {}
                             
                             for _, row in edited_df.iterrows():
-                                item_key = f"{row['Customer']}|{row['Item']}"
-                                st.session_state[edited_key][item_key] = {
-                                    'qty': int(row['Q1 Qty']) if pd.notna(row['Q1 Qty']) else 0,
-                                    'rate': float(row['Rate']) if pd.notna(row['Rate']) else 0
-                                }
+                                key = f"{row['Customer']}|{row['Product Type']}"
+                                q1_val = int(row['Q1 Value']) if pd.notna(row['Q1 Value']) else 0
+                                st.session_state[edited_key][key] = q1_val
                                 
                                 if row['Select']:
-                                    q1_qty = int(row['Q1 Qty']) if pd.notna(row['Q1 Qty']) else 0
-                                    rate = float(row['Rate']) if pd.notna(row['Rate']) else 0
-                                    line_total = q1_qty * rate
                                     if row['Customer'] not in customer_forecasts:
                                         customer_forecasts[row['Customer']] = 0
-                                    customer_forecasts[row['Customer']] += line_total
-                                    selected_total += line_total
+                                    customer_forecasts[row['Customer']] += q1_val
+                                    selected_total += q1_val
                             
                             # Apply confidence percentage
                             forecast_with_conf = selected_total * conf_pct
                             
-                            # Summary with calculation breakdown
+                            # Summary
+                            selected_rows = len([r for _, r in edited_df.iterrows() if r['Select']])
                             st.markdown(f"""
                             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 12px; margin-top: 10px;">
                                 <div style="font-size: 1.1rem; font-weight: 600;">
@@ -1984,28 +1996,24 @@ def main():
                                     <span style="color: #10b981; font-size: 1.3rem;">${forecast_with_conf:,.0f}</span>
                                 </div>
                                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 5px;">
-                                    {len([c for c in customer_forecasts.keys()])} customers • {len([r for _, r in edited_df.iterrows() if r['Select']])} line items selected
+                                    {len(customer_forecasts)} customers • {selected_rows} product lines selected
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            # Build export dataframe with updated projections
+                            # Build export data
                             export_data = []
                             for cust, forecast in customer_forecasts.items():
-                                cust_row = tier_customers[tier_customers['Customer'] == cust]
-                                if not cust_row.empty:
-                                    export_data.append({
-                                        'Customer': cust,
-                                        'Confidence_Tier': tier_name,
-                                        'Confidence_Pct': conf_pct,
-                                        'Line_Item_Total': forecast,
-                                        'Projected_Value': forecast * conf_pct
-                                    })
+                                export_data.append({
+                                    'Customer': cust,
+                                    'Confidence_Tier': tier_name,
+                                    'Confidence_Pct': conf_pct,
+                                    'Q1_Value': forecast,
+                                    'Projected_Value': forecast * conf_pct
+                                })
                             
                             if export_data:
                                 reorder_buckets[f"reorder_{tier_name}"] = pd.DataFrame(export_data)
-                        else:
-                            st.info("No line item data available for this tier")
     # === CALCULATE RESULTS ===
     def safe_sum(df):
         if df.empty:
