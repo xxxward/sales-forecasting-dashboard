@@ -12,6 +12,7 @@ This module imports directly from the main dashboard to reuse all data loading a
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -671,18 +672,70 @@ def load_line_items(main_dash):
         line_items_df = line_items_df[line_items_df['Item'] != '']
         line_items_df = line_items_df[line_items_df['Item'].str.lower() != 'nan']
         
-        # Filter out non-product items (tax, shipping, fees, etc.)
+        # === COMPREHENSIVE NON-PRODUCT EXCLUSION ===
+        
+        # Pattern-based exclusions (case-insensitive contains)
         exclude_patterns = [
-            'avatax', 'tax', 'shipping', 'freight', 'fee', 'convenience',
-            'discount', 'credit', 'adjustment', 'handling', 'surcharge',
-            'ecommerce shipping', 'rush', 'expedite'
+            # Tax & Fees
+            'avatax', 'tax', 'fee', 'convenience', 'surcharge', 'handling',
+            # Shipping
+            'shipping', 'freight', 'fedex', 'ups ', 'usps', 'ltl', 'truckload',
+            'customer pickup', 'client arranged', 'generic ship', 'send to inventory',
+            'default shipping', 'best way', 'ground', 'next day', '2nd day', '3rd day',
+            'overnight', 'standard', 'saver', 'express', 'priority',
+            # Carriers
+            'estes', 't-force', 'ward trucking', 'old dominion', 'roadrunner', 
+            'xpo logistics', 'abf', 'a. duie pyle', 'frontline freight', 'saia',
+            'dependable highway', 'cross country', 'oak harbor',
+            # Discounts & Credits
+            'discount', 'credit', 'adjustment', 'replacement order', 'partner discount',
+            # Creative/Design Services
+            'creative', 'pre-press', 'retrofit', 'press proof', 'design', 'die cut sample',
+            'label appl', 'application', 'changeover',
+            # Misc
+            'expedite', 'rush', 'sample', 'testimonial', 'cm-for sos',
+            'wip', 'work in progress', 'end of group', 'other', '-not taxable-',
+            'fep-liner insert', 'cc payment', 'waive', 'modular plus',
+            'canadian business', 'canadian goods'
         ]
         
-        # Create case-insensitive filter
+        # Exact match exclusions (case-insensitive)
+        exclude_exact = [
+            # Discount codes
+            'brad10', 'blake10', '420ten', 'oil10', 'welcome10', 'take10', 'jack', 'jake',
+            'james20off', 'lpp15', 'brad', 'davis', 'mjbiz2023', 'blackfriday10',
+            'danksggivingtubes', 'legends20', 'mjbizlastcall', '$100off',
+            # Kits (not actual products)
+            'sb-45d-kit', 'sb-25d-kit', 'sb-145d-kit', 'sb-15d-kit',
+            # Special items
+            'flexpack', 'bb-dml-000-00', '145d-blk-blk', 'bisonbotanics45d',
+            'samples2023', 'samples2023-inactive', 'jake-inactive', 'replacement order-inactive',
+            'every-other-label-free', 'free-application', 'single item discount', 
+            'single line item discount', 'general discount', 'rist/howards',
+            # Tier labels
+            'diamond creative tier', 'silver creative tier', 'platinum creative tier'
+        ]
+        
+        # Regex patterns for location/warehouse codes (STATE_COUNTY_CITY format)
+        state_pattern = re.compile(r'^[A-Z]{2}_')  # Starts with 2-letter state code + underscore
+        
+        # Create exclusion mask
         item_lower = line_items_df['Item'].str.lower()
-        exclude_mask = item_lower.apply(
+        item_upper = line_items_df['Item'].str.upper()
+        
+        # Pattern-based exclusion
+        pattern_mask = item_lower.apply(
             lambda x: any(pattern in x for pattern in exclude_patterns)
         )
+        
+        # Exact match exclusion
+        exact_mask = item_lower.isin([e.lower() for e in exclude_exact])
+        
+        # State/location code exclusion (e.g., "CA_LOS ANGELES_ZFYC")
+        location_mask = item_upper.apply(lambda x: bool(state_pattern.match(x)))
+        
+        # Combine all exclusions
+        exclude_mask = pattern_mask | exact_mask | location_mask
         
         # Keep only actual product line items
         excluded_count = exclude_mask.sum()
@@ -2000,6 +2053,85 @@ def main():
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
+                            
+                            # === SKU DRILL-DOWN SECTION ===
+                            st.markdown("---")
+                            with st.expander("🔍 View SKU Details by Customer × Product", expanded=False):
+                                st.caption("Select a customer and product type to see individual SKUs")
+                                
+                                # Get unique customer-product combinations
+                                sku_options = tier_data[['Customer', 'Product_Type', 'SO_Numbers']].copy()
+                                
+                                # Customer selector
+                                customers_in_tier = sorted(tier_data['Customer'].unique().tolist())
+                                selected_customer = st.selectbox(
+                                    "Customer",
+                                    options=customers_in_tier,
+                                    key=f"sku_cust_{tier_name}_{rep_name}"
+                                )
+                                
+                                if selected_customer:
+                                    # Product type selector for this customer
+                                    cust_products = tier_data[tier_data['Customer'] == selected_customer]['Product_Type'].unique().tolist()
+                                    selected_product = st.selectbox(
+                                        "Product Type",
+                                        options=cust_products,
+                                        key=f"sku_prod_{tier_name}_{rep_name}"
+                                    )
+                                    
+                                    if selected_product:
+                                        # Get SO numbers for this customer + product
+                                        match_row = tier_data[
+                                            (tier_data['Customer'] == selected_customer) & 
+                                            (tier_data['Product_Type'] == selected_product)
+                                        ]
+                                        
+                                        if not match_row.empty:
+                                            so_numbers = match_row.iloc[0]['SO_Numbers']
+                                            
+                                            if so_numbers and len(so_numbers) > 0:
+                                                # Get line items for these SOs
+                                                sku_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)].copy()
+                                                
+                                                if not sku_items.empty:
+                                                    # Aggregate by Item (SKU)
+                                                    sku_agg = sku_items.groupby('Item').agg({
+                                                        'Quantity': 'sum',
+                                                        'Item_Rate': 'mean',
+                                                        'Line_Total': 'sum',
+                                                        'SO_Number': 'nunique'
+                                                    }).reset_index()
+                                                    sku_agg.columns = ['SKU', 'Total Qty', 'Avg Rate', 'Total $', 'Orders']
+                                                    sku_agg = sku_agg.sort_values('Total $', ascending=False)
+                                                    
+                                                    # Format for display
+                                                    sku_agg['Total Qty'] = sku_agg['Total Qty'].astype(int)
+                                                    sku_agg['Total $'] = sku_agg['Total $'].astype(int)
+                                                    sku_agg['Avg Rate'] = sku_agg['Avg Rate'].round(2)
+                                                    
+                                                    # Show summary
+                                                    st.markdown(f"**{selected_customer} - {selected_product}**: {len(sku_agg)} unique SKUs from {len(so_numbers)} orders")
+                                                    
+                                                    # Display SKU table
+                                                    st.dataframe(
+                                                        sku_agg,
+                                                        column_config={
+                                                            "SKU": st.column_config.TextColumn("SKU", width="large"),
+                                                            "Total Qty": st.column_config.NumberColumn("2025 Qty", format="%d"),
+                                                            "Avg Rate": st.column_config.NumberColumn("Avg Rate", format="$%.2f"),
+                                                            "Total $": st.column_config.NumberColumn("2025 $", format="$%d"),
+                                                            "Orders": st.column_config.NumberColumn("Orders", format="%d", help="Number of orders containing this SKU")
+                                                        },
+                                                        hide_index=True,
+                                                        use_container_width=True,
+                                                        height=min(400, 40 + len(sku_agg) * 35)
+                                                    )
+                                                else:
+                                                    st.info("No SKU details found for this combination")
+                                            else:
+                                                st.info("No sales order numbers found")
+                            
+                            st.markdown("---")
                             
                             # Build export data
                             export_data = []
