@@ -1701,6 +1701,69 @@ def main():
                         if edited_key not in st.session_state:
                             st.session_state[edited_key] = {}
                         
+                        # === CUSTOMER CADENCE SUMMARY ===
+                        st.markdown("**📅 Customer Ordering Patterns**")
+                        
+                        cadence_data = []
+                        for _, cust_row in tier_customers.iterrows():
+                            customer = cust_row['Customer']
+                            order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 0
+                            cadence_days = cust_row['Cadence_Days'] if 'Cadence_Days' in tier_customers.columns else None
+                            last_order = cust_row['Last_Order_Date'] if 'Last_Order_Date' in tier_customers.columns else None
+                            days_since = cust_row['Days_Since_Last'] if 'Days_Since_Last' in tier_customers.columns else 999
+                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
+                            
+                            # Format cadence
+                            if pd.notna(cadence_days) and cadence_days > 0:
+                                cadence_str = f"~{int(cadence_days)}d"
+                                # Calculate if overdue
+                                if days_since > cadence_days * 1.5:
+                                    status = f"🔴 Overdue ({int(days_since - cadence_days)}d)"
+                                elif days_since > cadence_days:
+                                    status = f"🟡 Due now"
+                                elif days_since > cadence_days * 0.75:
+                                    status = f"🟢 Due soon"
+                                else:
+                                    status = f"⚪ On track"
+                            else:
+                                cadence_str = "N/A (1 order)"
+                                status = "⚪ New customer"
+                            
+                            # Format last order date
+                            if pd.notna(last_order):
+                                last_order_str = last_order.strftime('%Y-%m-%d')
+                            else:
+                                last_order_str = "Unknown"
+                            
+                            cadence_data.append({
+                                'Customer': customer,
+                                '2025 Orders': order_count,
+                                'Cadence': cadence_str,
+                                'Last Order': last_order_str,
+                                'Days Ago': int(days_since) if pd.notna(days_since) else 999,
+                                'Exp Q1': round(exp_q1, 1),
+                                'Status': status
+                            })
+                        
+                        cadence_df = pd.DataFrame(cadence_data)
+                        st.dataframe(
+                            cadence_df,
+                            column_config={
+                                "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                "2025 Orders": st.column_config.NumberColumn("2025", width="small"),
+                                "Cadence": st.column_config.TextColumn("Cadence", width="small", help="Average days between orders"),
+                                "Last Order": st.column_config.TextColumn("Last Order", width="small"),
+                                "Days Ago": st.column_config.NumberColumn("Days Ago", width="small"),
+                                "Exp Q1": st.column_config.NumberColumn("Exp Q1", width="small", help="Expected orders in Q1 based on cadence"),
+                                "Status": st.column_config.TextColumn("Status", width="small", help="🔴 Overdue | 🟡 Due now | 🟢 Due soon | ⚪ On track")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        st.markdown("---")
+                        st.markdown("**📦 Line Items (Edit Q1 Qty & Rate)**")
+                        
                         # Build line item table with customer info
                         line_display = []
                         
@@ -1710,14 +1773,16 @@ def main():
                             
                             if not isinstance(so_numbers, list) or len(so_numbers) == 0:
                                 # No line items - add a summary row
+                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
+                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
                                 line_display.append({
                                     'Select': True,
                                     'Customer': customer,
                                     'Item': '(No line item detail)',
                                     '2025 Qty': 0,
                                     'Q1 Qty': 0,
-                                    'Rate': cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in cust_row else 0,
-                                    'Line Total': cust_row['Projected_Value'] / conf_pct if conf_pct > 0 else 0
+                                    'Rate': weighted_avg,
+                                    'Line Total': proj_val / conf_pct if conf_pct > 0 else 0
                                 })
                                 continue
                             
@@ -1726,14 +1791,16 @@ def main():
                             
                             if cust_items.empty:
                                 # No matching line items
+                                weighted_avg = cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in tier_customers.columns else 0
+                                proj_val = cust_row['Projected_Value'] if 'Projected_Value' in tier_customers.columns else 0
                                 line_display.append({
                                     'Select': True,
                                     'Customer': customer,
                                     'Item': '(No line item match)',
                                     '2025 Qty': 0,
                                     'Q1 Qty': 0,
-                                    'Rate': cust_row['Weighted_Avg_Order'] if 'Weighted_Avg_Order' in cust_row else 0,
-                                    'Line Total': cust_row['Projected_Value'] / conf_pct if conf_pct > 0 else 0
+                                    'Rate': weighted_avg,
+                                    'Line Total': proj_val / conf_pct if conf_pct > 0 else 0
                                 })
                                 continue
                             
@@ -1744,9 +1811,9 @@ def main():
                                 'Line_Total': 'sum'
                             }).reset_index()
                             
-                            # Calculate Q1 scale factor
-                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in cust_row else 1.0
-                            order_count = cust_row['Order_Count'] if 'Order_Count' in cust_row else 1
+                            # Calculate Q1 scale factor based on expected orders
+                            exp_q1 = cust_row['Expected_Orders_Q1'] if 'Expected_Orders_Q1' in tier_customers.columns else 1.0
+                            order_count = cust_row['Order_Count'] if 'Order_Count' in tier_customers.columns else 1
                             scale = exp_q1 / max(order_count, 1)
                             
                             for _, item_row in item_agg.iterrows():
