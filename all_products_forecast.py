@@ -1344,44 +1344,80 @@ def main():
     # Add "All Reps" option at the beginning
     rep_options = ["👥 All Reps (Team View)"] + reps
     
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 1: WHO ARE YOU?
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    st.markdown("### 👋 Step 1: Let's Get Started")
+    
     # Rep selector
-    selected_option = st.selectbox("Select Sales Rep:", options=rep_options, key="q1_rep_selector")
+    selected_option = st.selectbox("Who are you?", options=rep_options, key="q1_rep_selector")
     
     # Determine if we're in team view mode
     is_team_view = selected_option == "👥 All Reps (Team View)"
     
     if is_team_view:
         rep_name = "All Reps"
-        # Filter to only team reps that exist in the data
+        first_name = "Team"
         active_team_reps = [r for r in TEAM_REPS if r in reps]
-        st.info(f"📊 Team View: Showing aggregate data for {len(active_team_reps)} reps: {', '.join(active_team_reps)}")
+        st.markdown(f"""
+        <div style="background: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px; margin: 10px 0;">
+            <div style="font-size: 1.1rem;">📊 <strong>Team View Active</strong></div>
+            <div style="color: #94a3b8; margin-top: 5px;">Showing combined data for: {', '.join(active_team_reps)}</div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         rep_name = selected_option
-        active_team_reps = [rep_name]  # Single rep
+        first_name = rep_name.split()[0]  # Get first name
+        active_team_reps = [rep_name]
+        
+        # Personalized greeting
+        st.markdown(f"""
+        <div style="background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; padding: 15px; border-radius: 8px; margin: 10px 0;">
+            <div style="font-size: 1.2rem;">👋 <strong>Hey {first_name}!</strong> Let's build out your Q1 2026 forecast.</div>
+            <div style="color: #94a3b8; margin-top: 5px;">I'll walk you through this step by step. First, let's set your quota.</div>
+        </div>
+        """, unsafe_allow_html=True)
     
-    # === USER-DEFINED GOAL INPUT ===
-    st.markdown("### 🎯 Set Your Q1 2026 Goal")
+    st.markdown("---")
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 2: SET YOUR GOAL
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    st.markdown(f"### 🎯 Step 2: {'Set Team Goal' if is_team_view else f'{first_name}, Set Your Q1 Quota'}")
     
     goal_key = f"q1_goal_{rep_name}"
     if goal_key not in st.session_state:
-        # Default goal: higher for team view
         st.session_state[goal_key] = 5000000 if is_team_view else 1000000
+    
+    team_prompt = "What's the team target" if is_team_view else "What are you committing to"
+    st.markdown(f"*{team_prompt} for Q1 2026?*")
     
     col1, col2 = st.columns([2, 1])
     with col1:
         q1_goal = st.number_input(
-            "Enter your Q1 2026 quota/goal ($):" if not is_team_view else "Enter Team Q1 2026 quota/goal ($):",
+            "Q1 2026 Quota ($)",
             min_value=0,
             max_value=50000000,
             value=st.session_state[goal_key],
             step=50000,
             format="%d",
-            key=f"q1_goal_input_{rep_name}"
+            key=f"q1_goal_input_{rep_name}",
+            label_visibility="collapsed"
         )
         st.session_state[goal_key] = q1_goal
     
     with col2:
-        st.metric("Team Q1 Goal" if is_team_view else "Your Q1 Goal", f"${q1_goal:,.0f}")
+        st.metric("🎯 Q1 Goal", f"${q1_goal:,.0f}")
+    
+    # Confirmation message
+    if q1_goal > 0:
+        st.markdown(f"""
+        <div style="color: #10b981; font-size: 0.95rem; margin-top: 5px;">
+            ✅ {'Team is' if is_team_view else f"{first_name}, you're"} targeting <strong>${q1_goal:,.0f}</strong> for Q1 2026. Let's build the plan to get there!
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
     
@@ -1487,20 +1523,32 @@ def main():
         if key not in hs_dfs:
             hs_dfs[key] = pd.DataFrame()
     
-    # === BUILD YOUR OWN FORECAST ===
-    st.markdown('<div class="section-header">🎯 Build Your Q1 2026 Forecast</div>', unsafe_allow_html=True)
-    st.caption("Select components to include in your Q1 2026 forecast. NetSuite spillover orders are already scheduled for Q1.")
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 3: BUILD YOUR FORECAST - CURRENT PIPELINE
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    step3_title = "Review Pipeline" if is_team_view else f"{first_name}, Let's Review Your Pipeline"
+    st.markdown(f"### 📊 Step 3: {step3_title}")
+    
+    st.markdown(f"""
+    <div style="background: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="font-size: 1rem;">
+            {"Here's what the team has" if is_team_view else "Here's what you've got"} in the pipeline for Q1. Check the boxes to include them in your forecast.
+        </div>
+        <div style="color: #94a3b8; margin-top: 5px; font-size: 0.9rem;">
+            💡 <strong>Tip:</strong> NetSuite orders are already confirmed. HubSpot deals are your opportunities to close.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     export_buckets = {}
     
     # === CLEAR ALL SELECTIONS BUTTON (top right) ===
     clear_col1, clear_col2 = st.columns([3, 1])
     with clear_col2:
-        if st.button("🗑️ Clear All Selections", key=f"q1_clear_all_{rep_name}"):
-            # Clear all category checkboxes
+        if st.button("🗑️ Reset", key=f"q1_clear_all_{rep_name}"):
             for key in ns_categories.keys():
                 st.session_state[f"q1_chk_{key}_{rep_name}"] = False
-                # Also clear row-level selections
                 st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
             for key in hs_categories.keys():
                 st.session_state[f"q1_chk_{key}_{rep_name}"] = False
@@ -1510,11 +1558,10 @@ def main():
     # === SELECT ALL / UNSELECT ALL ===
     sel_col1, sel_col2, sel_col3 = st.columns([1, 1, 2])
     with sel_col1:
-        if st.button("☑️ Select All", key=f"q1_select_all_{rep_name}", use_container_width=True):
+        if st.button("☑️ Select All Pipeline", key=f"q1_select_all_{rep_name}", use_container_width=True):
             for key in ns_categories.keys():
                 if ns_categories[key]['amount'] > 0:
                     st.session_state[f"q1_chk_{key}_{rep_name}"] = True
-                    # Also clear row-level unselections so all rows are selected
                     st.session_state[f"q1_unselected_{key}_{rep_name}"] = set()
             for key in hs_categories.keys():
                 df = hs_dfs.get(key, pd.DataFrame())
@@ -1525,7 +1572,7 @@ def main():
             st.rerun()
     
     with sel_col2:
-        if st.button("☐ Unselect All", key=f"q1_unselect_all_{rep_name}", use_container_width=True):
+        if st.button("☐ Clear Pipeline", key=f"q1_unselect_all_{rep_name}", use_container_width=True):
             for key in ns_categories.keys():
                 st.session_state[f"q1_chk_{key}_{rep_name}"] = False
             for key in hs_categories.keys():
@@ -1538,8 +1585,8 @@ def main():
         
         # === NETSUITE COLUMN ===
         with col_ns:
-            st.markdown("#### 📦 NetSuite Orders (Q1 2026 Scheduled)")
-            st.caption("These are spillover orders from Q4 with Q1 2026 ship/PA dates")
+            st.markdown("#### 📦 Confirmed Orders (NetSuite)")
+            st.caption("These are locked in - spillover orders shipping in Q1")
             
             for key, data in ns_categories.items():
                 df = ns_dfs.get(key, pd.DataFrame())
@@ -1651,8 +1698,8 @@ def main():
         
         # === HUBSPOT COLUMN ===
         with col_hs:
-            st.markdown("#### 🎯 HubSpot Pipeline (Q1 2026)")
-            st.caption("Q1 close dates + Q4 spillover deals")
+            st.markdown("#### 🎯 Open Deals (HubSpot)")
+            st.caption("Your opportunities - close these to hit your number!")
             
             for key, data in hs_categories.items():
                 df = hs_dfs.get(key, pd.DataFrame())
@@ -1763,17 +1810,27 @@ def main():
     # SECTION 3: REORDER FORECAST (Historical Analysis)
     # ═══════════════════════════════════════════════════════════════════════════
     
-    st.markdown("---")
-    st.markdown('<div class="section-header">🔄 Reorder Forecast (Historical Analysis)</div>', unsafe_allow_html=True)
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 4: REORDER OPPORTUNITIES
+    # ═══════════════════════════════════════════════════════════════════════════
     
-    # Info box explaining the logic
-    st.info("""
-    **How this works:**
-    - Shows customers who ordered in 2025 but have **no pending NetSuite orders** and **no active HubSpot deals**
-    - **Grouped by Product Type** - Cadence is calculated per product line (Concentrate Jars, Flexible Pkg, etc.), not overall
-    - Example: AYR orders Concentrate Jars every 30d (3 Q1 orders) but Flexible Pkg every 90d (1 Q1 order)
-    - Edit the Q1 Value column to adjust forecasts, then apply the confidence tier %
-    """)
+    st.markdown("---")
+    st.markdown(f"### 🔄 Step 4: {'Team Reorder Opportunities' if is_team_view else f'{first_name}, Find Your Reorder Opportunities'}")
+    
+    st.markdown(f"""
+    <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="font-size: 1rem;">
+            {"These are customers the team served" if is_team_view else "These are your customers from"} 2025 who <strong>don't have pending orders or active deals</strong>. 
+            They're likely to reorder — let's figure out how much!
+        </div>
+        <div style="color: #94a3b8; margin-top: 8px; font-size: 0.9rem;">
+            <strong>How it works:</strong><br>
+            • Grouped by <strong>Product Type</strong> so cadence is accurate (not mixing Jars with Flex Pkg)<br>
+            • <strong>🟢 Likely</strong> = 3+ orders (75% confidence) | <strong>🟡 Possible</strong> = 2 orders (50%) | <strong>⚪ Long Shot</strong> = 1 order (25%)<br>
+            • Edit the Q1 Value column if you know better — you're the expert on your accounts!
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     
     # Initialize reorder buckets
     reorder_buckets = {}
@@ -1920,14 +1977,20 @@ def main():
                 st.markdown("---")
                 
                 # === PRODUCT TYPE BASED FORECASTING ===
-                st.markdown("#### 📋 Forecast by Customer × Product Type")
-                st.caption("Each row = one customer's product line. Cadence calculated per product type, not overall.")
+                st.markdown(f"#### {'Pick Your Reorder Targets' if is_team_view else f'{first_name}, Pick Your Reorder Targets'}")
+                st.markdown("""
+                <div style="color: #94a3b8; margin-bottom: 15px; font-size: 0.95rem;">
+                    Start with the <strong style="color: #10b981;">🟢 Likely</strong> ones — these are your best bets. 
+                    Then add <strong style="color: #f59e0b;">🟡 Possible</strong> customers you're confident about.
+                    <strong style="color: #94a3b8;">⚪ Long Shots</strong> are bonus if you can close them!
+                </div>
+                """, unsafe_allow_html=True)
                 
                 # Group by confidence tier
                 tiers = [
-                    ('Likely', '🟢', 0.75, '3+ orders of this product type in 2025'),
-                    ('Possible', '🟡', 0.50, '2 orders of this product type in 2025'),
-                    ('Long Shot', '⚪', 0.25, '1 order of this product type in 2025')
+                    ('Likely', '🟢', 0.75, 'Your best customers — 3+ orders in 2025. Include these!'),
+                    ('Possible', '🟡', 0.50, 'Solid customers — 2 orders in 2025. Good upside here.'),
+                    ('Long Shot', '⚪', 0.25, 'One-time buyers — worth a call to see if they\'ll reorder.')
                 ]
                 
                 for tier_name, emoji, conf_pct, tier_desc in tiers:
@@ -1942,16 +2005,27 @@ def main():
                     tier_rows = len(tier_data)
                     tier_customers = tier_data['Customer'].nunique()
                     
-                    # Tier header checkbox
+                    # Tier header checkbox with friendlier text
                     checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
+                    
+                    # Different prompts per tier
+                    if tier_name == 'Likely':
+                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} customers who WILL reorder (${tier_projected:,.0f} projected)"
+                    elif tier_name == 'Possible':
+                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} customers who might reorder (${tier_projected:,.0f} projected)"
+                    else:
+                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} worth a follow-up (${tier_projected:,.0f} projected)"
+                    
                     is_checked = st.checkbox(
-                        f"{emoji} **{tier_name}** ({int(conf_pct*100)}%): {tier_customers} customers, {tier_rows} product lines | ${tier_historical:,.0f} hist → ${tier_projected:,.0f} projected",
+                        checkbox_label,
                         key=checkbox_key,
                         help=tier_desc
                     )
                     
                     if is_checked:
-                        with st.expander(f"📋 {tier_name} - Edit Q1 Forecast", expanded=True):
+                        with st.expander(f"📋 {tier_name} - Review & Edit", expanded=True):
+                            st.caption(f"💡 {tier_desc}")
+                            
                             # Session state for this tier
                             edited_key = f"q1_products_{tier_name}_{rep_name}"
                             if edited_key not in st.session_state:
@@ -2209,24 +2283,54 @@ def main():
     </div>
     """, unsafe_allow_html=True)
     
-    # === RESULTS SECTION ===
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 5: YOUR FORECAST SUMMARY
+    # ═══════════════════════════════════════════════════════════════════════════
+    
     st.markdown("---")
-    st.markdown('<div class="section-header">🔮 Q1 2026 Forecast Results</div>', unsafe_allow_html=True)
+    step5_title = "Team Forecast Summary" if is_team_view else f"{first_name}, Here's Your Q1 Forecast!"
+    st.markdown(f"### 🎉 Step 5: {step5_title}")
+    
+    # Personalized summary message
+    pct_of_goal = (total_forecast / q1_goal * 100) if q1_goal > 0 else 0
+    
+    subject = "The team is" if is_team_view else "You're"
+    subject_has = "The team has" if is_team_view else "You've got"
+    we_you = "We can" if is_team_view else "You can"
+    
+    if gap_to_goal <= 0:
+        summary_message = f"🎉 {subject} <strong style='color: #10b981;'>${abs(gap_to_goal):,.0f} AHEAD</strong> of the ${q1_goal:,.0f} goal! Nice work!"
+        summary_bg = "rgba(16, 185, 129, 0.1)"
+        summary_border = "#10b981"
+    elif pct_of_goal >= 75:
+        summary_message = f"💪 {subject} at <strong>{pct_of_goal:.0f}%</strong> of goal — just <strong style='color: #f59e0b;'>${gap_to_goal:,.0f}</strong> to go. {we_you} close this gap!"
+        summary_bg = "rgba(245, 158, 11, 0.1)"
+        summary_border = "#f59e0b"
+    else:
+        summary_message = f"📊 {subject_has} <strong style='color: #3b82f6;'>${total_forecast:,.0f}</strong> forecasted — need <strong style='color: #ef4444;'>${gap_to_goal:,.0f}</strong> more to hit ${q1_goal:,.0f}. Let's find more opportunities!"
+        summary_bg = "rgba(239, 68, 68, 0.1)"
+        summary_border = "#ef4444"
+    
+    st.markdown(f"""
+    <div style="background: {summary_bg}; border-left: 4px solid {summary_border}; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="font-size: 1.1rem;">{summary_message}</div>
+    </div>
+    """, unsafe_allow_html=True)
     
     m1, m2, m3, m4, m5 = st.columns(5)
     with m1:
-        st.metric("1. Scheduled", f"${selected_scheduled:,.0f}", help="NetSuite orders with Q1 dates")
+        st.metric("📦 Scheduled", f"${selected_scheduled:,.0f}", help="Confirmed NetSuite orders")
     with m2:
-        st.metric("2. Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals for Q1")
+        st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals to close")
     with m3:
-        st.metric("3. Reorder", f"${selected_reorder:,.0f}", help="Historical opportunity (probability-weighted)")
+        st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", help="Historical customer opportunities")
     with m4:
-        st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}", delta="Sum of 1+2+3")
+        st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}")
     with m5:
         if gap_to_goal > 0:
             st.metric("Gap to Goal", f"${gap_to_goal:,.0f}", delta="Behind", delta_color="inverse")
         else:
-            st.metric("Gap to Goal", f"${abs(gap_to_goal):,.0f}", delta="Ahead!", delta_color="normal")
+            st.metric("Ahead of Goal", f"${abs(gap_to_goal):,.0f}", delta="Ahead!", delta_color="normal")
     
     # Gauge with glass card
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
@@ -2236,22 +2340,18 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        st.markdown("#### 📊 Breakdown")
+        st.markdown("#### 📊 The Breakdown")
         st.markdown(f"""
-        **Scheduled Orders (NetSuite):** ${selected_scheduled:,.0f}
-        - PF Spillover: Orders with Q1 2026 ship dates
-        - PA Spillover: Orders with Q1 2026 PA dates
+        **📦 Confirmed Orders:** ${selected_scheduled:,.0f}
+        - Already in NetSuite, shipping Q1
         
-        **Pipeline (HubSpot):** ${selected_pipeline:,.0f}
-        - Q1 2026 close date deals
-        - Q4 2025 spillover deals
+        **🎯 Pipeline Deals:** ${selected_pipeline:,.0f}
+        - {'Work these deals!' if not is_team_view else 'Deals to close in Q1'}
         
-        **Reorder Forecast:** ${selected_reorder:,.0f}
-        - Historical customers with no pending orders
-        - Probability-weighted by order frequency
-        - 🔴 Likely (75%) | 🟡 Possible (50%) | ⚪ Long Shot (25%)
+        **🔄 Reorder Potential:** ${selected_reorder:,.0f}
+        - 🟢 Likely (75%) | 🟡 Possible (50%) | ⚪ Long Shot (25%)
         
-        **Your Q1 Goal:** ${q1_goal:,.0f}
+        **🎯 Q1 Goal:** ${q1_goal:,.0f}
         """)
     st.markdown('</div>', unsafe_allow_html=True)
     
