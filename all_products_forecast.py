@@ -1445,65 +1445,6 @@ def main():
     combined_pf = pd.concat(all_pf_spillover, ignore_index=True) if all_pf_spillover else pd.DataFrame()
     combined_pa = pd.concat(all_pa_spillover, ignore_index=True) if all_pa_spillover else pd.DataFrame()
     
-    # ═══════════════════════════════════════════════════════════════════════════
-    # PRODUCT TYPE FILTER (GLOBAL)
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    # Collect all product types from NetSuite data
-    all_product_types = set()
-    if not combined_pf.empty and 'Order Type' in combined_pf.columns:
-        all_product_types.update(combined_pf['Order Type'].dropna().unique())
-    if not combined_pa.empty and 'Order Type' in combined_pa.columns:
-        all_product_types.update(combined_pa['Order Type'].dropna().unique())
-    
-    # Also check deals_df for HubSpot product types
-    if not deals_df.empty and 'Product Type' in deals_df.columns:
-        all_product_types.update(deals_df['Product Type'].dropna().unique())
-    
-    # Clean and sort product types
-    all_product_types = sorted([pt for pt in all_product_types if pt and str(pt).strip() not in ['', 'nan', 'None']])
-    
-    # Product type filter in sidebar
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 🏷️ Filter by Product Type")
-    
-    filter_key = f"product_type_filter_{rep_name}"
-    if filter_key not in st.session_state:
-        st.session_state[filter_key] = all_product_types  # Default: all selected
-    
-    # Select all / none buttons
-    fcol1, fcol2 = st.sidebar.columns(2)
-    with fcol1:
-        if st.button("Select All", key=f"pt_all_{rep_name}", use_container_width=True):
-            st.session_state[filter_key] = all_product_types
-            st.rerun()
-    with fcol2:
-        if st.button("Clear All", key=f"pt_clear_{rep_name}", use_container_width=True):
-            st.session_state[filter_key] = []
-            st.rerun()
-    
-    selected_product_types = st.sidebar.multiselect(
-        "Show product types:",
-        options=all_product_types,
-        default=st.session_state[filter_key],
-        key=f"pt_multiselect_{rep_name}"
-    )
-    st.session_state[filter_key] = selected_product_types
-    
-    if len(selected_product_types) < len(all_product_types):
-        st.sidebar.caption(f"Showing {len(selected_product_types)} of {len(all_product_types)} product types")
-    
-    # Apply product type filter to NetSuite data
-    if selected_product_types:
-        if not combined_pf.empty and 'Order Type' in combined_pf.columns:
-            combined_pf = combined_pf[combined_pf['Order Type'].isin(selected_product_types)]
-        if not combined_pa.empty and 'Order Type' in combined_pa.columns:
-            combined_pa = combined_pa[combined_pa['Order Type'].isin(selected_product_types)]
-    
-    # Recalculate amounts after filtering
-    total_pf_amount = combined_pf['Amount'].sum() if not combined_pf.empty and 'Amount' in combined_pf.columns else 0
-    total_pa_amount = combined_pa['Amount'].sum() if not combined_pa.empty and 'Amount' in combined_pa.columns else 0
-    
     # Map spillover to Q1 categories
     ns_categories = {
         'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
@@ -1533,10 +1474,6 @@ def main():
     if not deals_df.empty and 'Deal Owner' in deals_df.columns:
         # Filter to active team reps (supports both single rep and team view)
         rep_deals = deals_df[deals_df['Deal Owner'].isin(active_team_reps)].copy()
-        
-        # Apply product type filter to HubSpot deals
-        if selected_product_types and 'Product Type' in rep_deals.columns:
-            rep_deals = rep_deals[rep_deals['Product Type'].isin(selected_product_types)]
         
         if 'Close Date' in rep_deals.columns:
             # Q1 2026 Close Date deals (Close Date in Q1 2026)
@@ -1870,78 +1807,6 @@ def main():
                                     export_buckets[key] = df
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # PIPELINE PRODUCT TYPE BREAKDOWN
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    st.markdown("---")
-    st.markdown("#### 📊 Pipeline by Product Type")
-    
-    # Combine all NS data for breakdown
-    all_ns_data = pd.concat([combined_pf, combined_pa], ignore_index=True) if not combined_pf.empty or not combined_pa.empty else pd.DataFrame()
-    
-    # Combine all HS data for breakdown
-    all_hs_dfs = [df for df in hs_dfs.values() if not df.empty]
-    all_hs_data = pd.concat(all_hs_dfs, ignore_index=True) if all_hs_dfs else pd.DataFrame()
-    
-    pt_col1, pt_col2 = st.columns(2)
-    
-    with pt_col1:
-        st.markdown("**📦 NetSuite by Order Type**")
-        if not all_ns_data.empty and 'Order Type' in all_ns_data.columns:
-            ns_by_type = all_ns_data.groupby('Order Type').agg({
-                'Amount': ['sum', 'count']
-            }).reset_index()
-            ns_by_type.columns = ['Order Type', 'Amount', 'Orders']
-            ns_by_type = ns_by_type.sort_values('Amount', ascending=False)
-            
-            # Display as nice table
-            for _, row in ns_by_type.iterrows():
-                pct = (row['Amount'] / ns_by_type['Amount'].sum() * 100) if ns_by_type['Amount'].sum() > 0 else 0
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <span>{row['Order Type']}</span>
-                    <span style="color: #10b981;"><strong>${row['Amount']:,.0f}</strong> ({int(row['Orders'])} orders)</span>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; padding: 8px 0; margin-top: 5px; border-top: 2px solid rgba(255,255,255,0.2);">
-                <span><strong>Total</strong></span>
-                <span style="color: #10b981;"><strong>${ns_by_type['Amount'].sum():,.0f}</strong></span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.caption("No NetSuite orders in selected product types")
-    
-    with pt_col2:
-        st.markdown("**🎯 HubSpot by Product Type**")
-        if not all_hs_data.empty and 'Product Type' in all_hs_data.columns:
-            # Use Amount_Numeric for HubSpot
-            amount_col = 'Amount_Numeric' if 'Amount_Numeric' in all_hs_data.columns else 'Amount'
-            hs_by_type = all_hs_data.groupby('Product Type').agg({
-                amount_col: ['sum', 'count']
-            }).reset_index()
-            hs_by_type.columns = ['Product Type', 'Amount', 'Deals']
-            hs_by_type = hs_by_type.sort_values('Amount', ascending=False)
-            
-            for _, row in hs_by_type.iterrows():
-                st.markdown(f"""
-                <div style="display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.1);">
-                    <span>{row['Product Type']}</span>
-                    <span style="color: #3b82f6;"><strong>${row['Amount']:,.0f}</strong> ({int(row['Deals'])} deals)</span>
-                </div>
-                """, unsafe_allow_html=True)
-            
-            st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; padding: 8px 0; margin-top: 5px; border-top: 2px solid rgba(255,255,255,0.2);">
-                <span><strong>Total</strong></span>
-                <span style="color: #3b82f6;"><strong>${hs_by_type['Amount'].sum():,.0f}</strong></span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.caption("No HubSpot deals in selected product types")
-    
-    # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 3: REORDER FORECAST (Historical Analysis)
     # ═══════════════════════════════════════════════════════════════════════════
     
@@ -1995,10 +1860,6 @@ def main():
         # Merge with invoices for accurate revenue
         if not historical_df.empty:
             historical_df = merge_orders_with_invoices(historical_df, invoices_df)
-        
-        # Apply product type filter to historical data
-        if selected_product_types and not historical_df.empty and 'Order Type' in historical_df.columns:
-            historical_df = historical_df[historical_df['Order Type'].isin(selected_product_types)]
         
         # Load line items - THIS IS THE KEY DATA
         line_items_df = load_line_items(main_dash)
@@ -2359,43 +2220,6 @@ def main():
                             
                             if export_data:
                                 reorder_buckets[f"reorder_{tier_name}"] = pd.DataFrame(export_data)
-    
-    # ═══════════════════════════════════════════════════════════════════════════
-    # REORDER BY PRODUCT TYPE BREAKDOWN
-    # ═══════════════════════════════════════════════════════════════════════════
-    
-    # Check if opportunities_df exists and has data
-    try:
-        if not opportunities_df.empty:
-            st.markdown("---")
-            st.markdown("#### 📊 Reorder Forecast by Product Type")
-            
-            # Group by Product Type
-            reorder_by_type = opportunities_df.groupby('Product_Type').agg({
-                'Total_Revenue': 'sum',
-                'Q1_Forecast': 'sum',
-                'Customer': 'nunique'
-            }).reset_index()
-            reorder_by_type.columns = ['Product Type', '2025 Revenue', 'Q1 Forecast', 'Customers']
-            reorder_by_type = reorder_by_type.sort_values('Q1 Forecast', ascending=False)
-            
-            # Display as table
-            st.dataframe(
-                reorder_by_type,
-                column_config={
-                    "Product Type": st.column_config.TextColumn("Product Type", width="medium"),
-                    "2025 Revenue": st.column_config.NumberColumn("2025 Revenue", format="$%d"),
-                    "Q1 Forecast": st.column_config.NumberColumn("Q1 Forecast", format="$%d"),
-                    "Customers": st.column_config.NumberColumn("Customers", format="%d")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
-            
-            st.caption(f"Total Q1 Reorder Forecast: ${reorder_by_type['Q1 Forecast'].sum():,.0f} (before confidence weighting)")
-    except NameError:
-        pass  # opportunities_df not defined
-    
     # === CALCULATE RESULTS ===
     def safe_sum(df):
         if df.empty:
