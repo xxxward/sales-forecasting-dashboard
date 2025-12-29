@@ -2376,6 +2376,32 @@ def main():
         export_summary.append({'Category': '=== SELECTED COMPONENTS ===', 'Amount': ''})
         
         # Add Component Totals by bucket
+        # Helper to strip emojis from labels for clean CSV export
+        def clean_label(text):
+            """Remove emojis and clean up label for CSV export"""
+            import re
+            # Remove emoji characters
+            emoji_pattern = re.compile("["
+                u"\U0001F600-\U0001F64F"  # emoticons
+                u"\U0001F300-\U0001F5FF"  # symbols & pictographs
+                u"\U0001F680-\U0001F6FF"  # transport & map symbols
+                u"\U0001F1E0-\U0001F1FF"  # flags
+                u"\U00002702-\U000027B0"
+                u"\U000024C2-\U0001F251"
+                u"\U0001f926-\U0001f937"
+                u"\U00010000-\U0010ffff"
+                u"\u2640-\u2642"
+                u"\u2600-\u2B55"
+                u"\u200d"
+                u"\u23cf"
+                u"\u23e9"
+                u"\u231a"
+                u"\ufe0f"
+                u"\u3030"
+                "]+", flags=re.UNICODE)
+            cleaned = emoji_pattern.sub('', str(text))
+            return cleaned.strip()
+        
         for key, df in export_buckets.items():
             if df.empty:
                 continue
@@ -2388,7 +2414,7 @@ def main():
                 cat_val = 0
                 
             if cat_val > 0:
-                label = ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key))
+                label = clean_label(ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key)))
                 count = len(df)
                 export_summary.append({'Category': f"{label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
         
@@ -2416,7 +2442,7 @@ def main():
             if df.empty:
                 continue
             
-            label = ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key))
+            label = clean_label(ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key)))
             
             for _, row in df.iterrows():
                 # Determine fields based on source type (NS vs HS)
