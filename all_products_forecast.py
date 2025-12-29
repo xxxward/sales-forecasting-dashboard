@@ -383,6 +383,9 @@ def format_hs_view(df):
         d['PA Date'] = pd.to_datetime(d['Pending Approval Date'], errors='coerce').dt.strftime('%Y-%m-%d').fillna('')
     if 'Amount' in d.columns:
         d['Amount_Numeric'] = pd.to_numeric(d['Amount'], errors='coerce').fillna(0)
+    # Ensure Account Name is preserved if it exists
+    if 'Account Name' not in d.columns and 'Deal Name' in d.columns:
+        d['Account Name'] = d['Deal Name']  # Fallback to Deal Name if no Account Name
     return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
 
 
@@ -763,6 +766,52 @@ def load_line_items(main_dash):
     return line_items_df
 
 
+def load_item_master(main_dash):
+    """
+    Load Item Master data for SKU descriptions
+    
+    Item Master tab columns:
+    - Column A: Item (SKU code)
+    - Column C: Description
+    
+    Returns a dictionary mapping SKU -> Description
+    """
+    
+    item_master_df = main_dash.load_google_sheets_data("Item Master", "A:C", version=main_dash.CACHE_VERSION)
+    
+    if item_master_df.empty:
+        return {}
+    
+    col_names = item_master_df.columns.tolist()
+    
+    # Column A should be Item/SKU, Column C should be Description
+    if len(col_names) < 3:
+        return {}
+    
+    rename_dict = {
+        col_names[0]: 'Item',
+        col_names[2]: 'Description'
+    }
+    
+    item_master_df = item_master_df.rename(columns=rename_dict)
+    
+    # Clean Item column
+    if 'Item' in item_master_df.columns:
+        item_master_df['Item'] = item_master_df['Item'].astype(str).str.strip()
+        item_master_df = item_master_df[item_master_df['Item'] != '']
+        item_master_df = item_master_df[item_master_df['Item'].str.lower() != 'nan']
+    
+    # Clean Description column
+    if 'Description' in item_master_df.columns:
+        item_master_df['Description'] = item_master_df['Description'].astype(str).str.strip()
+        item_master_df['Description'] = item_master_df['Description'].replace('nan', '')
+    
+    # Create lookup dictionary
+    sku_to_desc = dict(zip(item_master_df['Item'], item_master_df['Description']))
+    
+    return sku_to_desc
+
+
 def merge_orders_with_invoices(orders_df, invoices_df):
     """
     Merge sales orders with invoice data to get actual revenue
@@ -923,15 +972,23 @@ def calculate_customer_metrics(historical_df):
     return pd.DataFrame(customer_metrics)
 
 
-def calculate_customer_product_metrics(historical_df, line_items_df):
+def calculate_customer_product_metrics(historical_df, line_items_df, sku_to_desc=None):
     """
     Calculate metrics by Customer + Product Type combination.
     This gives accurate cadence per product line, not per customer overall.
+    
+    Args:
+        historical_df: Historical orders dataframe
+        line_items_df: Line items dataframe
+        sku_to_desc: Dictionary mapping SKU codes to descriptions (from Item Master)
     
     Returns DataFrame with:
     - Customer, Product Type, Order count, Revenue, Cadence, Expected Q1 orders
     - Aggregated line item totals (qty, avg rate, total value)
     """
+    
+    if sku_to_desc is None:
+        sku_to_desc = {}
     
     if historical_df.empty:
         return pd.DataFrame()
@@ -1004,10 +1061,22 @@ def calculate_customer_product_metrics(historical_df, line_items_df):
                 avg_rate = total_line_value / total_qty if total_qty > 0 else 0
                 sku_count = product_line_items['Item'].nunique()
                 
-                # Get top 3 SKUs by total value
+                # Get top 3 SKUs by total value, with descriptions from Item Master
                 sku_totals = product_line_items.groupby('Item')['Line_Total'].sum().sort_values(ascending=False)
                 top_sku_list = sku_totals.head(3).index.tolist()
-                top_skus = ", ".join(top_sku_list) if top_sku_list else ""
+                
+                # Look up descriptions for each SKU
+                top_sku_with_desc = []
+                for sku in top_sku_list:
+                    desc = sku_to_desc.get(sku, '')
+                    if desc and desc != sku:
+                        # Use description if available and different from SKU
+                        top_sku_with_desc.append(desc)
+                    else:
+                        # Fall back to SKU code if no description
+                        top_sku_with_desc.append(sku)
+                
+                top_skus = ", ".join(top_sku_with_desc) if top_sku_with_desc else ""
         
         # Calculate Q1 projection
         # Use line item data if available, otherwise use order amounts
@@ -1252,7 +1321,8 @@ def main():
         
         # NOW: Load Q1 2026 deals from "Copy of All Reps All Pipelines" 
         # This sheet includes BOTH Q4 2025 and Q1 2026 close dates
-        deals_df = main_dash.load_google_sheets_data("Copy of All Reps All Pipelines", "A:R", version=main_dash.CACHE_VERSION)
+        # Expanded range to A:Z to capture Account Name and other columns
+        deals_df = main_dash.load_google_sheets_data("Copy of All Reps All Pipelines", "A:Z", version=main_dash.CACHE_VERSION)
         
         # Process the deals data (same logic as main dashboard)
         if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -1286,6 +1356,10 @@ def main():
                     rename_dict[col] = 'Pending Approval Date'
                 elif col == 'Q1 2026 Spillover':
                     rename_dict[col] = 'Q1 2026 Spillover'
+                elif col == 'Account Name' or col == 'Associated Company':
+                    rename_dict[col] = 'Account Name'
+                elif col == 'Company':
+                    rename_dict[col] = 'Account Name'
             
             deals_df = deals_df.rename(columns=rename_dict)
             
@@ -1895,6 +1969,12 @@ def main():
     # Initialize reorder buckets
     reorder_buckets = {}
     
+    # Initialize data variables
+    historical_df = pd.DataFrame()
+    invoices_df = pd.DataFrame()
+    line_items_df = pd.DataFrame()
+    sku_to_desc = {}
+    
     # Load all data
     with st.spinner("Loading historical data and line items..."):
         # Load historical orders
@@ -1923,10 +2003,13 @@ def main():
         
         # Load line items - THIS IS THE KEY DATA
         line_items_df = load_line_items(main_dash)
+        
+        # Load Item Master for SKU descriptions
+        sku_to_desc = load_item_master(main_dash)
     
     # Debug section - EXPANDED
     with st.expander("🔧 Debug: Data Loading Status", expanded=False):
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             st.write("**Historical Orders (NS Sales Orders):**")
@@ -1963,6 +2046,17 @@ def main():
                 if 'Item_Rate' in line_items_df.columns:
                     st.write(f"**Sample Rates:** {line_items_df['Item_Rate'].head(5).tolist()}")
         
+        with col3:
+            st.write("**Item Master (SKU Descriptions):**")
+            if not sku_to_desc:
+                st.warning("⚠️ No Item Master loaded - check tab name 'Item Master'")
+            else:
+                st.success(f"✅ {len(sku_to_desc)} SKU descriptions loaded")
+                # Show sample mappings
+                sample_items = list(sku_to_desc.items())[:5]
+                for sku, desc in sample_items:
+                    st.write(f"• {sku}: {desc[:50]}..." if len(desc) > 50 else f"• {sku}: {desc}")
+        
         # Test matching
         if not historical_df.empty and not line_items_df.empty:
             if 'SO_Number' in historical_df.columns and 'SO_Number' in line_items_df.columns:
@@ -1998,25 +2092,82 @@ def main():
         pipeline_customers = set()
         for key in hs_categories.keys():
             df = hs_dfs.get(key, pd.DataFrame())
-            if not df.empty and 'Deal Name' in df.columns:
-                pipeline_customers.update(df['Deal Name'].dropna().tolist())
+            if not df.empty:
+                # Try multiple possible columns for customer name in HubSpot
+                # Priority: Account Name > Associated Company > Company > Deal Name
+                customer_col = None
+                for col in ['Account Name', 'Associated Company', 'Company', 'Deal Name']:
+                    if col in df.columns:
+                        customer_col = col
+                        break
+                
+                if customer_col:
+                    pipeline_customers.update(df[customer_col].dropna().tolist())
         
-        # Get list of customers to exclude
+        # Also check the raw deals_df for any customers with pipeline deals
+        if not deals_df.empty:
+            # Get customers from deals that are in our filtered HS categories (Q1 deals)
+            for col in ['Account Name', 'Associated Company', 'Company', 'Deal Name']:
+                if col in deals_df.columns:
+                    # Filter to deals owned by active reps
+                    if 'Deal Owner' in deals_df.columns:
+                        rep_deals = deals_df[deals_df['Deal Owner'].isin(active_team_reps)]
+                        pipeline_customers.update(rep_deals[col].dropna().tolist())
+                    break
+        
+        # Debug: Show what's being excluded
+        with st.expander("🔧 Debug: Customer Exclusion List", expanded=False):
+            st.write(f"**Pending NS Customers ({len(pending_customers)}):**")
+            st.write(sorted(list(pending_customers))[:30])
+            st.write(f"**Pipeline HS Customers ({len(pipeline_customers)}):**")
+            st.write(sorted(list(pipeline_customers))[:30])
+            
+            # Show column info
+            st.write("**HubSpot DataFrame Columns:**")
+            for key in list(hs_categories.keys())[:2]:
+                df = hs_dfs.get(key, pd.DataFrame())
+                if not df.empty:
+                    st.write(f"{key}: {df.columns.tolist()}")
+                    break
+            
+            if not deals_df.empty:
+                st.write(f"**Raw deals_df columns:** {deals_df.columns.tolist()}")
+        
+        # Get list of customers to exclude - normalize names for matching
         def normalize(name): 
+            if pd.isna(name) or name is None:
+                return ''
             return str(name).lower().strip()
-        excluded_customers = {normalize(c) for c in pending_customers | pipeline_customers}
         
-        # Calculate NEW product-level metrics
-        product_metrics_df = calculate_customer_product_metrics(historical_df, line_items_df)
+        excluded_customers = {normalize(c) for c in pending_customers | pipeline_customers}
+        excluded_customers.discard('')  # Remove empty string if present
+        
+        # Calculate NEW product-level metrics (with SKU descriptions from Item Master)
+        product_metrics_df = calculate_customer_product_metrics(historical_df, line_items_df, sku_to_desc)
         
         if product_metrics_df.empty:
             st.warning("No product metrics calculated")
         else:
             # Filter out customers with pending orders/deals
             product_metrics_df['Customer_Normalized'] = product_metrics_df['Customer'].apply(normalize)
+            
+            # Debug: Show filtering stats
+            total_before = product_metrics_df['Customer'].nunique()
+            excluded_count = product_metrics_df[product_metrics_df['Customer_Normalized'].isin(excluded_customers)]['Customer'].nunique()
+            
             opportunities_df = product_metrics_df[
                 ~product_metrics_df['Customer_Normalized'].isin(excluded_customers)
             ].copy()
+            
+            # Update debug expander with exclusion stats
+            with st.expander("🔧 Debug: Customer Exclusion Details", expanded=False):
+                st.write(f"**Total Historical Customers:** {total_before}")
+                st.write(f"**Customers Excluded (have pending/pipeline):** {excluded_count}")
+                st.write(f"**Customers Remaining (opportunities):** {opportunities_df['Customer'].nunique()}")
+                
+                # Show which specific customers were excluded
+                excluded_from_hist = product_metrics_df[product_metrics_df['Customer_Normalized'].isin(excluded_customers)]['Customer'].unique().tolist()
+                st.write(f"**Excluded Customers from Historical:** {sorted(excluded_from_hist)[:20]}")
             
             if opportunities_df.empty:
                 st.success("✅ All 2025 customers already have pending orders or pipeline deals!")
