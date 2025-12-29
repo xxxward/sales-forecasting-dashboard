@@ -452,47 +452,39 @@ def create_q1_gauge(value, goal, title="Q1 2026 Progress"):
         number={
             'prefix': "$", 
             'valueformat': ",.0f",
-            'font': {'size': 50, 'color': 'white', 'family': 'Inter, sans-serif'}
+            'font': {'size': 42, 'color': 'white', 'family': 'Inter, sans-serif'},
+            'suffix': f"<span style='font-size:18px;color:{bar_color}'> ({percentage:.0f}%)</span>"
         },
         title={
-            'text': f"<span style='font-size:14px;color:#94a3b8;letter-spacing:1px'>{title.upper()}</span>",
-            'font': {'size': 14}
+            'text': f"<span style='font-size:13px;color:#94a3b8;letter-spacing:1px'>{title.upper()}</span>",
+            'font': {'size': 13}
         },
         gauge={
             'axis': {
                 'range': [0, max_range], 
                 'tickmode': 'array',
-                'tickvals': [0, goal, max_range],
-                'ticktext': ['0', 'GOAL', ''],
-                'tickfont': {'size': 12, 'color': '#64748b'},
+                'tickvals': [0, goal],
+                'ticktext': ['0', 'GOAL'],
+                'tickfont': {'size': 11, 'color': '#64748b'},
                 'showticklabels': True
             },
-            'bar': {'color': bar_color, 'thickness': 0.8},
+            'bar': {'color': bar_color, 'thickness': 0.75},
             'bgcolor': "rgba(255,255,255,0.05)",
             'borderwidth': 0,
             'steps': [
                 {'range': [0, goal], 'color': "rgba(255,255,255,0.03)"}
             ],
             'threshold': {
-                'line': {'color': "#fff", 'width': 3},
-                'thickness': 0.9,
+                'line': {'color': "#fff", 'width': 2},
+                'thickness': 0.85,
                 'value': goal
             }
         }
     ))
     
-    # Add percentage annotation with glow effect
-    fig.add_annotation(
-        x=0.5, y=0.15,
-        text=f"{percentage:.0f}%",
-        showarrow=False,
-        font=dict(size=24, color=bar_color, family="Inter, sans-serif"),
-        xref="paper", yref="paper"
-    )
-    
     fig.update_layout(
-        height=300,
-        margin=dict(l=30, r=30, t=50, b=20),
+        height=280,
+        margin=dict(l=25, r=25, t=40, b=15),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font={'color': 'white', 'family': 'Inter, sans-serif'}
@@ -529,15 +521,17 @@ def create_forecast_composition_donut(scheduled, pipeline, reorder, title="Forec
             go.Pie(
                 labels=labels,
                 values=values,
-                hole=0.68,
+                hole=0.65,
                 sort=False,
                 marker=dict(
                     colors=colors,
                     line=dict(color="rgba(255,255,255,0.12)", width=1),
                 ),
                 textinfo="percent",
-                textfont=dict(size=12, color="white", family="Inter, sans-serif"),
+                textposition="outside",
+                textfont=dict(size=11, color="#cbd5e1", family="Inter, sans-serif"),
                 hovertemplate="%{label}<br>$%{value:,.0f}<extra></extra>",
+                pull=[0.02, 0.02, 0.02],
             )
         ]
     )
@@ -550,23 +544,23 @@ def create_forecast_composition_donut(scheduled, pipeline, reorder, title="Forec
         showarrow=False,
         align="center",
         text=(
-            f"<span style='font-size:12px;color:#94a3b8;letter-spacing:1px'>{title.upper()}</span><br>"
-            f"<span style='font-size:28px;color:white;font-family:Space Grotesk, Inter, sans-serif;'><b>${total:,.0f}</b></span>"
+            f"<span style='font-size:24px;color:white;font-family:Inter, sans-serif;'><b>${total:,.0f}</b></span>"
         ),
     )
 
     fig.update_layout(
-        height=300,
-        margin=dict(l=0, r=0, t=10, b=0),
+        height=320,
+        margin=dict(l=40, r=40, t=20, b=50),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
         legend=dict(
             orientation="h",
-            yanchor="bottom",
-            y=-0.18,
+            yanchor="top",
+            y=-0.05,
             xanchor="center",
             x=0.5,
-            font=dict(color="#cbd5e1", size=12, family="Inter, sans-serif"),
+            font=dict(color="#cbd5e1", size=11, family="Inter, sans-serif"),
         ),
     )
     return fig
@@ -589,6 +583,15 @@ def create_forecast_waterfall(scheduled, pipeline, reorder, goal, title="Path to
     measure = ["relative", "relative", "relative", "total", "total"]
     y = [scheduled, pipeline, reorder, total_forecast, goal]
 
+    # Format text labels - use K for thousands if values are large
+    def format_val(v):
+        if abs(v) >= 1000000:
+            return f"${v/1000000:.1f}M"
+        elif abs(v) >= 10000:
+            return f"${v/1000:.0f}K"
+        else:
+            return f"${v:,.0f}"
+
     fig = go.Figure(
         go.Waterfall(
             name="Forecast",
@@ -597,36 +600,47 @@ def create_forecast_waterfall(scheduled, pipeline, reorder, goal, title="Path to
             x=x,
             y=y,
             connector=dict(line=dict(color="rgba(148,163,184,0.25)", width=1)),
-            text=[f"${scheduled:,.0f}", f"${pipeline:,.0f}", f"${reorder:,.0f}", f"${total_forecast:,.0f}", f"${goal:,.0f}"],
+            text=[format_val(scheduled), format_val(pipeline), format_val(reorder), format_val(total_forecast), format_val(goal)],
             textposition="outside",
+            textfont=dict(size=10, color="#cbd5e1"),
             increasing=dict(marker=dict(color="#10b981", line=dict(color="rgba(255,255,255,0.12)", width=1))),
             decreasing=dict(marker=dict(color="#ef4444", line=dict(color="rgba(255,255,255,0.12)", width=1))),
-            totals=dict(marker=dict(color="rgba(255,255,255,0.10)", line=dict(color="rgba(255,255,255,0.12)", width=1))),
+            totals=dict(marker=dict(color="rgba(100,116,139,0.5)", line=dict(color="rgba(255,255,255,0.12)", width=1))),
         )
     )
 
-    gap_label = "Gap" if gap_to_goal > 0 else "Ahead"
+    gap_label = "Gap to goal:" if gap_to_goal > 0 else "Ahead of goal:"
     gap_color = "#fb7185" if gap_to_goal > 0 else "#34d399"
 
     fig.add_annotation(
         x=0.5,
-        y=1.12,
+        y=1.08,
         xref="paper",
         yref="paper",
         showarrow=False,
-        text=f"<span style='color:#94a3b8'>{gap_label} to goal:</span> "
-             f"<span style='color:{gap_color};font-family:Space Grotesk, Inter, sans-serif'><b>${abs(gap_to_goal):,.0f}</b></span>",
-        font=dict(size=14, family="Inter, sans-serif"),
+        text=f"<span style='color:#94a3b8;font-size:12px'>{gap_label}</span> "
+             f"<span style='color:{gap_color};font-size:14px;font-weight:bold'>${abs(gap_to_goal):,.0f}</span>",
+        font=dict(size=12, family="Inter, sans-serif"),
     )
 
     fig.update_layout(
-        height=330,
-        margin=dict(l=20, r=20, t=60, b=10),
+        height=350,
+        margin=dict(l=50, r=20, t=70, b=40),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="white", family="Inter, sans-serif"),
-        xaxis=dict(tickfont=dict(color="#cbd5e1")),
-        yaxis=dict(showgrid=True, gridcolor="rgba(148,163,184,0.12)", zeroline=False, tickfont=dict(color="#cbd5e1")),
+        xaxis=dict(
+            tickfont=dict(color="#cbd5e1", size=10),
+            tickangle=0
+        ),
+        yaxis=dict(
+            showgrid=True, 
+            gridcolor="rgba(148,163,184,0.1)", 
+            zeroline=False, 
+            tickfont=dict(color="#94a3b8", size=10),
+            tickformat="$,.0f"
+        ),
+        bargap=0.3,
     )
 
     return fig
