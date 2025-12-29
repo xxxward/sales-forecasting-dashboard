@@ -994,6 +994,7 @@ def calculate_customer_product_metrics(historical_df, line_items_df):
         total_line_value = 0
         avg_rate = 0
         sku_count = 0
+        top_skus = ""
         
         if so_numbers and not line_items_df.empty:
             product_line_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)]
@@ -1002,6 +1003,11 @@ def calculate_customer_product_metrics(historical_df, line_items_df):
                 total_line_value = product_line_items['Line_Total'].sum()
                 avg_rate = total_line_value / total_qty if total_qty > 0 else 0
                 sku_count = product_line_items['Item'].nunique()
+                
+                # Get top 3 SKUs by total value
+                sku_totals = product_line_items.groupby('Item')['Line_Total'].sum().sort_values(ascending=False)
+                top_sku_list = sku_totals.head(3).index.tolist()
+                top_skus = ", ".join(top_sku_list) if top_sku_list else ""
         
         # Calculate Q1 projection
         # Use line item data if available, otherwise use order amounts
@@ -1036,6 +1042,7 @@ def calculate_customer_product_metrics(historical_df, line_items_df):
             'Total_Qty_2025': total_qty,
             'Avg_Rate': avg_rate,
             'SKU_Count': sku_count,
+            'Top_SKUs': top_skus,
             'Q1_Qty': q1_qty,
             'Q1_Value': q1_value,
             'Q1_Forecast': q1_forecast
@@ -2052,7 +2059,7 @@ def main():
                 
                 with btn_col1:
                     st.write("")  # Spacer
-                    if st.button("☑️ Select All", key=f"reorder_select_all_{rep_name}", use_container_width=True):
+                    if st.button("☑️ Select All Rows", key=f"reorder_select_all_{rep_name}", use_container_width=True):
                         # Set all products as selected
                         for pt in opportunities_df['Product_Type'].unique():
                             select_key = f"q1_reorder_select_{pt}_{rep_name}"
@@ -2061,13 +2068,32 @@ def main():
                 
                 with btn_col2:
                     st.write("")  # Spacer
-                    if st.button("☐ Deselect All", key=f"reorder_deselect_all_{rep_name}", use_container_width=True):
+                    if st.button("☐ Deselect All Rows", key=f"reorder_deselect_all_{rep_name}", use_container_width=True):
                         # Set all products as deselected
                         for pt in opportunities_df['Product_Type'].unique():
                             pt_data = opportunities_df[opportunities_df['Product_Type'] == pt]
                             select_key = f"q1_reorder_select_{pt}_{rep_name}"
                             all_keys = set(f"{row['Customer']}|{row['Product_Type']}" for _, row in pt_data.iterrows())
                             st.session_state[select_key] = all_keys  # All deselected
+                        st.rerun()
+                
+                # === BUCKET-LEVEL CONTROLS ===
+                st.markdown("##### Product Type Buckets")
+                bucket_col1, bucket_col2, bucket_col3 = st.columns([2, 1, 1])
+                
+                with bucket_col1:
+                    st.caption("Check/uncheck product type buckets below, or use these buttons:")
+                
+                with bucket_col2:
+                    if st.button("☑️ Check All Buckets", key=f"reorder_check_all_buckets_{rep_name}", use_container_width=True):
+                        for pt in opportunities_df['Product_Type'].unique():
+                            st.session_state[f"q1_reorder_pt_{pt}_{rep_name}"] = True
+                        st.rerun()
+                
+                with bucket_col3:
+                    if st.button("☐ Uncheck All Buckets", key=f"reorder_uncheck_all_buckets_{rep_name}", use_container_width=True):
+                        for pt in opportunities_df['Product_Type'].unique():
+                            st.session_state[f"q1_reorder_pt_{pt}_{rep_name}"] = False
                         st.rerun()
                 
                 # Apply search filter if provided
@@ -2180,6 +2206,7 @@ def main():
                                     'Select': is_selected,
                                     'Conf': conf_emoji,
                                     'Customer': row['Customer'],
+                                    'Top SKUs': row.get('Top_SKUs', ''),
                                     '2025 #': int(row['Order_Count']),
                                     '2025 $': int(row['Total_Revenue']),
                                     'Cadence': cadence_str,
@@ -2194,11 +2221,12 @@ def main():
                             
                             # Editable data editor
                             edited_df = st.data_editor(
-                                display_df[['Select', 'Conf', 'Customer', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status', 'Q1 Value']],
+                                display_df[['Select', 'Conf', 'Customer', 'Top SKUs', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status', 'Q1 Value']],
                                 column_config={
                                     "Select": st.column_config.CheckboxColumn("✓", width="small", help="Include in forecast"),
                                     "Conf": st.column_config.TextColumn("Tier", width="small", help="Confidence: 🟢 Likely | 🟡 Possible | ⚪ Long Shot"),
-                                    "Customer": st.column_config.TextColumn("Customer", width="large"),
+                                    "Customer": st.column_config.TextColumn("Customer", width="medium"),
+                                    "Top SKUs": st.column_config.TextColumn("Top SKUs", width="large", help="Top 3 SKUs by revenue"),
                                     "2025 #": st.column_config.NumberColumn("2025 #", format="%d", width="small", help="Orders in 2025"),
                                     "2025 $": st.column_config.NumberColumn("2025 $", format="$%d", width="small", help="Revenue in 2025"),
                                     "Cadence": st.column_config.TextColumn("Cadence", width="small"),
@@ -2206,7 +2234,7 @@ def main():
                                     "Status": st.column_config.TextColumn("Status", width="medium"),
                                     "Q1 Value": st.column_config.NumberColumn("Q1 Value ✏️", format="$%d", width="small", help="EDIT: Your Q1 forecast")
                                 },
-                                disabled=['Conf', 'Customer', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status'],
+                                disabled=['Conf', 'Customer', 'Top SKUs', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status'],
                                 hide_index=True,
                                 use_container_width=True,
                                 key=f"q1_product_editor_{product_type}_{rep_name}",
@@ -2260,6 +2288,7 @@ def main():
                                 if row['Select']:
                                     key = display_data[idx]['_key']
                                     cust = display_data[idx]['Customer']
+                                    top_skus = display_data[idx].get('Top SKUs', '')
                                     conf_pct = display_data[idx]['_conf_pct']
                                     conf_tier = 'Likely' if conf_pct == 0.75 else ('Possible' if conf_pct == 0.50 else 'Long Shot')
                                     q1_val = int(row['Q1 Value']) if pd.notna(row['Q1 Value']) else 0
@@ -2267,6 +2296,7 @@ def main():
                                     export_data.append({
                                         'Customer': cust,
                                         'Product_Type': product_type,
+                                        'Top_SKUs': top_skus,
                                         'Confidence_Tier': conf_tier,
                                         'Confidence_Pct': conf_pct,
                                         'Q1_Value': q1_val,
@@ -2558,6 +2588,7 @@ def main():
                     'ID': item_id,
                     'Customer': cust,
                     'Order/Deal Type': deal_type,
+                    'Top SKUs': '',  # Not applicable for NS/HS items
                     'Date': date_val,
                     'Amount': amount,
                     'Rep': rep
@@ -2574,6 +2605,7 @@ def main():
                 for _, row in df.iterrows():
                     cust = row.get('Customer', '')
                     product_type = row.get('Product_Type', '')
+                    top_skus = row.get('Top_SKUs', '')
                     conf_tier = row.get('Confidence_Tier', '')
                     conf_pct = row.get('Confidence_Pct', 0)
                     q1_val = row.get('Q1_Value', 0)
@@ -2584,6 +2616,7 @@ def main():
                         'ID': '',  # No ID for reorder prospects
                         'Customer': cust,
                         'Order/Deal Type': f"{product_type} - {conf_tier} ({conf_pct:.0%})",
+                        'Top SKUs': top_skus,
                         'Date': '',  # No specific date
                         'Amount': projected_val,
                         'Rep': rep_name  # Use selected rep name
