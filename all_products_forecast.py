@@ -2033,67 +2033,131 @@ def main():
                 st.markdown(f"#### {'Pick Your Reorder Targets' if is_team_view else f'{first_name}, Pick Your Reorder Targets'}")
                 st.markdown("""
                 <div style="color: #94a3b8; margin-bottom: 15px; font-size: 0.95rem;">
-                    Start with the <strong style="color: #10b981;">🟢 Likely</strong> ones — these are your best bets. 
-                    Then add <strong style="color: #f59e0b;">🟡 Possible</strong> customers you're confident about.
-                    <strong style="color: #94a3b8;">⚪ Long Shots</strong> are bonus if you can close them!
+                    Organized by <strong>Product Type</strong> so you can focus on specific product lines.
+                    Confidence indicators: <strong style="color: #10b981;">🟢 Likely (75%)</strong> = 3+ orders | 
+                    <strong style="color: #f59e0b;">🟡 Possible (50%)</strong> = 2 orders | 
+                    <strong style="color: #94a3b8;">⚪ Long Shot (25%)</strong> = 1 order
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Group by confidence tier
-                tiers = [
-                    ('Likely', '🟢', 0.75, 'Your best customers — 3+ orders in 2025. Include these!'),
-                    ('Possible', '🟡', 0.50, 'Solid customers — 2 orders in 2025. Good upside here.'),
-                    ('Long Shot', '⚪', 0.25, 'One-time buyers — worth a call to see if they\'ll reorder.')
-                ]
+                # === SEARCH AND GLOBAL CONTROLS ===
+                search_col, btn_col1, btn_col2 = st.columns([3, 1, 1])
                 
-                for tier_name, emoji, conf_pct, tier_desc in tiers:
-                    tier_data = opportunities_df[opportunities_df['Confidence_Tier'] == tier_name].copy()
+                with search_col:
+                    search_term = st.text_input(
+                        "🔍 Search Customers",
+                        placeholder="Type customer name to filter...",
+                        key=f"reorder_search_{rep_name}"
+                    )
+                
+                with btn_col1:
+                    st.write("")  # Spacer
+                    if st.button("☑️ Select All", key=f"reorder_select_all_{rep_name}", use_container_width=True):
+                        # Set all products as selected
+                        for pt in opportunities_df['Product_Type'].unique():
+                            select_key = f"q1_reorder_select_{pt}_{rep_name}"
+                            st.session_state[select_key] = set()  # Empty = all selected
+                        st.rerun()
+                
+                with btn_col2:
+                    st.write("")  # Spacer
+                    if st.button("☐ Deselect All", key=f"reorder_deselect_all_{rep_name}", use_container_width=True):
+                        # Set all products as deselected
+                        for pt in opportunities_df['Product_Type'].unique():
+                            pt_data = opportunities_df[opportunities_df['Product_Type'] == pt]
+                            select_key = f"q1_reorder_select_{pt}_{rep_name}"
+                            all_keys = set(f"{row['Customer']}|{row['Product_Type']}" for _, row in pt_data.iterrows())
+                            st.session_state[select_key] = all_keys  # All deselected
+                        st.rerun()
+                
+                # Apply search filter if provided
+                if search_term:
+                    search_lower = search_term.lower()
+                    filtered_opportunities = opportunities_df[
+                        opportunities_df['Customer'].str.lower().str.contains(search_lower, na=False)
+                    ].copy()
+                    if filtered_opportunities.empty:
+                        st.warning(f"No customers found matching '{search_term}'")
+                    else:
+                        st.success(f"Found {filtered_opportunities['Customer'].nunique()} customers matching '{search_term}'")
+                else:
+                    filtered_opportunities = opportunities_df.copy()
+                
+                # Get unique product types and sort by total revenue
+                product_type_totals = filtered_opportunities.groupby('Product_Type')['Total_Revenue'].sum().sort_values(ascending=False)
+                product_types = product_type_totals.index.tolist()
+                
+                # Confidence tier mapping for calculations
+                conf_pct_map = {'Likely': 0.75, 'Possible': 0.50, 'Long Shot': 0.25}
+                tier_emoji_map = {'Likely': '🟢', 'Possible': '🟡', 'Long Shot': '⚪'}
+                
+                for product_type in product_types:
+                    pt_data = filtered_opportunities[filtered_opportunities['Product_Type'] == product_type].copy()
                     
-                    if tier_data.empty:
+                    if pt_data.empty:
                         continue
                     
-                    # Calculate tier totals
-                    tier_historical = tier_data['Total_Revenue'].sum()
-                    tier_projected = tier_data['Q1_Forecast'].sum()
-                    tier_rows = len(tier_data)
-                    tier_customers = tier_data['Customer'].nunique()
+                    # Calculate product type totals
+                    pt_historical = pt_data['Total_Revenue'].sum()
+                    pt_projected = pt_data['Q1_Forecast'].sum()
+                    pt_rows = len(pt_data)
+                    pt_customers = pt_data['Customer'].nunique()
                     
-                    # Tier header checkbox with friendlier text
-                    checkbox_key = f"q1_reorder_{tier_name}_{rep_name}"
+                    # Count by confidence tier
+                    tier_counts = pt_data['Confidence_Tier'].value_counts().to_dict()
+                    tier_str = " | ".join([f"{tier_emoji_map.get(t, '')} {c}" for t, c in tier_counts.items()])
                     
-                    # Different prompts per tier
-                    if tier_name == 'Likely':
-                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} customers who WILL reorder (${tier_projected:,.0f} projected)"
-                    elif tier_name == 'Possible':
-                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} customers who might reorder (${tier_projected:,.0f} projected)"
-                    else:
-                        checkbox_label = f"{emoji} **{tier_name}** — {tier_customers} worth a follow-up (${tier_projected:,.0f} projected)"
+                    # Product type header checkbox
+                    checkbox_key = f"q1_reorder_pt_{product_type}_{rep_name}"
+                    checkbox_label = f"**{product_type}** — {pt_customers} customers, ${pt_projected:,.0f} projected ({tier_str})"
                     
                     is_checked = st.checkbox(
                         checkbox_label,
                         key=checkbox_key,
-                        help=tier_desc
+                        help=f"2025 Revenue: ${pt_historical:,.0f}"
                     )
                     
                     if is_checked:
-                        with st.expander(f"📋 {tier_name} - Review & Edit", expanded=True):
-                            st.caption(f"💡 {tier_desc}")
+                        with st.expander(f"📋 {product_type} - Review & Edit", expanded=True):
+                            # Session state for selections and edits
+                            select_key = f"q1_reorder_select_{product_type}_{rep_name}"
+                            edited_key = f"q1_products_{product_type}_{rep_name}"
                             
-                            # Session state for this tier
-                            edited_key = f"q1_products_{tier_name}_{rep_name}"
+                            if select_key not in st.session_state:
+                                st.session_state[select_key] = set()  # Empty = all selected
                             if edited_key not in st.session_state:
                                 st.session_state[edited_key] = {}
                             
+                            # Row-level Select All / Deselect All buttons
+                            row_col1, row_col2, row_col3 = st.columns([1, 1, 4])
+                            with row_col1:
+                                if st.button("☑️ All", key=f"pt_sel_all_{product_type}_{rep_name}"):
+                                    st.session_state[select_key] = set()
+                                    st.rerun()
+                            with row_col2:
+                                if st.button("☐ None", key=f"pt_sel_none_{product_type}_{rep_name}"):
+                                    all_keys = set(f"{row['Customer']}|{row['Product_Type']}" for _, row in pt_data.iterrows())
+                                    st.session_state[select_key] = all_keys
+                                    st.rerun()
+                            
                             # Build display dataframe
                             display_data = []
-                            for _, row in tier_data.iterrows():
+                            for _, row in pt_data.iterrows():
                                 key = f"{row['Customer']}|{row['Product_Type']}"
+                                
+                                # Check if selected (not in unselected set)
+                                is_selected = key not in st.session_state[select_key]
                                 
                                 # Use edited value if available
                                 if key in st.session_state[edited_key]:
                                     q1_value = st.session_state[edited_key][key]
                                 else:
                                     q1_value = int(row['Q1_Value'])
+                                
+                                # Get confidence tier info
+                                conf_tier = row['Confidence_Tier']
+                                conf_emoji = tier_emoji_map.get(conf_tier, '⚪')
+                                conf_pct = conf_pct_map.get(conf_tier, 0.25)
                                 
                                 # Format cadence
                                 cadence = row['Cadence_Days']
@@ -2113,166 +2177,104 @@ def main():
                                     status = "⚪ New"
                                 
                                 display_data.append({
-                                    'Select': True,
+                                    'Select': is_selected,
+                                    'Conf': conf_emoji,
                                     'Customer': row['Customer'],
-                                    'Product Type': row['Product_Type'],
                                     '2025 #': int(row['Order_Count']),
                                     '2025 $': int(row['Total_Revenue']),
                                     'Cadence': cadence_str,
                                     'Q1 Est': round(row['Expected_Orders_Q1'], 1),
                                     'Status': status,
                                     'Q1 Value': q1_value,
-                                    'SKUs': int(row['SKU_Count']) if row['SKU_Count'] > 0 else 0
+                                    '_key': key,
+                                    '_conf_pct': conf_pct
                                 })
                             
                             display_df = pd.DataFrame(display_data)
                             
                             # Editable data editor
                             edited_df = st.data_editor(
-                                display_df,
+                                display_df[['Select', 'Conf', 'Customer', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status', 'Q1 Value']],
                                 column_config={
                                     "Select": st.column_config.CheckboxColumn("✓", width="small", help="Include in forecast"),
+                                    "Conf": st.column_config.TextColumn("Tier", width="small", help="Confidence: 🟢 Likely | 🟡 Possible | ⚪ Long Shot"),
                                     "Customer": st.column_config.TextColumn("Customer", width="large"),
-                                    "Product Type": st.column_config.TextColumn("Product", width="medium"),
                                     "2025 #": st.column_config.NumberColumn("2025 #", format="%d", width="small", help="Orders in 2025"),
                                     "2025 $": st.column_config.NumberColumn("2025 $", format="$%d", width="small", help="Revenue in 2025"),
                                     "Cadence": st.column_config.TextColumn("Cadence", width="small"),
                                     "Q1 Est": st.column_config.NumberColumn("Q1 Est", format="%.1f", width="small", help="Expected orders in Q1"),
                                     "Status": st.column_config.TextColumn("Status", width="medium"),
-                                    "Q1 Value": st.column_config.NumberColumn("Q1 Value ✏️", format="$%d", width="small", help="EDIT: Your Q1 forecast for this product line"),
-                                    "SKUs": st.column_config.NumberColumn("SKUs", format="%d", width="small", help="Unique items in this product type")
+                                    "Q1 Value": st.column_config.NumberColumn("Q1 Value ✏️", format="$%d", width="small", help="EDIT: Your Q1 forecast")
                                 },
-                                disabled=['Customer', 'Product Type', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status', 'SKUs'],
+                                disabled=['Conf', 'Customer', '2025 #', '2025 $', 'Cadence', 'Q1 Est', 'Status'],
                                 hide_index=True,
                                 use_container_width=True,
-                                key=f"q1_product_editor_{tier_name}_{rep_name}",
+                                key=f"q1_product_editor_{product_type}_{rep_name}",
                                 height=min(500, 50 + len(display_df) * 35)
                             )
                             
-                            # Store edited values and calculate totals
+                            # Update session state and calculate totals
                             selected_total = 0
+                            weighted_total = 0
                             customer_forecasts = {}
+                            new_unselected = set()
                             
-                            for _, row in edited_df.iterrows():
-                                key = f"{row['Customer']}|{row['Product Type']}"
+                            for idx, row in edited_df.iterrows():
+                                key = display_data[idx]['_key']
+                                conf_pct = display_data[idx]['_conf_pct']
                                 q1_val = int(row['Q1 Value']) if pd.notna(row['Q1 Value']) else 0
                                 st.session_state[edited_key][key] = q1_val
                                 
-                                if row['Select']:
-                                    if row['Customer'] not in customer_forecasts:
-                                        customer_forecasts[row['Customer']] = 0
-                                    customer_forecasts[row['Customer']] += q1_val
+                                if not row['Select']:
+                                    new_unselected.add(key)
+                                else:
+                                    cust = display_data[idx]['Customer']
+                                    if cust not in customer_forecasts:
+                                        customer_forecasts[cust] = {'total': 0, 'weighted': 0}
+                                    customer_forecasts[cust]['total'] += q1_val
+                                    customer_forecasts[cust]['weighted'] += q1_val * conf_pct
                                     selected_total += q1_val
+                                    weighted_total += q1_val * conf_pct
                             
-                            # Apply confidence percentage
-                            forecast_with_conf = selected_total * conf_pct
+                            st.session_state[select_key] = new_unselected
                             
                             # Summary
                             selected_rows = len([r for _, r in edited_df.iterrows() if r['Select']])
                             st.markdown(f"""
                             <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 12px; margin-top: 10px;">
                                 <div style="font-size: 1.1rem; font-weight: 600;">
-                                    {tier_name} Forecast: <span style="color: #10b981;">${selected_total:,.0f}</span> × {int(conf_pct*100)}% = 
-                                    <span style="color: #10b981; font-size: 1.3rem;">${forecast_with_conf:,.0f}</span>
+                                    {product_type} Forecast: <span style="color: #10b981;">${selected_total:,.0f}</span> raw → 
+                                    <span style="color: #10b981; font-size: 1.3rem;">${weighted_total:,.0f}</span> weighted
                                 </div>
                                 <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 5px;">
-                                    {len(customer_forecasts)} customers • {selected_rows} product lines selected
+                                    {len(customer_forecasts)} customers • {selected_rows} rows selected • weighted by confidence tier
                                 </div>
                             </div>
                             """, unsafe_allow_html=True)
                             
-                            # === SKU DRILL-DOWN SECTION ===
-                            st.markdown("---")
-                            with st.expander("🔍 View SKU Details by Customer × Product", expanded=False):
-                                st.caption("Select a customer and product type to see individual SKUs")
-                                
-                                # Get unique customer-product combinations
-                                sku_options = tier_data[['Customer', 'Product_Type', 'SO_Numbers']].copy()
-                                
-                                # Customer selector
-                                customers_in_tier = sorted(tier_data['Customer'].unique().tolist())
-                                selected_customer = st.selectbox(
-                                    "Customer",
-                                    options=customers_in_tier,
-                                    key=f"sku_cust_{tier_name}_{rep_name}"
-                                )
-                                
-                                if selected_customer:
-                                    # Product type selector for this customer
-                                    cust_products = tier_data[tier_data['Customer'] == selected_customer]['Product_Type'].unique().tolist()
-                                    selected_product = st.selectbox(
-                                        "Product Type",
-                                        options=cust_products,
-                                        key=f"sku_prod_{tier_name}_{rep_name}"
-                                    )
-                                    
-                                    if selected_product:
-                                        # Get SO numbers for this customer + product
-                                        match_row = tier_data[
-                                            (tier_data['Customer'] == selected_customer) & 
-                                            (tier_data['Product_Type'] == selected_product)
-                                        ]
-                                        
-                                        if not match_row.empty:
-                                            so_numbers = match_row.iloc[0]['SO_Numbers']
-                                            
-                                            if so_numbers and len(so_numbers) > 0:
-                                                # Get line items for these SOs
-                                                sku_items = line_items_df[line_items_df['SO_Number'].isin(so_numbers)].copy()
-                                                
-                                                if not sku_items.empty:
-                                                    # Aggregate by Item (SKU)
-                                                    sku_agg = sku_items.groupby('Item').agg({
-                                                        'Quantity': 'sum',
-                                                        'Item_Rate': 'mean',
-                                                        'Line_Total': 'sum',
-                                                        'SO_Number': 'nunique'
-                                                    }).reset_index()
-                                                    sku_agg.columns = ['SKU', 'Total Qty', 'Avg Rate', 'Total $', 'Orders']
-                                                    sku_agg = sku_agg.sort_values('Total $', ascending=False)
-                                                    
-                                                    # Format for display
-                                                    sku_agg['Total Qty'] = sku_agg['Total Qty'].astype(int)
-                                                    sku_agg['Total $'] = sku_agg['Total $'].astype(int)
-                                                    sku_agg['Avg Rate'] = sku_agg['Avg Rate'].round(2)
-                                                    
-                                                    # Show summary
-                                                    st.markdown(f"**{selected_customer} - {selected_product}**: {len(sku_agg)} unique SKUs from {len(so_numbers)} orders")
-                                                    
-                                                    # Display SKU table
-                                                    st.dataframe(
-                                                        sku_agg,
-                                                        column_config={
-                                                            "SKU": st.column_config.TextColumn("SKU", width="large"),
-                                                            "Total Qty": st.column_config.NumberColumn("2025 Qty", format="%d"),
-                                                            "Avg Rate": st.column_config.NumberColumn("Avg Rate", format="$%.2f"),
-                                                            "Total $": st.column_config.NumberColumn("2025 $", format="$%d"),
-                                                            "Orders": st.column_config.NumberColumn("Orders", format="%d", help="Number of orders containing this SKU")
-                                                        },
-                                                        hide_index=True,
-                                                        use_container_width=True,
-                                                        height=min(400, 40 + len(sku_agg) * 35)
-                                                    )
-                                                else:
-                                                    st.info("No SKU details found for this combination")
-                                            else:
-                                                st.info("No sales order numbers found")
-                            
                             st.markdown("---")
                             
-                            # Build export data
+                            # Build export data for this product type
                             export_data = []
-                            for cust, forecast in customer_forecasts.items():
-                                export_data.append({
-                                    'Customer': cust,
-                                    'Confidence_Tier': tier_name,
-                                    'Confidence_Pct': conf_pct,
-                                    'Q1_Value': forecast,
-                                    'Projected_Value': forecast * conf_pct
-                                })
+                            for idx, row in edited_df.iterrows():
+                                if row['Select']:
+                                    key = display_data[idx]['_key']
+                                    cust = display_data[idx]['Customer']
+                                    conf_pct = display_data[idx]['_conf_pct']
+                                    conf_tier = 'Likely' if conf_pct == 0.75 else ('Possible' if conf_pct == 0.50 else 'Long Shot')
+                                    q1_val = int(row['Q1 Value']) if pd.notna(row['Q1 Value']) else 0
+                                    
+                                    export_data.append({
+                                        'Customer': cust,
+                                        'Product_Type': product_type,
+                                        'Confidence_Tier': conf_tier,
+                                        'Confidence_Pct': conf_pct,
+                                        'Q1_Value': q1_val,
+                                        'Projected_Value': q1_val * conf_pct
+                                    })
                             
                             if export_data:
-                                reorder_buckets[f"reorder_{tier_name}"] = pd.DataFrame(export_data)
+                                reorder_buckets[f"reorder_{product_type}"] = pd.DataFrame(export_data)
     # === CALCULATE RESULTS ===
     def safe_sum(df):
         if df.empty:
@@ -2433,7 +2435,7 @@ def main():
         def clean_label(text):
             """Remove emojis and clean up label for CSV export"""
             import re
-            # Remove emoji characters
+            # Remove emoji characters - comprehensive pattern
             emoji_pattern = re.compile("["
                 u"\U0001F600-\U0001F64F"  # emoticons
                 u"\U0001F300-\U0001F5FF"  # symbols & pictographs
@@ -2447,8 +2449,8 @@ def main():
                 u"\u2600-\u2B55"
                 u"\u200d"
                 u"\u23cf"
-                u"\u23e9"
-                u"\u231a"
+                u"\u23e9-\u23f9"  # includes ⏳ (U+23F3)
+                u"\u231a-\u231b"
                 u"\ufe0f"
                 u"\u3030"
                 "]+", flags=re.UNICODE)
@@ -2571,6 +2573,7 @@ def main():
                 
                 for _, row in df.iterrows():
                     cust = row.get('Customer', '')
+                    product_type = row.get('Product_Type', '')
                     conf_tier = row.get('Confidence_Tier', '')
                     conf_pct = row.get('Confidence_Pct', 0)
                     q1_val = row.get('Q1_Value', 0)
@@ -2580,7 +2583,7 @@ def main():
                         'Category': tier_label,
                         'ID': '',  # No ID for reorder prospects
                         'Customer': cust,
-                        'Order/Deal Type': f"{conf_tier} ({conf_pct:.0%})",
+                        'Order/Deal Type': f"{product_type} - {conf_tier} ({conf_pct:.0%})",
                         'Date': '',  # No specific date
                         'Amount': projected_val,
                         'Rep': rep_name  # Use selected rep name
