@@ -2508,117 +2508,144 @@ def main():
             if opportunities_df.empty and product_metrics_df.empty:
                 st.success("✅ No historical orders found for analysis.")
             else:
-                # === CUSTOMER-CENTRIC REORDER SECTION ===
-                # Show ALL 2025 customers, with their complete picture
+                # === CUSTOMER-CENTRIC REORDER SECTION (LIST VIEW) ===
                 
-                # Get all unique customers from historical data
-                all_customers = sorted(historical_df['Customer'].dropna().unique().tolist())
-                
-                # Calculate 2025 revenue per customer for display
+                # Calculate 2025 metrics per customer
                 amount_col = 'Invoice_Amount' if 'Invoice_Amount' in historical_df.columns else 'Amount'
-                customer_revenue = historical_df.groupby('Customer')[amount_col].sum().to_dict()
-                customer_orders = historical_df.groupby('Customer').size().to_dict()
+                customer_summary = historical_df.groupby('Customer').agg({
+                    amount_col: 'sum',
+                    'SO_Number': 'count',
+                    'Order Start Date': 'max'
+                }).reset_index()
+                customer_summary.columns = ['Customer', 'Revenue_2025', 'Order_Count', 'Last_Order']
+                customer_summary['Days_Since'] = (pd.Timestamp.now() - customer_summary['Last_Order']).dt.days
+                customer_summary = customer_summary.sort_values('Revenue_2025', ascending=False)
                 
-                # Build customer options with revenue info
-                customer_options = []
-                for cust in all_customers:
-                    rev = customer_revenue.get(cust, 0)
-                    orders = customer_orders.get(cust, 0)
-                    customer_options.append(f"{cust} — ${rev:,.0f} ({orders} orders)")
+                # Determine status for each customer
+                def get_status(row):
+                    if row['Order_Count'] >= 3:
+                        return ('🟢', 'Likely', 0.75)
+                    elif row['Order_Count'] >= 2:
+                        return ('🟡', 'Possible', 0.50)
+                    return ('⚪', 'Long Shot', 0.25)
                 
-                # Customer selector
-                st.markdown("#### 🔍 Select a Customer to Review")
+                customer_summary[['Status_Emoji', 'Status_Text', 'Confidence']] = customer_summary.apply(
+                    lambda r: pd.Series(get_status(r)), axis=1
+                )
                 
-                col_search, col_filter = st.columns([3, 1])
-                with col_search:
-                    selected_customer_option = st.selectbox(
-                        "Choose a customer",
-                        options=["-- Select a customer --"] + customer_options,
-                        key=f"customer_selector_{rep_name}",
-                        help="Select a customer to see their complete 2025 picture"
-                    )
+                # Check NS/HS status for each customer
+                pending_normalized = {normalize(c) for c in pending_customers}
+                pipeline_normalized = {normalize(c) for c in pipeline_customers}
                 
-                with col_filter:
-                    show_only_opportunities = st.checkbox(
-                        "Only show reorder opportunities",
-                        value=False,
-                        key=f"filter_opportunities_{rep_name}",
-                        help="Filter to customers without active orders/deals"
-                    )
+                customer_summary['Has_NS'] = customer_summary['Customer'].apply(lambda c: normalize(c) in pending_normalized)
+                customer_summary['Has_HS'] = customer_summary['Customer'].apply(lambda c: normalize(c) in pipeline_normalized)
+                customer_summary['Is_Opportunity'] = ~(customer_summary['Has_NS'] | customer_summary['Has_HS'])
                 
-                # Extract customer name from selection
-                if selected_customer_option != "-- Select a customer --":
-                    selected_customer = selected_customer_option.split(" — ")[0]
-                else:
-                    selected_customer = None
-                
-                # Initialize manual entries in session state
+                # Initialize session state
                 manual_entries_key = f"manual_entries_{rep_name}"
                 if manual_entries_key not in st.session_state:
                     st.session_state[manual_entries_key] = {}
                 
-                # Initialize reorder selections in session state
                 reorder_selections_key = f"reorder_selections_{rep_name}"
                 if reorder_selections_key not in st.session_state:
                     st.session_state[reorder_selections_key] = {}
                 
-                if selected_customer:
-                    # === CUSTOMER HEADER ===
-                    cust_historical = historical_df[historical_df['Customer'] == selected_customer]
-                    cust_revenue = cust_historical[amount_col].sum()
-                    cust_orders = len(cust_historical)
-                    last_order_date = cust_historical['Order Start Date'].max()
-                    days_since = (pd.Timestamp.now() - last_order_date).days if pd.notna(last_order_date) else 999
-                    
-                    # Determine customer status
-                    if cust_orders >= 3:
-                        status_emoji = "🟢"
-                        status_text = "Likely to Reorder (3+ orders)"
-                        confidence = 0.75
-                    elif cust_orders >= 2:
-                        status_emoji = "🟡"
-                        status_text = "Possible Reorder (2 orders)"
-                        confidence = 0.50
-                    else:
-                        status_emoji = "⚪"
-                        status_text = "Long Shot (1 order)"
-                        confidence = 0.25
-                    
-                    # Check if customer has active NS orders or HS deals
-                    cust_normalized = normalize(selected_customer)
-                    has_ns_orders = cust_normalized in {normalize(c) for c in pending_customers}
-                    has_hs_deals = cust_normalized in {normalize(c) for c in pipeline_customers}
-                    
-                    st.markdown(f"""
-                    <div style="background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.9)); 
-                                border: 1px solid rgba(148, 163, 184, 0.2); border-radius: 12px; padding: 20px; margin: 15px 0;">
-                        <div style="font-size: 1.4rem; font-weight: 600; color: white; margin-bottom: 8px;">
-                            {selected_customer}
-                        </div>
-                        <div style="display: flex; gap: 30px; flex-wrap: wrap; color: #94a3b8; font-size: 0.95rem;">
-                            <span><strong style="color: #10b981;">${cust_revenue:,.0f}</strong> in 2025</span>
-                            <span><strong style="color: #60a5fa;">{cust_orders}</strong> orders</span>
-                            <span>Last order: <strong style="color: #fbbf24;">{days_since}d ago</strong></span>
-                            <span>{status_emoji} {status_text}</span>
-                        </div>
-                        <div style="margin-top: 10px; display: flex; gap: 15px;">
-                            {"<span style='background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem;'>📦 Has Active NS Orders</span>" if has_ns_orders else ""}
-                            {"<span style='background: rgba(96, 165, 250, 0.2); color: #60a5fa; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem;'>🎯 Has Pipeline Deals</span>" if has_hs_deals else ""}
-                            {"<span style='background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem;'>🔄 Reorder Opportunity</span>" if not has_ns_orders and not has_hs_deals else ""}
-                        </div>
+                # === CONTROLS ===
+                ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 1, 1])
+                
+                with ctrl_col1:
+                    search_term = st.text_input(
+                        "🔍 Search Customers",
+                        placeholder="Type to filter customers...",
+                        key=f"cust_search_{rep_name}"
+                    )
+                
+                with ctrl_col2:
+                    filter_option = st.selectbox(
+                        "Filter",
+                        options=["All Customers", "Reorder Opportunities Only", "Has Active Orders/Deals"],
+                        key=f"cust_filter_{rep_name}"
+                    )
+                
+                with ctrl_col3:
+                    sort_option = st.selectbox(
+                        "Sort by",
+                        options=["2025 Revenue (High→Low)", "2025 Revenue (Low→High)", "Last Order (Recent)", "Last Order (Oldest)"],
+                        key=f"cust_sort_{rep_name}"
+                    )
+                
+                # Apply filters
+                filtered_customers = customer_summary.copy()
+                
+                if search_term:
+                    filtered_customers = filtered_customers[
+                        filtered_customers['Customer'].str.lower().str.contains(search_term.lower(), na=False)
+                    ]
+                
+                if filter_option == "Reorder Opportunities Only":
+                    filtered_customers = filtered_customers[filtered_customers['Is_Opportunity']]
+                elif filter_option == "Has Active Orders/Deals":
+                    filtered_customers = filtered_customers[~filtered_customers['Is_Opportunity']]
+                
+                # Apply sort
+                if sort_option == "2025 Revenue (High→Low)":
+                    filtered_customers = filtered_customers.sort_values('Revenue_2025', ascending=False)
+                elif sort_option == "2025 Revenue (Low→High)":
+                    filtered_customers = filtered_customers.sort_values('Revenue_2025', ascending=True)
+                elif sort_option == "Last Order (Recent)":
+                    filtered_customers = filtered_customers.sort_values('Days_Since', ascending=True)
+                else:
+                    filtered_customers = filtered_customers.sort_values('Days_Since', ascending=False)
+                
+                # Summary stats
+                st.markdown(f"""
+                <div style="display: flex; gap: 20px; margin: 15px 0; flex-wrap: wrap;">
+                    <div style="background: rgba(16, 185, 129, 0.1); padding: 10px 15px; border-radius: 8px;">
+                        <span style="color: #94a3b8;">Showing:</span> <strong style="color: white;">{len(filtered_customers)}</strong> customers
                     </div>
-                    """, unsafe_allow_html=True)
+                    <div style="background: rgba(251, 191, 36, 0.1); padding: 10px 15px; border-radius: 8px;">
+                        <span style="color: #94a3b8;">Reorder Opps:</span> <strong style="color: #fbbf24;">{filtered_customers['Is_Opportunity'].sum()}</strong>
+                    </div>
+                    <div style="background: rgba(96, 165, 250, 0.1); padding: 10px 15px; border-radius: 8px;">
+                        <span style="color: #94a3b8;">With Pipeline:</span> <strong style="color: #60a5fa;">{(~filtered_customers['Is_Opportunity']).sum()}</strong>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # === CUSTOMER LIST ===
+                for _, cust_row in filtered_customers.iterrows():
+                    customer_name = cust_row['Customer']
+                    cust_revenue = cust_row['Revenue_2025']
+                    cust_orders = cust_row['Order_Count']
+                    days_since = cust_row['Days_Since']
+                    status_emoji = cust_row['Status_Emoji']
+                    status_text = cust_row['Status_Text']
+                    confidence = cust_row['Confidence']
+                    has_ns = cust_row['Has_NS']
+                    has_hs = cust_row['Has_HS']
+                    is_opportunity = cust_row['Is_Opportunity']
                     
-                    # === THREE-COLUMN BREAKDOWN ===
-                    st.markdown("---")
-                    col_ns, col_hs, col_reorder = st.columns(3)
+                    # Build status tags
+                    tags_html = ""
+                    if has_ns:
+                        tags_html += "<span style='background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-right: 5px;'>📦 NS</span>"
+                    if has_hs:
+                        tags_html += "<span style='background: rgba(96, 165, 250, 0.2); color: #60a5fa; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; margin-right: 5px;'>🎯 HS</span>"
+                    if is_opportunity:
+                        tags_html += "<span style='background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem;'>🔄 Reorder</span>"
                     
-                    # --- Column 1: Active NetSuite Orders ---
-                    with col_ns:
-                        st.markdown("##### 📦 Active Orders (NetSuite)")
-                        st.caption("Already in system — counted in Step 3")
+                    # Customer expander with summary in header
+                    expander_label = f"{status_emoji} **{customer_name}** — ${cust_revenue:,.0f} • {cust_orders} orders • {days_since}d ago"
+                    
+                    with st.expander(expander_label, expanded=False):
+                        # Status tags
+                        st.markdown(tags_html, unsafe_allow_html=True)
                         
-                        # Find this customer's NS orders from selected buckets
+                        # Get this customer's product breakdown
+                        cust_products = product_metrics_df[product_metrics_df['Customer'] == customer_name].copy()
+                        cust_normalized = normalize(customer_name)
+                        
+                        # Find NS orders for this customer
                         cust_ns_orders = []
                         for key in ns_categories.keys():
                             df = ns_dfs.get(key, pd.DataFrame())
@@ -2626,38 +2653,17 @@ def main():
                                 cust_rows = df[df['Customer'].apply(normalize) == cust_normalized]
                                 for _, row in cust_rows.iterrows():
                                     cust_ns_orders.append({
-                                        'SO #': row.get('SO #', ''),
+                                        'SO': row.get('SO #', ''),
                                         'Type': row.get('Type', key),
-                                        'Amount': row.get('Amount', 0),
-                                        'Date': row.get('Ship Date', '')
+                                        'Amount': float(row.get('Amount', 0) or 0),
+                                        'Date': str(row.get('Ship Date', ''))[:10]
                                     })
                         
-                        if cust_ns_orders:
-                            ns_total = sum(float(o.get('Amount', 0) or 0) for o in cust_ns_orders)
-                            st.metric("NS Total", f"${ns_total:,.0f}")
-                            for order in cust_ns_orders:
-                                amt = float(order.get('Amount', 0) or 0)
-                                st.markdown(f"""
-                                <div style="background: rgba(16, 185, 129, 0.1); border-left: 3px solid #10b981; 
-                                            padding: 8px 12px; margin: 5px 0; border-radius: 4px; font-size: 0.85rem;">
-                                    <div style="color: white;">{order['SO #']} - {order['Type']}</div>
-                                    <div style="color: #94a3b8;">${amt:,.0f} • {order['Date']}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.info("No active NS orders")
-                    
-                    # --- Column 2: Pipeline Deals (HubSpot) ---
-                    with col_hs:
-                        st.markdown("##### 🎯 Pipeline Deals (HubSpot)")
-                        st.caption("Being worked — counted in Step 3")
-                        
-                        # Find this customer's HS deals from selected buckets
+                        # Find HS deals for this customer
                         cust_hs_deals = []
                         for key in hs_categories.keys():
                             df = hs_dfs.get(key, pd.DataFrame())
                             if not df.empty:
-                                # Find customer column
                                 customer_col = None
                                 for col in ['Account Name', 'Deal Name']:
                                     if col in df.columns:
@@ -2667,262 +2673,204 @@ def main():
                                     cust_rows = df[df[customer_col].apply(normalize) == cust_normalized]
                                     for _, row in cust_rows.iterrows():
                                         cust_hs_deals.append({
-                                            'Deal': row.get('Deal Name', row.get(customer_col, '')),
+                                            'Deal': row.get('Deal Name', ''),
                                             'Type': row.get('Product Type', key),
-                                            'Amount': row.get('Amount_Numeric', row.get('Amount', 0)),
-                                            'Close': row.get('Close', row.get('Close Date', '')),
-                                            'Stage': row.get('Status', '')
+                                            'Amount': float(row.get('Amount_Numeric', row.get('Amount', 0)) or 0),
+                                            'Close': str(row.get('Close', row.get('Close Date', '')))[:10]
                                         })
                         
-                        if cust_hs_deals:
-                            hs_total = sum(float(d.get('Amount', 0) or 0) for d in cust_hs_deals)
-                            st.metric("HS Total", f"${hs_total:,.0f}")
-                            for deal in cust_hs_deals:
-                                amt = float(deal.get('Amount', 0) or 0)
-                                st.markdown(f"""
-                                <div style="background: rgba(96, 165, 250, 0.1); border-left: 3px solid #60a5fa; 
-                                            padding: 8px 12px; margin: 5px 0; border-radius: 4px; font-size: 0.85rem;">
-                                    <div style="color: white;">{deal['Type']} - {deal['Stage']}</div>
-                                    <div style="color: #94a3b8;">${amt:,.0f} • Close: {deal['Close']}</div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                        else:
-                            st.info("No pipeline deals")
-                    
-                    # --- Column 3: Reorder Opportunities ---
-                    with col_reorder:
-                        st.markdown("##### 🔄 Reorder Opportunities")
-                        st.caption("Products due for reorder — ADD to forecast")
+                        # Three columns layout
+                        col1, col2, col3 = st.columns(3)
                         
-                        # Get product types this customer has ordered
-                        cust_products = product_metrics_df[product_metrics_df['Customer'] == selected_customer].copy()
+                        # Column 1: Active NS Orders
+                        with col1:
+                            st.markdown("**📦 NetSuite Orders**")
+                            if cust_ns_orders:
+                                ns_total = sum(o['Amount'] for o in cust_ns_orders)
+                                st.caption(f"Total: ${ns_total:,.0f}")
+                                for order in cust_ns_orders:
+                                    st.markdown(f"• {order['Type']}: ${order['Amount']:,.0f}")
+                            else:
+                                st.caption("None")
                         
-                        # Get product types with active NS/HS
-                        ns_product_types = set()
-                        for order in cust_ns_orders:
-                            ns_product_types.add(str(order.get('Type', '')).lower().strip())
+                        # Column 2: Pipeline Deals
+                        with col2:
+                            st.markdown("**🎯 HubSpot Deals**")
+                            if cust_hs_deals:
+                                hs_total = sum(d['Amount'] for d in cust_hs_deals)
+                                st.caption(f"Total: ${hs_total:,.0f}")
+                                for deal in cust_hs_deals:
+                                    st.markdown(f"• {deal['Type']}: ${deal['Amount']:,.0f}")
+                            else:
+                                st.caption("None")
                         
-                        hs_product_types = set()
-                        for deal in cust_hs_deals:
-                            hs_product_types.add(str(deal.get('Type', '')).lower().strip())
-                        
-                        active_product_types = ns_product_types | hs_product_types
-                        
-                        # Filter to product types WITHOUT active orders/deals
-                        reorder_opportunities = []
-                        for _, row in cust_products.iterrows():
-                            prod_type = row['Product_Type']
-                            prod_type_lower = str(prod_type).lower().strip()
+                        # Column 3: Reorder Opportunities
+                        with col3:
+                            st.markdown("**🔄 Reorder Opportunities**")
                             
-                            # Check if this product type has active order/deal
-                            has_active = any(prod_type_lower in apt or apt in prod_type_lower for apt in active_product_types if apt)
+                            # Get product types with active NS/HS
+                            active_types = set()
+                            for o in cust_ns_orders:
+                                active_types.add(str(o['Type']).lower().strip())
+                            for d in cust_hs_deals:
+                                active_types.add(str(d['Type']).lower().strip())
                             
-                            if not has_active:
-                                reorder_opportunities.append(row)
-                        
-                        if reorder_opportunities:
-                            reorder_total = sum(row['Q1_Forecast'] for row in reorder_opportunities)
-                            st.metric("Potential", f"${reorder_total:,.0f}")
-                            
-                            for row in reorder_opportunities:
-                                prod_type = row['Product_Type']
-                                q1_value = row['Q1_Value']
-                                conf_tier = row['Confidence_Tier']
-                                cadence = row['Cadence_Days']
-                                days_since_prod = row['Days_Since_Last']
-                                top_skus = row.get('Top_SKUs', '')
+                            reorder_opps = []
+                            for _, prod_row in cust_products.iterrows():
+                                prod_type = prod_row['Product_Type']
+                                prod_lower = str(prod_type).lower().strip()
                                 
-                                # Determine due status
-                                if pd.notna(cadence) and cadence > 0:
-                                    if days_since_prod > cadence * 1.5:
-                                        due_status = f"🔴 {int(days_since_prod - cadence)}d overdue"
-                                        due_color = "#ef4444"
-                                    elif days_since_prod > cadence:
+                                # Check if covered
+                                is_covered = any(prod_lower in at or at in prod_lower for at in active_types if at)
+                                
+                                if not is_covered:
+                                    reorder_opps.append(prod_row)
+                            
+                            if reorder_opps:
+                                for prod_row in reorder_opps:
+                                    prod_type = prod_row['Product_Type']
+                                    q1_value = int(prod_row['Q1_Value'])
+                                    selection_key = f"{customer_name}|{prod_type}"
+                                    
+                                    # Initialize if needed
+                                    if selection_key not in st.session_state[reorder_selections_key]:
+                                        st.session_state[reorder_selections_key][selection_key] = {
+                                            'selected': False,
+                                            'value': q1_value,
+                                            'confidence': confidence,
+                                            'product_type': prod_type,
+                                            'customer': customer_name,
+                                            'top_skus': prod_row.get('Top_SKUs', '')
+                                        }
+                                    
+                                    # Checkbox
+                                    chk_col, val_col = st.columns([2, 1])
+                                    with chk_col:
+                                        is_selected = st.checkbox(
+                                            f"{prod_type}",
+                                            value=st.session_state[reorder_selections_key][selection_key]['selected'],
+                                            key=f"chk_{selection_key}_{rep_name}"
+                                        )
+                                        st.session_state[reorder_selections_key][selection_key]['selected'] = is_selected
+                                    
+                                    with val_col:
+                                        if is_selected:
+                                            new_val = st.number_input(
+                                                "$",
+                                                value=st.session_state[reorder_selections_key][selection_key]['value'],
+                                                min_value=0,
+                                                step=500,
+                                                key=f"val_{selection_key}_{rep_name}",
+                                                label_visibility="collapsed"
+                                            )
+                                            st.session_state[reorder_selections_key][selection_key]['value'] = new_val
+                                        else:
+                                            st.caption(f"${q1_value:,.0f}")
+                            else:
+                                st.caption("All covered ✅")
+                        
+                        # Product breakdown table
+                        st.markdown("---")
+                        st.markdown("**📊 2025 Product Breakdown**")
+                        
+                        if not cust_products.empty:
+                            breakdown_data = []
+                            for _, prod_row in cust_products.iterrows():
+                                prod_type = prod_row['Product_Type']
+                                prod_lower = str(prod_type).lower().strip()
+                                
+                                # Check NS/HS coverage
+                                in_ns = any(prod_lower in str(o['Type']).lower() or str(o['Type']).lower() in prod_lower for o in cust_ns_orders)
+                                in_hs = any(prod_lower in str(d['Type']).lower() or str(d['Type']).lower() in prod_lower for d in cust_hs_deals)
+                                
+                                # Due status
+                                cadence = prod_row['Cadence_Days']
+                                days_prod = prod_row['Days_Since_Last']
+                                if in_ns or in_hs:
+                                    due_status = "—"
+                                elif pd.notna(cadence) and cadence > 0:
+                                    if days_prod > cadence * 1.5:
+                                        due_status = f"🔴 {int(days_prod - cadence)}d over"
+                                    elif days_prod > cadence:
                                         due_status = "🟡 Due now"
-                                        due_color = "#fbbf24"
                                     else:
                                         due_status = "🟢 On track"
-                                        due_color = "#10b981"
                                 else:
                                     due_status = "⚪ TBD"
-                                    due_color = "#94a3b8"
                                 
-                                # Checkbox for this reorder opportunity
-                                selection_key = f"{selected_customer}|{prod_type}"
-                                
-                                # Initialize if not exists
-                                if selection_key not in st.session_state[reorder_selections_key]:
-                                    st.session_state[reorder_selections_key][selection_key] = {
-                                        'selected': False,
-                                        'value': int(q1_value),
-                                        'confidence': confidence,
-                                        'product_type': prod_type,
-                                        'customer': selected_customer,
-                                        'top_skus': top_skus
+                                breakdown_data.append({
+                                    'Product': prod_type,
+                                    '2025 $': f"${prod_row['Total_Revenue']:,.0f}",
+                                    'Orders': int(prod_row['Order_Count']),
+                                    'NS': "✅" if in_ns else "—",
+                                    'HS': "✅" if in_hs else "—",
+                                    'Status': due_status,
+                                    'Top SKUs': str(prod_row.get('Top_SKUs', ''))[:35]
+                                })
+                            
+                            st.dataframe(
+                                pd.DataFrame(breakdown_data),
+                                use_container_width=True,
+                                hide_index=True,
+                                height=min(200, 35 + len(breakdown_data) * 35)
+                            )
+                        
+                        # Manual entry for this customer
+                        st.markdown("---")
+                        st.markdown("**➕ Add Manual Entry**")
+                        
+                        man_col1, man_col2, man_col3 = st.columns([2, 1, 1])
+                        
+                        product_types_list = sorted(historical_df['Order Type'].dropna().unique().tolist())
+                        
+                        with man_col1:
+                            manual_prod = st.selectbox(
+                                "Product",
+                                ["Select..."] + product_types_list,
+                                key=f"man_prod_{customer_name}_{rep_name}",
+                                label_visibility="collapsed"
+                            )
+                        
+                        with man_col2:
+                            manual_amt = st.number_input(
+                                "Amount",
+                                min_value=0,
+                                step=1000,
+                                key=f"man_amt_{customer_name}_{rep_name}",
+                                label_visibility="collapsed"
+                            )
+                        
+                        with man_col3:
+                            if st.button("➕ Add", key=f"man_add_{customer_name}_{rep_name}"):
+                                if manual_prod != "Select..." and manual_amt > 0:
+                                    entry_key = f"{customer_name}|{manual_prod}|manual|{len(st.session_state[manual_entries_key])}"
+                                    st.session_state[manual_entries_key][entry_key] = {
+                                        'customer': customer_name,
+                                        'product_type': manual_prod,
+                                        'amount': manual_amt,
+                                        'notes': 'Manual entry',
+                                        'confidence': 0.90
                                     }
-                                
-                                is_selected = st.checkbox(
-                                    f"{prod_type} — ${q1_value:,.0f}",
-                                    value=st.session_state[reorder_selections_key][selection_key]['selected'],
-                                    key=f"reorder_chk_{selection_key}_{rep_name}",
-                                    help=f"{due_status} | {top_skus[:50]}..." if top_skus else due_status
-                                )
-                                st.session_state[reorder_selections_key][selection_key]['selected'] = is_selected
-                                
-                                if is_selected:
-                                    # Editable value
-                                    new_value = st.number_input(
-                                        "Q1 Value",
-                                        value=st.session_state[reorder_selections_key][selection_key]['value'],
-                                        min_value=0,
-                                        step=1000,
-                                        key=f"reorder_val_{selection_key}_{rep_name}",
-                                        label_visibility="collapsed"
-                                    )
-                                    st.session_state[reorder_selections_key][selection_key]['value'] = new_value
-                                    
-                                    st.markdown(f"<span style='color:{due_color};font-size:0.8rem;'>{due_status}</span>", unsafe_allow_html=True)
-                        else:
-                            if cust_ns_orders or cust_hs_deals:
-                                st.success("✅ All products covered!")
-                            else:
-                                st.info("No product history")
-                    
-                    # === 2025 HISTORICAL BREAKDOWN BY PRODUCT TYPE ===
-                    st.markdown("---")
-                    st.markdown("##### 📊 2025 Historical Breakdown by Product Type")
-                    
-                    # Build the breakdown table
-                    breakdown_data = []
-                    for _, row in cust_products.iterrows():
-                        prod_type = row['Product_Type']
-                        prod_type_lower = str(prod_type).lower().strip()
-                        
-                        # Check NS
-                        in_ns = "❌"
-                        ns_amt = 0
-                        for order in cust_ns_orders:
-                            if str(order.get('Type', '')).lower().strip() in prod_type_lower or prod_type_lower in str(order.get('Type', '')).lower().strip():
-                                in_ns = "✅"
-                                ns_amt += float(order.get('Amount', 0) or 0)
-                        
-                        # Check HS
-                        in_hs = "❌"
-                        hs_amt = 0
-                        for deal in cust_hs_deals:
-                            if str(deal.get('Type', '')).lower().strip() in prod_type_lower or prod_type_lower in str(deal.get('Type', '')).lower().strip():
-                                in_hs = "✅"
-                                hs_amt += float(deal.get('Amount', 0) or 0)
-                        
-                        # Reorder status
-                        if in_ns == "✅" or in_hs == "✅":
-                            reorder_due = "—"
-                        else:
-                            cadence = row['Cadence_Days']
-                            days_since_prod = row['Days_Since_Last']
-                            if pd.notna(cadence) and cadence > 0:
-                                if days_since_prod > cadence * 1.5:
-                                    reorder_due = f"🔴 {int(days_since_prod - cadence)}d overdue"
-                                elif days_since_prod > cadence:
-                                    reorder_due = "🟡 Due now"
-                                else:
-                                    reorder_due = "🟢 Due soon"
-                            else:
-                                reorder_due = "⚪ TBD"
-                        
-                        breakdown_data.append({
-                            'Product Type': prod_type,
-                            '2025 Orders': int(row['Order_Count']),
-                            '2025 Revenue': f"${row['Total_Revenue']:,.0f}",
-                            'In NS?': f"{in_ns} ${ns_amt:,.0f}" if ns_amt > 0 else in_ns,
-                            'In HS?': f"{in_hs} ${hs_amt:,.0f}" if hs_amt > 0 else in_hs,
-                            'Reorder Due?': reorder_due,
-                            'Top SKUs': row.get('Top_SKUs', '')[:40] + "..." if len(str(row.get('Top_SKUs', ''))) > 40 else row.get('Top_SKUs', '')
-                        })
-                    
-                    if breakdown_data:
-                        breakdown_df = pd.DataFrame(breakdown_data)
-                        st.dataframe(
-                            breakdown_df,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "Product Type": st.column_config.TextColumn("Product Type", width="medium"),
-                                "2025 Orders": st.column_config.NumberColumn("2025 #", width="small"),
-                                "2025 Revenue": st.column_config.TextColumn("2025 $", width="small"),
-                                "In NS?": st.column_config.TextColumn("In NS?", width="small"),
-                                "In HS?": st.column_config.TextColumn("In HS?", width="small"),
-                                "Reorder Due?": st.column_config.TextColumn("Reorder?", width="medium"),
-                                "Top SKUs": st.column_config.TextColumn("Top SKUs", width="large")
-                            }
-                        )
-                    
-                    # === MANUAL ENTRY SECTION ===
-                    st.markdown("---")
-                    st.markdown("##### ➕ Add Known Upcoming Order")
-                    st.caption("Add orders you know about that aren't in the system yet")
-                    
-                    # Get product types for dropdown
-                    product_type_options = sorted(historical_df['Order Type'].dropna().unique().tolist())
-                    
-                    man_col1, man_col2, man_col3, man_col4 = st.columns([2, 1, 2, 1])
-                    
-                    with man_col1:
-                        manual_product = st.selectbox(
-                            "Product Type",
-                            options=["-- Select --"] + product_type_options,
-                            key=f"manual_prod_{selected_customer}_{rep_name}"
-                        )
-                    
-                    with man_col2:
-                        manual_amount = st.number_input(
-                            "Expected Amount",
-                            min_value=0,
-                            step=1000,
-                            key=f"manual_amt_{selected_customer}_{rep_name}"
-                        )
-                    
-                    with man_col3:
-                        manual_notes = st.text_input(
-                            "Notes",
-                            placeholder="e.g., Discussed at trade show",
-                            key=f"manual_notes_{selected_customer}_{rep_name}"
-                        )
-                    
-                    with man_col4:
-                        st.write("")  # Spacer
-                        if st.button("➕ Add", key=f"manual_add_{selected_customer}_{rep_name}", use_container_width=True):
-                            if manual_product != "-- Select --" and manual_amount > 0:
-                                entry_key = f"{selected_customer}|{manual_product}|{len(st.session_state[manual_entries_key])}"
-                                st.session_state[manual_entries_key][entry_key] = {
-                                    'customer': selected_customer,
-                                    'product_type': manual_product,
-                                    'amount': manual_amount,
-                                    'notes': manual_notes,
-                                    'confidence': 0.90  # Manual entries = high confidence
-                                }
-                                st.rerun()
-                    
-                    # Show existing manual entries for this customer
-                    cust_manual_entries = {k: v for k, v in st.session_state[manual_entries_key].items() 
-                                          if v['customer'] == selected_customer}
-                    
-                    if cust_manual_entries:
-                        st.markdown("**Added Items:**")
-                        for entry_key, entry in cust_manual_entries.items():
-                            entry_col1, entry_col2 = st.columns([4, 1])
-                            with entry_col1:
-                                st.markdown(f"• **{entry['product_type']}** — ${entry['amount']:,.0f} — _{entry['notes']}_")
-                            with entry_col2:
-                                if st.button("🗑️", key=f"remove_{entry_key}_{rep_name}"):
-                                    del st.session_state[manual_entries_key][entry_key]
                                     st.rerun()
+                        
+                        # Show manual entries for this customer
+                        cust_manual = {k: v for k, v in st.session_state[manual_entries_key].items() 
+                                      if v['customer'] == customer_name}
+                        if cust_manual:
+                            for entry_key, entry in cust_manual.items():
+                                ent_col1, ent_col2 = st.columns([4, 1])
+                                with ent_col1:
+                                    st.caption(f"📝 {entry['product_type']}: ${entry['amount']:,.0f}")
+                                with ent_col2:
+                                    if st.button("🗑️", key=f"del_{entry_key}"):
+                                        del st.session_state[manual_entries_key][entry_key]
+                                        st.rerun()
                 
-                # === REORDER SUMMARY (outside customer selection) ===
+                # === REORDER SUMMARY ===
                 st.markdown("---")
-                st.markdown("#### 📋 Reorder Selections Summary")
+                st.markdown("### 📋 Reorder Forecast Summary")
                 
-                # Calculate totals from reorder selections
+                # Calculate totals
                 total_reorder_raw = 0
                 total_reorder_weighted = 0
                 selected_items = []
@@ -2959,19 +2907,26 @@ def main():
                 
                 total_reorder_forecast = total_reorder_weighted + total_manual
                 
-                # Display summary metrics
+                # Summary metrics
                 sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
                 with sum_col1:
-                    st.metric("Reorder Selections", f"{len([i for i in selected_items if '(Manual)' not in i['Product_Type']])}")
+                    st.metric("Selections", len([i for i in selected_items if '(Manual)' not in i['Product_Type']]))
                 with sum_col2:
-                    st.metric("Manual Entries", f"{len([i for i in selected_items if '(Manual)' in i['Product_Type']])}")
+                    st.metric("Manual Adds", len([i for i in selected_items if '(Manual)' in i['Product_Type']]))
                 with sum_col3:
-                    st.metric("Raw Value", f"${total_reorder_raw + sum(e.get('amount', 0) for e in st.session_state.get(manual_entries_key, {}).values()):,.0f}")
+                    st.metric("Raw Total", f"${total_reorder_raw + sum(e.get('amount', 0) for e in st.session_state.get(manual_entries_key, {}).values()):,.0f}")
                 with sum_col4:
-                    st.metric("Weighted Forecast", f"${total_reorder_forecast:,.0f}", help="Adjusted by confidence level")
+                    st.metric("Weighted Forecast", f"${total_reorder_forecast:,.0f}")
                 
-                # Build reorder_buckets for downstream calculation
+                # Show selected items table
                 if selected_items:
+                    with st.expander("📝 View All Selections", expanded=False):
+                        sel_df = pd.DataFrame(selected_items)
+                        sel_df['Projected_Value'] = sel_df['Projected_Value'].apply(lambda x: f"${x:,.0f}")
+                        sel_df['Q1_Value'] = sel_df['Q1_Value'].apply(lambda x: f"${x:,.0f}")
+                        st.dataframe(sel_df[['Customer', 'Product_Type', 'Q1_Value', 'Projected_Value']], 
+                                    use_container_width=True, hide_index=True)
+                    
                     reorder_buckets['reorder_selections'] = pd.DataFrame(selected_items)
     # === CALCULATE RESULTS ===
     def safe_sum(df):
