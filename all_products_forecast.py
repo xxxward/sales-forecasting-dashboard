@@ -2355,88 +2355,177 @@ def main():
         """)
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # === EXPORT SECTION ===
+    # === EXPORT SECTION (Unified - matches Sales Dashboard methodology) ===
     st.markdown("---")
     st.markdown('<div class="section-header">📤 Export Q1 2026 Forecast</div>', unsafe_allow_html=True)
     
-    if export_buckets or reorder_buckets:
-        # Combine all selected data for export
-        all_ns_data = []
-        all_hs_data = []
-        all_reorder_data = []
+    if total_forecast > 0:
+        # Initialize Lists
+        export_summary = []
+        export_data = []
         
+        # A. Build Summary
+        export_summary.append({'Category': '=== Q1 2026 FORECAST SUMMARY ===', 'Amount': ''})
+        export_summary.append({'Category': 'Q1 Goal', 'Amount': f"${q1_goal:,.0f}"})
+        export_summary.append({'Category': 'Scheduled Orders (NetSuite)', 'Amount': f"${selected_scheduled:,.0f}"})
+        export_summary.append({'Category': 'Pipeline Deals (HubSpot)', 'Amount': f"${selected_pipeline:,.0f}"})
+        export_summary.append({'Category': 'Reorder Potential', 'Amount': f"${selected_reorder:,.0f}"})
+        export_summary.append({'Category': 'Total Forecast', 'Amount': f"${total_forecast:,.0f}"})
+        export_summary.append({'Category': 'Gap to Goal', 'Amount': f"${gap_to_goal:,.0f}"})
+        export_summary.append({'Category': '', 'Amount': ''})
+        export_summary.append({'Category': '=== SELECTED COMPONENTS ===', 'Amount': ''})
+        
+        # Add Component Totals by bucket
         for key, df in export_buckets.items():
             if df.empty:
                 continue
-            
-            export_df = df.copy()
-            
-            # Add category label
-            if key in ns_categories:
-                export_df['Category'] = ns_categories[key]['label']
-                all_ns_data.append(export_df)
-            elif key in hs_categories:
-                export_df['Category'] = hs_categories[key]['label']
-                all_hs_data.append(export_df)
+            # Handle both Amount and Amount_Numeric columns (NS uses Amount, HS uses Amount_Numeric)
+            if 'Amount_Numeric' in df.columns:
+                cat_val = df['Amount_Numeric'].sum()
+            elif 'Amount' in df.columns:
+                cat_val = df['Amount'].sum()
+            else:
+                cat_val = 0
+                
+            if cat_val > 0:
+                label = ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key))
+                count = len(df)
+                export_summary.append({'Category': f"{label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
         
-        # Add reorder bucket data
+        # Add reorder bucket totals to summary
         if reorder_buckets:
             for key, df in reorder_buckets.items():
                 if df.empty:
                     continue
-                export_df = df.copy()
-                export_df['Category'] = key.replace('reorder_', '').replace('_', ' ').title()
-                all_reorder_data.append(export_df)
+                if 'Projected_Value' in df.columns:
+                    cat_val = df['Projected_Value'].sum()
+                else:
+                    cat_val = 0
+                if cat_val > 0:
+                    tier_label = key.replace('reorder_', 'Reorder - ').replace('_', ' ').title()
+                    count = len(df)
+                    export_summary.append({'Category': f"{tier_label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
         
-        col1, col2, col3 = st.columns(3)
+        export_summary.append({'Category': '', 'Amount': ''})
+        export_summary.append({'Category': '=== DETAILED LINE ITEMS ===', 'Amount': ''})
         
-        with col1:
-            if all_ns_data:
-                ns_export = pd.concat(all_ns_data, ignore_index=True)
-                csv_ns = ns_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download NetSuite Orders (CSV)",
-                    data=csv_ns,
-                    file_name=f"q1_2026_netsuite_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                ns_total = ns_export['Amount'].sum() if 'Amount' in ns_export.columns else 0
-                st.caption(f"{len(ns_export)} orders, ${ns_total:,.0f}")
-            else:
-                st.info("No NetSuite orders selected")
+        # B. Build Line Items
         
-        with col2:
-            if all_hs_data:
-                hs_export = pd.concat(all_hs_data, ignore_index=True)
-                csv_hs = hs_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download HubSpot Deals (CSV)",
-                    data=csv_hs,
-                    file_name=f"q1_2026_hubspot_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                hs_total = hs_export['Amount_Numeric'].sum() if 'Amount_Numeric' in hs_export.columns else 0
-                st.caption(f"{len(hs_export)} deals, ${hs_total:,.0f}")
-            else:
-                st.info("No HubSpot deals selected")
+        # 1. NetSuite & HubSpot Items from export_buckets
+        for key, df in export_buckets.items():
+            if df.empty:
+                continue
+            
+            label = ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key))
+            
+            for _, row in df.iterrows():
+                # Determine fields based on source type (NS vs HS)
+                if key in ns_categories:  # NetSuite
+                    item_type = f"Sales Order - {label}"
+                    item_id = row.get('SO #', row.get('Document Number', ''))
+                    cust = row.get('Customer', '')
+                    date_val = row.get('Ship Date', row.get('Key Date', ''))
+                    deal_type = row.get('Type', row.get('Display_Type', ''))
+                    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
+                    # Get Sales Rep
+                    rep = row.get('Sales Rep', row.get('Rep Master', ''))
+                else:  # HubSpot
+                    item_type = f"HubSpot - {label}"
+                    item_id = row.get('Deal ID', row.get('Record ID', ''))
+                    cust = row.get('Account Name', row.get('Deal Name', ''))
+                    date_val = row.get('Close', row.get('Close Date', ''))
+                    deal_type = row.get('Type', row.get('Display_Type', ''))
+                    amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
+                    # Get Deal Owner
+                    rep = row.get('Deal Owner', '')
+                    if pd.isna(rep) or rep is None or str(rep).strip() == '':
+                        first = row.get('Deal Owner First Name', '')
+                        last = row.get('Deal Owner Last Name', '')
+                        if first or last:
+                            rep = f"{first} {last}".strip()
+                
+                # Clean up date value
+                if pd.isna(date_val) or date_val == '' or date_val == '—':
+                    date_val = ''
+                elif isinstance(date_val, pd.Timestamp):
+                    date_val = date_val.strftime('%Y-%m-%d')
+                elif isinstance(date_val, str):
+                    if date_val and date_val != '—':
+                        try:
+                            parsed_date = pd.to_datetime(date_val, errors='coerce')
+                            if pd.notna(parsed_date):
+                                date_val = parsed_date.strftime('%Y-%m-%d')
+                            else:
+                                date_val = ''
+                        except:
+                            date_val = ''
+                    else:
+                        date_val = ''
+                else:
+                    date_val = ''
+                
+                # Ensure rep is a string, not NaN
+                if pd.isna(rep) or rep is None:
+                    rep = ''
+                else:
+                    rep = str(rep).strip()
+                    if rep.lower() in ['nan', 'none']:
+                        rep = ''
+                
+                export_data.append({
+                    'Category': item_type,
+                    'ID': item_id,
+                    'Customer': cust,
+                    'Order/Deal Type': deal_type,
+                    'Date': date_val,
+                    'Amount': amount,
+                    'Rep': rep
+                })
         
-        with col3:
-            if all_reorder_data:
-                reorder_export = pd.concat(all_reorder_data, ignore_index=True)
-                csv_reorder = reorder_export.to_csv(index=False)
-                st.download_button(
-                    label="📥 Download Reorder Prospects (CSV)",
-                    data=csv_reorder,
-                    file_name=f"q1_2026_reorder_prospects_{rep_name.replace(' ', '_')}.csv",
-                    mime="text/csv",
-                    use_container_width=True
-                )
-                reorder_total = reorder_export['Projected_Value'].sum() if 'Projected_Value' in reorder_export.columns else 0
-                st.caption(f"{len(reorder_export)} prospects, ${reorder_total:,.0f} projected")
-            else:
-                st.info("No reorder prospects selected")
+        # 2. Reorder Prospects from reorder_buckets
+        if reorder_buckets:
+            for key, df in reorder_buckets.items():
+                if df.empty:
+                    continue
+                
+                tier_label = key.replace('reorder_', 'Reorder - ').replace('_', ' ').title()
+                
+                for _, row in df.iterrows():
+                    cust = row.get('Customer', '')
+                    conf_tier = row.get('Confidence_Tier', '')
+                    conf_pct = row.get('Confidence_Pct', 0)
+                    q1_val = row.get('Q1_Value', 0)
+                    projected_val = row.get('Projected_Value', 0)
+                    
+                    export_data.append({
+                        'Category': tier_label,
+                        'ID': '',  # No ID for reorder prospects
+                        'Customer': cust,
+                        'Order/Deal Type': f"{conf_tier} ({conf_pct:.0%})",
+                        'Date': '',  # No specific date
+                        'Amount': projected_val,
+                        'Rep': rep_name  # Use selected rep name
+                    })
+        
+        # C. Construct CSV
+        if export_data:
+            summary_df = pd.DataFrame(export_summary)
+            data_df = pd.DataFrame(export_data)
+            
+            # Format Amount in Data DF
+            data_df['Amount'] = data_df['Amount'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+            
+            final_csv = summary_df.to_csv(index=False) + "\n" + data_df.to_csv(index=False)
+            
+            st.download_button(
+                label="📥 Download Q1 2026 Forecast",
+                data=final_csv,
+                file_name=f"q1_2026_forecast_{rep_name.replace(' ', '_')}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+            st.caption(f"Export includes summary + {len(data_df)} line items.")
+        else:
+            st.info("No items selected for export")
     else:
         st.info("Select items above to enable export")
     
