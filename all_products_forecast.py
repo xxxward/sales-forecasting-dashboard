@@ -589,8 +589,6 @@ def create_forecast_waterfall(scheduled, pipeline, reorder, goal, title="Path to
     measure = ["relative", "relative", "relative", "total", "total"]
     y = [scheduled, pipeline, reorder, total_forecast, goal]
 
-    bar_colors = ["#34d399", "#60a5fa", "#fbbf24", "rgba(255,255,255,0.14)", "rgba(255,255,255,0.07)"]
-
     fig = go.Figure(
         go.Waterfall(
             name="Forecast",
@@ -601,10 +599,9 @@ def create_forecast_waterfall(scheduled, pipeline, reorder, goal, title="Path to
             connector=dict(line=dict(color="rgba(148,163,184,0.25)", width=1)),
             text=[f"${scheduled:,.0f}", f"${pipeline:,.0f}", f"${reorder:,.0f}", f"${total_forecast:,.0f}", f"${goal:,.0f}"],
             textposition="outside",
-            increasing=dict(marker=dict(color="#10b981")),
-            decreasing=dict(marker=dict(color="#ef4444")),
-            totals=dict(marker=dict(color="rgba(255,255,255,0.10)")),
-            marker=dict(color=bar_colors, line=dict(color="rgba(255,255,255,0.12)", width=1)),
+            increasing=dict(marker=dict(color="#10b981", line=dict(color="rgba(255,255,255,0.12)", width=1))),
+            decreasing=dict(marker=dict(color="#ef4444", line=dict(color="rgba(255,255,255,0.12)", width=1))),
+            totals=dict(marker=dict(color="rgba(255,255,255,0.10)", line=dict(color="rgba(255,255,255,0.12)", width=1))),
         )
     )
 
