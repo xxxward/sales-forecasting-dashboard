@@ -1425,36 +1425,89 @@ def main():
     # The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
     # - pf_spillover = PF orders with Q1 2026 Promise/Projected dates
     # - pa_spillover = PA orders with PA Date in Q1 2026
+    # Additional buckets that may convert to Q1 revenue:
+    # - pf_nodate = PF orders with no date (could ship anytime)
+    # - pa_date = PA with Q4 date (<2 weeks old) - could convert
+    # - pa_nodate = PA with no date (<2 weeks old) - could convert
+    # - pa_old = PA orders >2 weeks old - stale but potential
     
     # Aggregate data from all active reps
     all_pf_spillover = []
     all_pa_spillover = []
+    all_pf_nodate = []
+    all_pa_date = []
+    all_pa_nodate = []
+    all_pa_old = []
+    
     total_pf_amount = 0
     total_pa_amount = 0
+    total_pf_nodate_amount = 0
+    total_pa_date_amount = 0
+    total_pa_nodate_amount = 0
+    total_pa_old_amount = 0
     
     for r in active_team_reps:
         so_cats = categorize_sales_orders(sales_orders_df, r)
+        
+        # PF Spillover (Q1 2026 dates)
         if not so_cats['pf_spillover'].empty:
             all_pf_spillover.append(so_cats['pf_spillover'])
             total_pf_amount += so_cats['pf_spillover_amount']
+        
+        # PA Spillover (Q1 2026 PA dates)
         if not so_cats['pa_spillover'].empty:
             all_pa_spillover.append(so_cats['pa_spillover'])
             total_pa_amount += so_cats['pa_spillover_amount']
+        
+        # PF No Date (External + Internal combined)
+        if not so_cats['pf_nodate_ext'].empty:
+            all_pf_nodate.append(so_cats['pf_nodate_ext'])
+            total_pf_nodate_amount += so_cats['pf_nodate_ext_amount']
+        if not so_cats['pf_nodate_int'].empty:
+            all_pf_nodate.append(so_cats['pf_nodate_int'])
+            total_pf_nodate_amount += so_cats['pf_nodate_int_amount']
+        
+        # PA with Date (Q4 date, <2 weeks old)
+        if not so_cats['pa_date'].empty:
+            all_pa_date.append(so_cats['pa_date'])
+            total_pa_date_amount += so_cats['pa_date_amount']
+        
+        # PA No Date (<2 weeks old)
+        if not so_cats['pa_nodate'].empty:
+            all_pa_nodate.append(so_cats['pa_nodate'])
+            total_pa_nodate_amount += so_cats['pa_nodate_amount']
+        
+        # PA Old (>2 weeks)
+        if not so_cats['pa_old'].empty:
+            all_pa_old.append(so_cats['pa_old'])
+            total_pa_old_amount += so_cats['pa_old_amount']
     
     # Combine into single dataframes
     combined_pf = pd.concat(all_pf_spillover, ignore_index=True) if all_pf_spillover else pd.DataFrame()
     combined_pa = pd.concat(all_pa_spillover, ignore_index=True) if all_pa_spillover else pd.DataFrame()
+    combined_pf_nodate = pd.concat(all_pf_nodate, ignore_index=True) if all_pf_nodate else pd.DataFrame()
+    combined_pa_date = pd.concat(all_pa_date, ignore_index=True) if all_pa_date else pd.DataFrame()
+    combined_pa_nodate = pd.concat(all_pa_nodate, ignore_index=True) if all_pa_nodate else pd.DataFrame()
+    combined_pa_old = pd.concat(all_pa_old, ignore_index=True) if all_pa_old else pd.DataFrame()
     
-    # Map spillover to Q1 categories
+    # Map to Q1 categories - organized by certainty level
     ns_categories = {
         'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
         'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': combined_pa, 'amount': total_pa_amount},
+        'PF_NoDate': {'label': '📦 PF (No Date)', 'df': combined_pf_nodate, 'amount': total_pf_nodate_amount},
+        'PA_Date': {'label': '⏳ PA (With Date)', 'df': combined_pa_date, 'amount': total_pa_date_amount},
+        'PA_NoDate': {'label': '⏳ PA (No Date)', 'df': combined_pa_nodate, 'amount': total_pa_nodate_amount},
+        'PA_Old': {'label': '⚠️ PA (>2 Weeks)', 'df': combined_pa_old, 'amount': total_pa_old_amount},
     }
     
     # Format for display
     ns_dfs = {
         'PF_Spillover': format_ns_view(combined_pf, 'Promise'),
         'PA_Spillover': format_ns_view(combined_pa, 'PA_Date'),
+        'PF_NoDate': format_ns_view(combined_pf_nodate, 'Promise'),
+        'PA_Date': format_ns_view(combined_pa_date, 'PA_Date'),
+        'PA_NoDate': format_ns_view(combined_pa_nodate, 'PA_Date'),
+        'PA_Old': format_ns_view(combined_pa_old, 'PA_Date'),
     }
     
     # === HUBSPOT Q1 2026 PIPELINE ===
@@ -1586,7 +1639,7 @@ def main():
         # === NETSUITE COLUMN ===
         with col_ns:
             st.markdown("#### 📦 Confirmed Orders (NetSuite)")
-            st.caption("These are locked in - spillover orders shipping in Q1")
+            st.caption("Orders in NetSuite - select which to include in forecast")
             
             for key, data in ns_categories.items():
                 df = ns_dfs.get(key, pd.DataFrame())
@@ -2561,9 +2614,16 @@ def main():
         if is_team_view:
             st.write(f"**Team Reps:** {', '.join(active_team_reps)}")
         st.write(f"**Total Deals Loaded:** {len(deals_df)}")
-        st.write(f"**PF Spillover:** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
-        st.write(f"**PA Spillover:** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
         
+        st.write("**--- NetSuite Buckets ---**")
+        st.write(f"**PF Spillover (Q1 Date):** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
+        st.write(f"**PA Spillover (Q1 PA Date):** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
+        st.write(f"**PF No Date:** {len(combined_pf_nodate)} orders, ${total_pf_nodate_amount:,.0f}")
+        st.write(f"**PA With Date:** {len(combined_pa_date)} orders, ${total_pa_date_amount:,.0f}")
+        st.write(f"**PA No Date:** {len(combined_pa_nodate)} orders, ${total_pa_nodate_amount:,.0f}")
+        st.write(f"**PA >2 Weeks:** {len(combined_pa_old)} orders, ${total_pa_old_amount:,.0f}")
+        
+        st.write("**--- HubSpot Buckets ---**")
         for key in hs_categories.keys():
             df = hs_dfs.get(key, pd.DataFrame())
             val = df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0
