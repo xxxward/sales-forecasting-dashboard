@@ -725,6 +725,171 @@ def format_hs_view(df):
     return d.sort_values('Amount_Numeric', ascending=False) if 'Amount_Numeric' in d.columns else d
 
 
+# ========== CUSTOMER NAME MATCHING FUNCTIONS ==========
+import re
+
+def normalize_customer_name(name):
+    """Basic normalization: lowercase, strip whitespace"""
+    if pd.isna(name) or name is None:
+        return ''
+    return str(name).lower().strip()
+
+def extract_customer_keys(name):
+    """
+    Extract multiple matching keys from a customer name.
+    Handles formats like:
+    - "Acreage Holdings : Acreage Holdings: New Jersey (NJ)"
+    - "Acreage Holdings: New Jersey (NJ)"
+    - "Customer Name (State)"
+    
+    Returns a set of possible matching keys.
+    """
+    if pd.isna(name) or name is None:
+        return set()
+    
+    name = str(name).strip()
+    keys = set()
+    
+    # Add full normalized name
+    normalized = name.lower().strip()
+    keys.add(normalized)
+    
+    # Extract state code in parentheses (e.g., "(NJ)", "(MA)")
+    state_match = re.search(r'\(([A-Z]{2})\)', name, re.IGNORECASE)
+    if state_match:
+        state_code = state_match.group(1).upper()
+        keys.add(state_code)
+    
+    # Split by " : " (NetSuite parent : child format)
+    if ' : ' in name:
+        parts = name.split(' : ')
+        for part in parts:
+            keys.add(part.lower().strip())
+            # Also add sub-parts split by ":"
+            if ':' in part:
+                subparts = part.split(':')
+                for sp in subparts:
+                    clean_sp = sp.strip().lower()
+                    if len(clean_sp) > 2:  # Skip very short parts
+                        keys.add(clean_sp)
+    
+    # Split by ":" without spaces
+    if ':' in name:
+        parts = name.split(':')
+        for part in parts:
+            clean_part = part.strip().lower()
+            if len(clean_part) > 2:
+                keys.add(clean_part)
+    
+    # Extract core name (everything before first colon or parenthesis)
+    core_match = re.match(r'^([^:\(]+)', name)
+    if core_match:
+        core = core_match.group(1).strip().lower()
+        if len(core) > 2:
+            keys.add(core)
+    
+    # Remove empty strings
+    keys.discard('')
+    
+    return keys
+
+def customers_match(name1, name2):
+    """
+    Check if two customer names likely refer to the same customer.
+    Uses fuzzy matching with multiple strategies.
+    
+    Returns True if they match, False otherwise.
+    """
+    if pd.isna(name1) or pd.isna(name2) or not name1 or not name2:
+        return False
+    
+    n1 = str(name1).lower().strip()
+    n2 = str(name2).lower().strip()
+    
+    # Exact match
+    if n1 == n2:
+        return True
+    
+    # One contains the other (for parent : child cases)
+    if n1 in n2 or n2 in n1:
+        return True
+    
+    # Extract and compare keys
+    keys1 = extract_customer_keys(name1)
+    keys2 = extract_customer_keys(name2)
+    
+    # Check for significant overlap in keys
+    # If they share a key that's longer than just a state code, consider it a match
+    common_keys = keys1 & keys2
+    for key in common_keys:
+        if len(key) > 3:  # More than just a state code
+            return True
+    
+    # Check if the "location part" matches (e.g., "New Jersey (NJ)")
+    # Extract everything after the last colon
+    def get_location_part(name):
+        if ':' in name:
+            return name.split(':')[-1].strip().lower()
+        return name.lower().strip()
+    
+    loc1 = get_location_part(str(name1))
+    loc2 = get_location_part(str(name2))
+    
+    if loc1 == loc2 and len(loc1) > 3:
+        return True
+    
+    # Check for matching state codes AND similar base names
+    state1 = re.search(r'\(([A-Z]{2})\)', str(name1), re.IGNORECASE)
+    state2 = re.search(r'\(([A-Z]{2})\)', str(name2), re.IGNORECASE)
+    
+    if state1 and state2 and state1.group(1).upper() == state2.group(1).upper():
+        # Same state code - check if base names are similar
+        base1 = re.sub(r'\([^)]+\)', '', str(name1)).replace(':', ' ').lower().split()[0] if name1 else ''
+        base2 = re.sub(r'\([^)]+\)', '', str(name2)).replace(':', ' ').lower().split()[0] if name2 else ''
+        if base1 and base2 and (base1 in base2 or base2 in base1):
+            return True
+    
+    return False
+
+def find_matching_customer(target_name, customer_list):
+    """
+    Find a matching customer from a list.
+    Returns the matching customer name or None.
+    """
+    for cust in customer_list:
+        if customers_match(target_name, cust):
+            return cust
+    return None
+
+def build_customer_match_dict(ns_customers, hs_customers):
+    """
+    Build a dictionary mapping normalized names to all their variations.
+    This helps with consistent matching across systems.
+    
+    Returns dict: {canonical_name: set of all matching names}
+    """
+    all_names = list(ns_customers) + list(hs_customers)
+    match_groups = {}
+    used = set()
+    
+    for name in all_names:
+        if name in used:
+            continue
+        
+        # Find all names that match this one
+        group = {name}
+        for other in all_names:
+            if other not in used and customers_match(name, other):
+                group.add(other)
+        
+        # Use the shortest name as canonical (often the HubSpot version)
+        canonical = min(group, key=len)
+        match_groups[canonical] = group
+        used.update(group)
+    
+    return match_groups
+
+
 # ========== HISTORICAL ANALYSIS FUNCTIONS ==========
 
 def load_historical_orders(main_dash, rep_name):
@@ -2464,19 +2629,25 @@ def main():
                 df = hs_dfs.get(key, pd.DataFrame())
                 if not df.empty:
                     st.write(f"{key}: {df.columns.tolist()}")
+                    if 'Account Name' in df.columns:
+                        st.write(f"Sample Account Names: {df['Account Name'].head(5).tolist()}")
                     break
             
             if not deals_df.empty:
                 st.write(f"**Raw deals_df columns:** {deals_df.columns.tolist()}")
+                if 'Account Name' in deals_df.columns:
+                    st.write(f"Sample Account Names from deals_df: {deals_df['Account Name'].dropna().head(5).tolist()}")
         
-        # Get list of customers to exclude - normalize names for matching
-        def normalize(name): 
-            if pd.isna(name) or name is None:
-                return ''
-            return str(name).lower().strip()
+        # Build combined set of all NS/HS customer names for fuzzy matching
+        all_pipeline_customers = pending_customers | pipeline_customers
         
-        excluded_customers = {normalize(c) for c in pending_customers | pipeline_customers}
-        excluded_customers.discard('')  # Remove empty string if present
+        # Create a function to check if a historical customer has a match in NS/HS
+        def has_pipeline_match(hist_customer):
+            """Check if a historical customer has a matching NS/HS entry using fuzzy matching"""
+            for pipeline_cust in all_pipeline_customers:
+                if customers_match(hist_customer, pipeline_cust):
+                    return True
+            return False
         
         # Calculate NEW product-level metrics (with SKU descriptions from Item Master)
         product_metrics_df = calculate_customer_product_metrics(historical_df, line_items_df, sku_to_desc)
@@ -2484,26 +2655,55 @@ def main():
         if product_metrics_df.empty:
             st.warning("No product metrics calculated")
         else:
-            # Filter out customers with pending orders/deals
-            product_metrics_df['Customer_Normalized'] = product_metrics_df['Customer'].apply(normalize)
+            # Filter out customers with pending orders/deals using FUZZY matching
+            unique_hist_customers = product_metrics_df['Customer'].unique().tolist()
+            
+            # Build a mapping of which historical customers have pipeline matches
+            customers_with_pipeline = set()
+            customer_pipeline_matches = {}  # For debugging
+            
+            for hist_cust in unique_hist_customers:
+                for pipeline_cust in all_pipeline_customers:
+                    if customers_match(hist_cust, pipeline_cust):
+                        customers_with_pipeline.add(hist_cust)
+                        if hist_cust not in customer_pipeline_matches:
+                            customer_pipeline_matches[hist_cust] = []
+                        customer_pipeline_matches[hist_cust].append(pipeline_cust)
+                        break
+            
+            # Debug: Show fuzzy matching results
+            with st.expander("🔧 Debug: Fuzzy Customer Matching", expanded=False):
+                st.write(f"**Historical Customers:** {len(unique_hist_customers)}")
+                st.write(f"**NS/HS Pipeline Customers:** {len(all_pipeline_customers)}")
+                st.write(f"**Matched (will be excluded from reorder):** {len(customers_with_pipeline)}")
+                
+                if customer_pipeline_matches:
+                    st.write("**Sample Matches:**")
+                    for hist, matches in list(customer_pipeline_matches.items())[:10]:
+                        st.write(f"• '{hist}' ↔ '{matches[0]}'")
+                
+                # Show unmatched customers that might need attention
+                unmatched_hist = [c for c in unique_hist_customers if c not in customers_with_pipeline]
+                if unmatched_hist:
+                    st.write(f"**Unmatched Historical Customers ({len(unmatched_hist)}):**")
+                    st.write(unmatched_hist[:15])
+            
+            opportunities_df = product_metrics_df[
+                ~product_metrics_df['Customer'].isin(customers_with_pipeline)
+            ].copy()
             
             # Debug: Show filtering stats
             total_before = product_metrics_df['Customer'].nunique()
-            excluded_count = product_metrics_df[product_metrics_df['Customer_Normalized'].isin(excluded_customers)]['Customer'].nunique()
-            
-            opportunities_df = product_metrics_df[
-                ~product_metrics_df['Customer_Normalized'].isin(excluded_customers)
-            ].copy()
+            excluded_count = len(customers_with_pipeline)
             
             # Update debug expander with exclusion stats
             with st.expander("🔧 Debug: Customer Exclusion Details", expanded=False):
                 st.write(f"**Total Historical Customers:** {total_before}")
-                st.write(f"**Customers Excluded (have pending/pipeline):** {excluded_count}")
+                st.write(f"**Customers Excluded (fuzzy match to NS/HS):** {excluded_count}")
                 st.write(f"**Customers Remaining (opportunities):** {opportunities_df['Customer'].nunique()}")
                 
                 # Show which specific customers were excluded
-                excluded_from_hist = product_metrics_df[product_metrics_df['Customer_Normalized'].isin(excluded_customers)]['Customer'].unique().tolist()
-                st.write(f"**Excluded Customers from Historical:** {sorted(excluded_from_hist)[:20]}")
+                st.write(f"**Excluded Customers:** {sorted(list(customers_with_pipeline))[:20]}")
             
             if opportunities_df.empty and product_metrics_df.empty:
                 st.success("✅ No historical orders found for analysis.")
@@ -2533,12 +2733,23 @@ def main():
                     lambda r: pd.Series(get_status(r)), axis=1
                 )
                 
-                # Check NS/HS status for each customer
-                pending_normalized = {normalize(c) for c in pending_customers}
-                pipeline_normalized = {normalize(c) for c in pipeline_customers}
+                # Check NS/HS status for each customer using FUZZY MATCHING
+                def has_ns_match(cust_name):
+                    """Check if customer has a fuzzy match in pending NS customers"""
+                    for ns_cust in pending_customers:
+                        if customers_match(cust_name, ns_cust):
+                            return True
+                    return False
                 
-                customer_summary['Has_NS'] = customer_summary['Customer'].apply(lambda c: normalize(c) in pending_normalized)
-                customer_summary['Has_HS'] = customer_summary['Customer'].apply(lambda c: normalize(c) in pipeline_normalized)
+                def has_hs_match(cust_name):
+                    """Check if customer has a fuzzy match in pipeline HS customers"""
+                    for hs_cust in pipeline_customers:
+                        if customers_match(cust_name, hs_cust):
+                            return True
+                    return False
+                
+                customer_summary['Has_NS'] = customer_summary['Customer'].apply(has_ns_match)
+                customer_summary['Has_HS'] = customer_summary['Customer'].apply(has_hs_match)
                 customer_summary['Is_Opportunity'] = ~(customer_summary['Has_NS'] | customer_summary['Has_HS'])
                 
                 # Initialize session state
@@ -2643,40 +2854,43 @@ def main():
                         
                         # Get this customer's product breakdown
                         cust_products = product_metrics_df[product_metrics_df['Customer'] == customer_name].copy()
-                        cust_normalized = normalize(customer_name)
                         
-                        # Find NS orders for this customer
+                        # Find NS orders for this customer using FUZZY MATCHING
                         cust_ns_orders = []
                         for key in ns_categories.keys():
                             df = ns_dfs.get(key, pd.DataFrame())
                             if not df.empty and 'Customer' in df.columns:
-                                cust_rows = df[df['Customer'].apply(normalize) == cust_normalized]
-                                for _, row in cust_rows.iterrows():
-                                    cust_ns_orders.append({
-                                        'SO': row.get('SO #', ''),
-                                        'Type': row.get('Type', key),
-                                        'Amount': float(row.get('Amount', 0) or 0),
-                                        'Date': str(row.get('Ship Date', ''))[:10]
-                                    })
+                                for _, row in df.iterrows():
+                                    ns_cust = row.get('Customer', '')
+                                    if customers_match(customer_name, ns_cust):
+                                        cust_ns_orders.append({
+                                            'SO': row.get('SO #', ''),
+                                            'Type': row.get('Type', key),
+                                            'Amount': float(row.get('Amount', 0) or 0),
+                                            'Date': str(row.get('Ship Date', ''))[:10],
+                                            'NS_Customer': ns_cust  # Keep original name for debugging
+                                        })
                         
-                        # Find HS deals for this customer
+                        # Find HS deals for this customer using FUZZY MATCHING
                         cust_hs_deals = []
                         for key in hs_categories.keys():
                             df = hs_dfs.get(key, pd.DataFrame())
                             if not df.empty:
-                                customer_col = None
-                                for col in ['Account Name', 'Deal Name']:
-                                    if col in df.columns:
-                                        customer_col = col
-                                        break
-                                if customer_col:
-                                    cust_rows = df[df[customer_col].apply(normalize) == cust_normalized]
-                                    for _, row in cust_rows.iterrows():
+                                # Try multiple customer columns
+                                for _, row in df.iterrows():
+                                    hs_cust = None
+                                    for col in ['Account Name', 'Associated Company', 'Company', 'Deal Name']:
+                                        if col in df.columns and pd.notna(row.get(col)):
+                                            hs_cust = row.get(col)
+                                            break
+                                    
+                                    if hs_cust and customers_match(customer_name, hs_cust):
                                         cust_hs_deals.append({
                                             'Deal': row.get('Deal Name', ''),
                                             'Type': row.get('Product Type', key),
                                             'Amount': float(row.get('Amount_Numeric', row.get('Amount', 0)) or 0),
-                                            'Close': str(row.get('Close', row.get('Close Date', '')))[:10]
+                                            'Close': str(row.get('Close', row.get('Close Date', '')))[:10],
+                                            'HS_Customer': hs_cust  # Keep original name for debugging
                                         })
                         
                         # Three columns layout
