@@ -39,27 +39,28 @@ def get_mst_time():
     return datetime.now(ZoneInfo("America/Denver"))
 
 
-def calculate_business_days_until_q1():
-    """Calculate business days from today until Q1 2026 starts"""
+def calculate_business_days_remaining_q1():
+    """Calculate business days remaining in Q1 2026 (until Mar 31, 2026)"""
     from datetime import date
     
     today = date.today()
-    q1_start = date(2026, 1, 1)
+    q1_end = date(2026, 3, 31)
     
-    if today >= q1_start:
+    # If we're past Q1, return 0
+    if today > q1_end:
         return 0
     
+    # Q1 2026 holidays
     holidays = [
-        date(2025, 11, 27),  # Thanksgiving
-        date(2025, 11, 28),  # Day after Thanksgiving
-        date(2025, 12, 25),  # Christmas
-        date(2025, 12, 26),  # Day after Christmas
+        date(2026, 1, 1),   # New Year's Day
+        date(2026, 1, 20),  # MLK Day
+        date(2026, 2, 16),  # Presidents Day
     ]
     
     business_days = 0
     current_date = today
     
-    while current_date < q1_start:
+    while current_date <= q1_end:
         if current_date.weekday() < 5 and current_date not in holidays:
             business_days += 1
         current_date += timedelta(days=1)
@@ -1766,7 +1767,7 @@ def main():
     inject_custom_css()
     
     # === HEADER / HERO SECTION ===
-    days_until_q1 = calculate_business_days_until_q1()
+    days_remaining_q1 = calculate_business_days_remaining_q1()
     
     st.markdown("""
         <div style="text-align: center; margin-bottom: 30px;">
@@ -1791,7 +1792,7 @@ def main():
         st.markdown(f"""
         <div class="hero-metric" style="border-left-color: #10b981;">
             <div class="hero-label">Countdown</div>
-            <div class="hero-value">{days_until_q1} Days</div>
+            <div class="hero-value">{days_remaining_q1} Days</div>
             <div style="color: #64748b; font-size: 0.8rem; margin-top: 5px;">Business days remaining</div>
         </div>
         """, unsafe_allow_html=True)
@@ -2784,7 +2785,7 @@ def main():
                 with ctrl_col2:
                     filter_option = st.selectbox(
                         "Filter",
-                        options=["All Customers", "Reorder Opportunities Only", "Has Active Orders/Deals"],
+                        options=["Reorder Opportunities Only", "All Customers", "Has Active Orders/Deals"],
                         key=f"cust_filter_{rep_name}"
                     )
                 
@@ -2818,20 +2819,166 @@ def main():
                 else:
                     filtered_customers = filtered_customers.sort_values('Days_Since', ascending=False)
                 
+                # === PRE-COMPUTE ALL REORDER OPPORTUNITIES ===
+                all_reorder_opps = []
+                for _, cust_row in customer_summary[customer_summary['Is_Opportunity']].iterrows():
+                    customer_name = cust_row['Customer']
+                    confidence = cust_row['Confidence']
+                    cust_products = product_metrics_df[product_metrics_df['Customer'] == customer_name].copy()
+                    
+                    # Get active types for this customer
+                    active_types = set()
+                    for key in ns_categories.keys():
+                        df = ns_dfs.get(key, pd.DataFrame())
+                        if not df.empty and 'Customer' in df.columns:
+                            for _, row in df.iterrows():
+                                if customers_match(customer_name, row.get('Customer', '')):
+                                    active_types.add(str(row.get('Type', '')).lower().strip())
+                    for key in hs_categories.keys():
+                        df = hs_dfs.get(key, pd.DataFrame())
+                        if not df.empty:
+                            for _, row in df.iterrows():
+                                for col in ['Account Name', 'Associated Company', 'Company']:
+                                    if col in df.columns and pd.notna(row.get(col)):
+                                        if customers_match(customer_name, row.get(col)):
+                                            active_types.add(str(row.get('Type', '')).lower().strip())
+                                            break
+                    
+                    # Find uncovered products
+                    for _, prod_row in cust_products.iterrows():
+                        prod_type = prod_row['Product_Type']
+                        prod_lower = str(prod_type).lower().strip()
+                        is_covered = any(prod_lower in at or at in prod_lower for at in active_types if at)
+                        
+                        if not is_covered:
+                            all_reorder_opps.append({
+                                'Customer': customer_name,
+                                'Product_Type': prod_type,
+                                'Q1_Value': int(prod_row['Q1_Value']),
+                                'Total_Revenue': prod_row['Total_Revenue'],
+                                'Expected_Orders': prod_row['Expected_Orders_Q1'],
+                                'Confidence': confidence,
+                                'Confidence_Tier': prod_row['Confidence_Tier'],
+                                'Confidence_Pct': prod_row['Confidence_Pct'],
+                                'Top_SKUs': prod_row.get('Top_SKUs', ''),
+                                'Days_Since': prod_row['Days_Since_Last']
+                            })
+                
                 # Summary stats
+                total_reorder_opp_value = sum(o['Q1_Value'] for o in all_reorder_opps)
+                total_reorder_weighted = sum(o['Q1_Value'] * o['Confidence'] for o in all_reorder_opps)
+                
+                # Count currently selected
+                currently_selected = sum(1 for k, v in st.session_state.get(reorder_selections_key, {}).items() if v.get('selected', False))
+                selected_value = sum(v.get('value', 0) for k, v in st.session_state.get(reorder_selections_key, {}).items() if v.get('selected', False))
+                
                 st.markdown(f"""
-                <div style="display: flex; gap: 20px; margin: 15px 0; flex-wrap: wrap;">
+                <div style="display: flex; gap: 15px; margin: 15px 0; flex-wrap: wrap;">
                     <div style="background: rgba(16, 185, 129, 0.1); padding: 10px 15px; border-radius: 8px;">
                         <span style="color: #94a3b8;">Showing:</span> <strong style="color: white;">{len(filtered_customers)}</strong> customers
                     </div>
                     <div style="background: rgba(251, 191, 36, 0.1); padding: 10px 15px; border-radius: 8px;">
-                        <span style="color: #94a3b8;">Reorder Opps:</span> <strong style="color: #fbbf24;">{filtered_customers['Is_Opportunity'].sum()}</strong>
+                        <span style="color: #94a3b8;">Reorder Opps:</span> <strong style="color: #fbbf24;">{len(all_reorder_opps)}</strong> products
                     </div>
-                    <div style="background: rgba(96, 165, 250, 0.1); padding: 10px 15px; border-radius: 8px;">
-                        <span style="color: #94a3b8;">With Pipeline:</span> <strong style="color: #60a5fa;">{(~filtered_customers['Is_Opportunity']).sum()}</strong>
+                    <div style="background: rgba(251, 191, 36, 0.15); padding: 10px 15px; border-radius: 8px;">
+                        <span style="color: #94a3b8;">Potential:</span> <strong style="color: #fbbf24;">${total_reorder_opp_value:,.0f}</strong>
+                    </div>
+                    <div style="background: rgba(16, 185, 129, 0.2); padding: 10px 15px; border-radius: 8px; border: 1px solid #10b981;">
+                        <span style="color: #94a3b8;">Selected:</span> <strong style="color: #10b981;">{currently_selected}</strong> (${selected_value:,.0f})
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
+                
+                # === QUICK SELECT ALL REORDER OPPORTUNITIES ===
+                if all_reorder_opps:
+                    # Auto-expand when filter is "Reorder Opportunities Only"
+                    expand_quick_actions = (filter_option == "Reorder Opportunities Only")
+                    
+                    with st.expander("⚡ Quick Actions: Select Reorder Opportunities", expanded=expand_quick_actions):
+                        st.markdown("**Select multiple reorder opportunities at once:**")
+                        
+                        # Show summary table of all opportunities
+                        opp_df = pd.DataFrame(all_reorder_opps)
+                        opp_df_display = opp_df[['Customer', 'Product_Type', 'Q1_Value', 'Confidence_Tier', 'Days_Since']].copy()
+                        opp_df_display['Q1_Value'] = opp_df_display['Q1_Value'].apply(lambda x: f"${x:,.0f}")
+                        opp_df_display.columns = ['Customer', 'Product', 'Q1 Projection', 'Confidence', 'Days Since']
+                        
+                        st.dataframe(opp_df_display, use_container_width=True, hide_index=True, height=min(300, 35 + len(opp_df_display) * 35))
+                        
+                        # Count by confidence tier
+                        likely_opps = [o for o in all_reorder_opps if o['Confidence_Tier'] == 'Likely']
+                        possible_opps = [o for o in all_reorder_opps if o['Confidence_Tier'] == 'Possible']
+                        longshot_opps = [o for o in all_reorder_opps if o['Confidence_Tier'] == 'Long Shot']
+                        
+                        st.caption(f"🟢 Likely: {len(likely_opps)} (${sum(o['Q1_Value'] for o in likely_opps):,.0f}) | 🟡 Possible: {len(possible_opps)} (${sum(o['Q1_Value'] for o in possible_opps):,.0f}) | 🔴 Long Shot: {len(longshot_opps)} (${sum(o['Q1_Value'] for o in longshot_opps):,.0f})")
+                        
+                        btn_col1, btn_col2, btn_col3, btn_col4 = st.columns(4)
+                        
+                        with btn_col1:
+                            if st.button("✅ Select ALL", key=f"select_all_{rep_name}", type="primary", help="Select all reorder opportunities"):
+                                for opp in all_reorder_opps:
+                                    selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    st.session_state[reorder_selections_key][selection_key] = {
+                                        'selected': True,
+                                        'value': opp['Q1_Value'],
+                                        'confidence': opp['Confidence'],
+                                        'product_type': opp['Product_Type'],
+                                        'customer': opp['Customer'],
+                                        'top_skus': opp['Top_SKUs'],
+                                        'historical_total': opp['Total_Revenue'],
+                                        'expected_orders': opp['Expected_Orders'],
+                                        'confidence_tier': opp['Confidence_Tier']
+                                    }
+                                st.success(f"Selected {len(all_reorder_opps)} opportunities!")
+                                st.rerun()
+                        
+                        with btn_col2:
+                            if st.button("🟢 Likely Only", key=f"select_likely_{rep_name}", help="Select only 'Likely' (3+ orders)"):
+                                likely_count = 0
+                                for opp in likely_opps:
+                                    selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    st.session_state[reorder_selections_key][selection_key] = {
+                                        'selected': True,
+                                        'value': opp['Q1_Value'],
+                                        'confidence': opp['Confidence'],
+                                        'product_type': opp['Product_Type'],
+                                        'customer': opp['Customer'],
+                                        'top_skus': opp['Top_SKUs'],
+                                        'historical_total': opp['Total_Revenue'],
+                                        'expected_orders': opp['Expected_Orders'],
+                                        'confidence_tier': opp['Confidence_Tier']
+                                    }
+                                    likely_count += 1
+                                st.success(f"Selected {likely_count} 'Likely' opportunities!")
+                                st.rerun()
+                        
+                        with btn_col3:
+                            if st.button("🟢🟡 Likely + Possible", key=f"select_likely_possible_{rep_name}", help="Select 'Likely' and 'Possible' (2+ orders)"):
+                                count = 0
+                                for opp in likely_opps + possible_opps:
+                                    selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    st.session_state[reorder_selections_key][selection_key] = {
+                                        'selected': True,
+                                        'value': opp['Q1_Value'],
+                                        'confidence': opp['Confidence'],
+                                        'product_type': opp['Product_Type'],
+                                        'customer': opp['Customer'],
+                                        'top_skus': opp['Top_SKUs'],
+                                        'historical_total': opp['Total_Revenue'],
+                                        'expected_orders': opp['Expected_Orders'],
+                                        'confidence_tier': opp['Confidence_Tier']
+                                    }
+                                    count += 1
+                                st.success(f"Selected {count} opportunities!")
+                                st.rerun()
+                        
+                        with btn_col4:
+                            if st.button("🗑️ Clear All", key=f"clear_all_{rep_name}", help="Clear all selections"):
+                                st.session_state[reorder_selections_key] = {}
+                                st.success("Cleared all selections!")
+                                st.rerun()
+                
+                st.markdown("---")
                 
                 # === CUSTOMER LIST ===
                 for _, cust_row in filtered_customers.iterrows():
@@ -2932,6 +3079,9 @@ def main():
                         with col3:
                             st.markdown("**🔄 Reorder Opportunities**")
                             
+                            # Add tooltip explaining the logic
+                            st.caption("💡 Projected Q1 value based on order history")
+                            
                             # Get product types with active NS/HS
                             active_types = set()
                             for o in cust_ns_orders:
@@ -2954,6 +3104,10 @@ def main():
                                 for prod_row in reorder_opps:
                                     prod_type = prod_row['Product_Type']
                                     q1_value = int(prod_row['Q1_Value'])
+                                    historical_total = prod_row['Total_Revenue']
+                                    expected_orders = prod_row['Expected_Orders_Q1']
+                                    conf_pct = prod_row['Confidence_Pct']
+                                    conf_tier = prod_row['Confidence_Tier']
                                     selection_key = f"{customer_name}|{prod_type}"
                                     
                                     # Initialize if needed
@@ -2964,16 +3118,20 @@ def main():
                                             'confidence': confidence,
                                             'product_type': prod_type,
                                             'customer': customer_name,
-                                            'top_skus': prod_row.get('Top_SKUs', '')
+                                            'top_skus': prod_row.get('Top_SKUs', ''),
+                                            'historical_total': historical_total,
+                                            'expected_orders': expected_orders,
+                                            'confidence_tier': conf_tier
                                         }
                                     
-                                    # Checkbox
+                                    # Checkbox with explanation
                                     chk_col, val_col = st.columns([2, 1])
                                     with chk_col:
                                         is_selected = st.checkbox(
                                             f"{prod_type}",
                                             value=st.session_state[reorder_selections_key][selection_key]['selected'],
-                                            key=f"chk_{selection_key}_{rep_name}"
+                                            key=f"chk_{selection_key}_{rep_name}",
+                                            help=f"2025 Total: ${historical_total:,.0f} | Expected {expected_orders:.1f} orders in Q1 | {conf_tier} ({int(conf_pct*100)}% confidence)"
                                         )
                                         st.session_state[reorder_selections_key][selection_key]['selected'] = is_selected
                                     
@@ -2985,7 +3143,8 @@ def main():
                                                 min_value=0,
                                                 step=500,
                                                 key=f"val_{selection_key}_{rep_name}",
-                                                label_visibility="collapsed"
+                                                label_visibility="collapsed",
+                                                help=f"Q1 Projection (editable)"
                                             )
                                             st.session_state[reorder_selections_key][selection_key]['value'] = new_val
                                         else:
@@ -2995,7 +3154,8 @@ def main():
                         
                         # Product breakdown table
                         st.markdown("---")
-                        st.markdown("**📊 2025 Product Breakdown**")
+                        st.markdown("**📊 2025 Product Breakdown & Q1 Projections**")
+                        st.caption("Q1 Proj = (Avg Order × Expected Q1 Orders) — Weighted = Q1 Proj × Confidence %")
                         
                         if not cust_products.empty:
                             breakdown_data = []
@@ -3022,14 +3182,20 @@ def main():
                                 else:
                                     due_status = "⚪ TBD"
                                 
+                                # Confidence tier indicator
+                                conf_tier = prod_row['Confidence_Tier']
+                                conf_emoji = "🟢" if conf_tier == 'Likely' else ("🟡" if conf_tier == 'Possible' else "🔴")
+                                
                                 breakdown_data.append({
                                     'Product': prod_type,
-                                    '2025 $': f"${prod_row['Total_Revenue']:,.0f}",
+                                    '2025 Total': f"${prod_row['Total_Revenue']:,.0f}",
                                     'Orders': int(prod_row['Order_Count']),
+                                    'Exp Q1': f"{prod_row['Expected_Orders_Q1']:.1f}",
+                                    'Q1 Proj': f"${prod_row['Q1_Value']:,.0f}",
+                                    'Conf': f"{conf_emoji} {int(prod_row['Confidence_Pct']*100)}%",
                                     'NS': "✅" if in_ns else "—",
                                     'HS': "✅" if in_hs else "—",
-                                    'Status': due_status,
-                                    'Top SKUs': str(prod_row.get('Top_SKUs', ''))[:35]
+                                    'Status': due_status
                                 })
                             
                             st.dataframe(
@@ -3094,6 +3260,18 @@ def main():
                 st.markdown("---")
                 st.markdown("### 📋 Reorder Forecast Summary")
                 
+                # Add explanation
+                st.markdown("""
+                <div style="background: rgba(59, 130, 246, 0.1); padding: 12px 15px; border-radius: 8px; margin-bottom: 15px; border-left: 3px solid #3b82f6;">
+                    <strong style="color: #60a5fa;">How This Works:</strong><br/>
+                    <span style="color: #94a3b8; font-size: 0.9rem;">
+                    • <strong>Q1 Projection</strong> = Avg order value × Expected orders in Q1 (based on cadence)<br/>
+                    • <strong>Weighted Forecast</strong> = Q1 Projection × Confidence % (25-75% based on order history)<br/>
+                    • Confidence: 🟢 Likely (3+ orders) = 75% | 🟡 Possible (2 orders) = 50% | 🔴 Long Shot (1 order) = 25%
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+                
                 # Calculate totals
                 total_reorder_raw = 0
                 total_reorder_weighted = 0
@@ -3108,9 +3286,9 @@ def main():
                         selected_items.append({
                             'Customer': data.get('customer', ''),
                             'Product_Type': data.get('product_type', ''),
-                            'Q1_Value': val,
-                            'Confidence_Pct': conf,
-                            'Projected_Value': val * conf,
+                            'Q1_Projection': val,
+                            'Confidence': f"{int(conf*100)}%",
+                            'Weighted_Value': val * conf,
                             'Top_SKUs': data.get('top_skus', '')
                         })
                 
@@ -3123,32 +3301,34 @@ def main():
                     selected_items.append({
                         'Customer': entry.get('customer', ''),
                         'Product_Type': f"{entry.get('product_type', '')} (Manual)",
-                        'Q1_Value': amt,
-                        'Confidence_Pct': conf,
-                        'Projected_Value': amt * conf,
+                        'Q1_Projection': amt,
+                        'Confidence': f"{int(conf*100)}%",
+                        'Weighted_Value': amt * conf,
                         'Top_SKUs': entry.get('notes', '')
                     })
                 
                 total_reorder_forecast = total_reorder_weighted + total_manual
                 
-                # Summary metrics
+                # Summary metrics with better labels
                 sum_col1, sum_col2, sum_col3, sum_col4 = st.columns(4)
                 with sum_col1:
                     st.metric("Selections", len([i for i in selected_items if '(Manual)' not in i['Product_Type']]))
                 with sum_col2:
                     st.metric("Manual Adds", len([i for i in selected_items if '(Manual)' in i['Product_Type']]))
                 with sum_col3:
-                    st.metric("Raw Total", f"${total_reorder_raw + sum(e.get('amount', 0) for e in st.session_state.get(manual_entries_key, {}).values()):,.0f}")
+                    st.metric("Q1 Projection (Raw)", f"${total_reorder_raw + sum(e.get('amount', 0) for e in st.session_state.get(manual_entries_key, {}).values()):,.0f}",
+                             help="Sum of all Q1 projections before confidence weighting")
                 with sum_col4:
-                    st.metric("Weighted Forecast", f"${total_reorder_forecast:,.0f}")
+                    st.metric("Weighted Forecast", f"${total_reorder_forecast:,.0f}",
+                             help="Q1 Projection × Confidence % — this is what gets added to your forecast")
                 
                 # Show selected items table
                 if selected_items:
                     with st.expander("📝 View All Selections", expanded=False):
                         sel_df = pd.DataFrame(selected_items)
-                        sel_df['Projected_Value'] = sel_df['Projected_Value'].apply(lambda x: f"${x:,.0f}")
-                        sel_df['Q1_Value'] = sel_df['Q1_Value'].apply(lambda x: f"${x:,.0f}")
-                        st.dataframe(sel_df[['Customer', 'Product_Type', 'Q1_Value', 'Projected_Value']], 
+                        sel_df['Weighted_Value'] = sel_df['Weighted_Value'].apply(lambda x: f"${x:,.0f}")
+                        sel_df['Q1_Projection'] = sel_df['Q1_Projection'].apply(lambda x: f"${x:,.0f}")
+                        st.dataframe(sel_df[['Customer', 'Product_Type', 'Q1_Projection', 'Confidence', 'Weighted_Value']], 
                                     use_container_width=True, hide_index=True)
                     
                     reorder_buckets['reorder_selections'] = pd.DataFrame(selected_items)
@@ -3166,6 +3346,8 @@ def main():
         """Sum projected values for reorder buckets"""
         if df.empty:
             return 0
+        if 'Weighted_Value' in df.columns:
+            return df['Weighted_Value'].sum()
         if 'Projected_Value' in df.columns:
             return df['Projected_Value'].sum()
         return 0
