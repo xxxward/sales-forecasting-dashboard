@@ -2,9 +2,13 @@
 Q1 2026 Sales Forecasting Module
 Based on Sales Dashboard architecture
 
-KEY INSIGHT: The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
-- pf_spillover = PF orders with Q1 2026 dates
-- pa_spillover = PA orders with PA Date in Q1 2026
+KEY INSIGHT: For Q1 2026 dashboard, the primary quarter data is in the "date" buckets:
+- pf_date_ext + pf_date_int = PF orders with Q1 2026 dates
+- pa_date = PA orders with PA Date in Q1 2026
+
+Spillover buckets are now for adjacent quarters:
+- pf_q4_spillover/pa_q4_spillover = Q4 2025 carryover orders
+- pf_q2_spillover/pa_q2_spillover = Q2 2026 forward spillover
 
 This module imports directly from the main dashboard to reuse all data loading and categorization logic.
 """
@@ -1855,8 +1859,11 @@ def main():
                     rename_dict[col] = 'Product Type'
                 elif col == 'Pending Approval Date':
                     rename_dict[col] = 'Pending Approval Date'
+                elif col == 'Q2 2026 Spillover':
+                    rename_dict[col] = 'Q2 2026 Spillover'
                 elif col == 'Q1 2026 Spillover':
-                    rename_dict[col] = 'Q1 2026 Spillover'
+                    # Handle old column name - rename to new name
+                    rename_dict[col] = 'Q2 2026 Spillover'
                 elif col == 'Account Name' or col == 'Associated Company':
                     rename_dict[col] = 'Account Name'
                 elif col == 'Company':
@@ -2004,42 +2011,45 @@ def main():
     st.markdown("---")
     
     # === GET Q1 2026 DATA ===
-    # The main dashboard's "spillover" buckets ARE the Q1 2026 scheduled orders!
-    # - pf_spillover = PF orders with Q1 2026 Promise/Projected dates
-    # - pa_spillover = PA orders with PA Date in Q1 2026
+    # For Q1 2026 dashboard, the primary Q1 data is in the "date" buckets:
+    # - pf_date_ext + pf_date_int = PF orders with Q1 2026 Promise/Projected dates
+    # - pa_date = PA orders with PA Date in Q1 2026
     # Additional buckets that may convert to Q1 revenue:
     # - pf_nodate = PF orders with no date (could ship anytime)
-    # - pa_date = PA with Q4 date (<2 weeks old) - could convert
     # - pa_nodate = PA with no date (<2 weeks old) - could convert
     # - pa_old = PA orders >2 weeks old - stale but potential
+    # Spillover buckets (for reference):
+    # - pf_q4_spillover/pa_q4_spillover = Q4 2025 carryover orders
+    # - pf_q2_spillover/pa_q2_spillover = Q2 2026 forward spillover
     
     # Aggregate data from all active reps
-    all_pf_spillover = []
-    all_pa_spillover = []
+    all_pf_q1 = []  # PF with Q1 dates (primary quarter)
+    all_pa_q1 = []  # PA with Q1 dates (primary quarter)
     all_pf_nodate = []
-    all_pa_date = []
     all_pa_nodate = []
     all_pa_old = []
     
     total_pf_amount = 0
     total_pa_amount = 0
     total_pf_nodate_amount = 0
-    total_pa_date_amount = 0
     total_pa_nodate_amount = 0
     total_pa_old_amount = 0
     
     for r in active_team_reps:
         so_cats = categorize_sales_orders(sales_orders_df, r)
         
-        # PF Spillover (Q1 2026 dates)
-        if not so_cats['pf_spillover'].empty:
-            all_pf_spillover.append(so_cats['pf_spillover'])
-            total_pf_amount += so_cats['pf_spillover_amount']
+        # PF with Q1 2026 dates (External + Internal)
+        if not so_cats['pf_date_ext'].empty:
+            all_pf_q1.append(so_cats['pf_date_ext'])
+            total_pf_amount += so_cats['pf_date_ext_amount']
+        if not so_cats['pf_date_int'].empty:
+            all_pf_q1.append(so_cats['pf_date_int'])
+            total_pf_amount += so_cats['pf_date_int_amount']
         
-        # PA Spillover (Q1 2026 PA dates)
-        if not so_cats['pa_spillover'].empty:
-            all_pa_spillover.append(so_cats['pa_spillover'])
-            total_pa_amount += so_cats['pa_spillover_amount']
+        # PA with Q1 2026 PA dates
+        if not so_cats['pa_date'].empty:
+            all_pa_q1.append(so_cats['pa_date'])
+            total_pa_amount += so_cats['pa_date_amount']
         
         # PF No Date (External + Internal combined)
         if not so_cats['pf_nodate_ext'].empty:
@@ -2049,12 +2059,7 @@ def main():
             all_pf_nodate.append(so_cats['pf_nodate_int'])
             total_pf_nodate_amount += so_cats['pf_nodate_int_amount']
         
-        # PA with Date (Q4 date, <2 weeks old)
-        if not so_cats['pa_date'].empty:
-            all_pa_date.append(so_cats['pa_date'])
-            total_pa_date_amount += so_cats['pa_date_amount']
-        
-        # PA No Date (<2 weeks old)
+        # PA No Date (<2 weeks old) - moved pa_date to primary Q1 bucket above
         if not so_cats['pa_nodate'].empty:
             all_pa_nodate.append(so_cats['pa_nodate'])
             total_pa_nodate_amount += so_cats['pa_nodate_amount']
@@ -2065,29 +2070,26 @@ def main():
             total_pa_old_amount += so_cats['pa_old_amount']
     
     # Combine into single dataframes
-    combined_pf = pd.concat(all_pf_spillover, ignore_index=True) if all_pf_spillover else pd.DataFrame()
-    combined_pa = pd.concat(all_pa_spillover, ignore_index=True) if all_pa_spillover else pd.DataFrame()
+    combined_pf = pd.concat(all_pf_q1, ignore_index=True) if all_pf_q1 else pd.DataFrame()
+    combined_pa = pd.concat(all_pa_q1, ignore_index=True) if all_pa_q1 else pd.DataFrame()
     combined_pf_nodate = pd.concat(all_pf_nodate, ignore_index=True) if all_pf_nodate else pd.DataFrame()
-    combined_pa_date = pd.concat(all_pa_date, ignore_index=True) if all_pa_date else pd.DataFrame()
     combined_pa_nodate = pd.concat(all_pa_nodate, ignore_index=True) if all_pa_nodate else pd.DataFrame()
     combined_pa_old = pd.concat(all_pa_old, ignore_index=True) if all_pa_old else pd.DataFrame()
     
     # Map to Q1 categories - organized by certainty level
     ns_categories = {
-        'PF_Spillover': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
-        'PA_Spillover': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': combined_pa, 'amount': total_pa_amount},
+        'PF_Q1': {'label': '📦 PF (Q1 2026 Date)', 'df': combined_pf, 'amount': total_pf_amount},
+        'PA_Q1': {'label': '⏳ PA (Q1 2026 PA Date)', 'df': combined_pa, 'amount': total_pa_amount},
         'PF_NoDate': {'label': '📦 PF (No Date)', 'df': combined_pf_nodate, 'amount': total_pf_nodate_amount},
-        'PA_Date': {'label': '⏳ PA (With Date)', 'df': combined_pa_date, 'amount': total_pa_date_amount},
         'PA_NoDate': {'label': '⏳ PA (No Date)', 'df': combined_pa_nodate, 'amount': total_pa_nodate_amount},
         'PA_Old': {'label': '⚠️ PA (>2 Weeks)', 'df': combined_pa_old, 'amount': total_pa_old_amount},
     }
     
     # Format for display
     ns_dfs = {
-        'PF_Spillover': format_ns_view(combined_pf, 'Promise'),
-        'PA_Spillover': format_ns_view(combined_pa, 'PA_Date'),
+        'PF_Q1': format_ns_view(combined_pf, 'Promise'),
+        'PA_Q1': format_ns_view(combined_pa, 'PA_Date'),
         'PF_NoDate': format_ns_view(combined_pf_nodate, 'Promise'),
-        'PA_Date': format_ns_view(combined_pa_date, 'PA_Date'),
         'PA_NoDate': format_ns_view(combined_pa_nodate, 'PA_Date'),
         'PA_Old': format_ns_view(combined_pa_old, 'PA_Date'),
     }
@@ -2115,13 +2117,20 @@ def main():
             q1_close_mask = (rep_deals['Close Date'] >= Q1_2026_START) & (rep_deals['Close Date'] <= Q1_2026_END)
             q1_deals = rep_deals[q1_close_mask]
             
-            # Q4 2025 Spillover - deals with Q4 close date BUT marked as Q1 2026 Spillover
-            # IMPORTANT: Only include deals with Q4 close dates to avoid double counting with Q1 deals
+            # Check for spillover column (handles both old and new column names)
+            spillover_col = None
+            if 'Q2 2026 Spillover' in rep_deals.columns:
+                spillover_col = 'Q2 2026 Spillover'
+            elif 'Q1 2026 Spillover' in rep_deals.columns:
+                spillover_col = 'Q1 2026 Spillover'
+            
+            # Q4 2025 Spillover - deals with Q4 close date that haven't been fulfilled
+            # These are carryover deals from Q4 that may still convert in Q1
             q4_close_mask = (rep_deals['Close Date'] >= Q4_2025_START) & (rep_deals['Close Date'] <= Q4_2025_END)
             
-            if 'Q1 2026 Spillover' in rep_deals.columns:
-                # Q4 Spillover = Q4 close date AND spillover flag is set
-                q4_spillover = rep_deals[q4_close_mask & (rep_deals['Q1 2026 Spillover'] == 'Q1 2026')]
+            if spillover_col:
+                # Q4 Spillover = Q4 close date AND marked as Q4 2025 spillover
+                q4_spillover = rep_deals[q4_close_mask & (rep_deals[spillover_col] == 'Q4 2025')]
             else:
                 q4_spillover = pd.DataFrame()
             
@@ -2132,6 +2141,7 @@ def main():
                 st.write(f"**Total deals loaded:** {len(rep_deals)}")
                 st.write(f"**Q1 Close Date deals:** {len(q1_deals)} (Close Date in Jan-Mar 2026)")
                 st.write(f"**Q4 Spillover deals:** {len(q4_spillover)} (Q4 Close Date + Spillover flag)")
+                st.write(f"**Spillover column found:** {spillover_col or 'None'}")
                 if 'Amount' in rep_deals.columns:
                     q1_total = q1_deals['Amount'].sum() if not q1_deals.empty else 0
                     q4_spill_total = q4_spillover['Amount'].sum() if not q4_spillover.empty else 0
@@ -3540,10 +3550,9 @@ def main():
         st.write(f"**Total Deals Loaded:** {len(deals_df)}")
         
         st.write("**--- NetSuite Buckets ---**")
-        st.write(f"**PF Spillover (Q1 Date):** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
-        st.write(f"**PA Spillover (Q1 PA Date):** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
+        st.write(f"**PF Q1 Date:** {len(combined_pf)} orders, ${total_pf_amount:,.0f}")
+        st.write(f"**PA Q1 PA Date:** {len(combined_pa)} orders, ${total_pa_amount:,.0f}")
         st.write(f"**PF No Date:** {len(combined_pf_nodate)} orders, ${total_pf_nodate_amount:,.0f}")
-        st.write(f"**PA With Date:** {len(combined_pa_date)} orders, ${total_pa_date_amount:,.0f}")
         st.write(f"**PA No Date:** {len(combined_pa_nodate)} orders, ${total_pa_nodate_amount:,.0f}")
         st.write(f"**PA >2 Weeks:** {len(combined_pa_old)} orders, ${total_pa_old_amount:,.0f}")
         
