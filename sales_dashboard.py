@@ -3580,37 +3580,55 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         rep_deals_ship_q4 = pd.DataFrame()
     
     # Calculate metrics for DEALS SHIPPING IN Q1 (this counts toward quota)
-    expect_commit_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Expect', 'Commit'])].copy()
-    if expect_commit_q1_deals.columns.duplicated().any():
-        expect_commit_q1_deals = expect_commit_q1_deals.loc[:, ~expect_commit_q1_deals.columns.duplicated()]
-    expect_commit_q1 = expect_commit_q1_deals['Amount'].sum() if not expect_commit_q1_deals.empty else 0
-    
-    best_opp_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    if best_opp_q1_deals.columns.duplicated().any():
-        best_opp_q1_deals = best_opp_q1_deals.loc[:, ~best_opp_q1_deals.columns.duplicated()]
-    best_opp_q1 = best_opp_q1_deals['Amount'].sum() if not best_opp_q1_deals.empty else 0
+    if not rep_deals_ship_q1.empty and 'Status' in rep_deals_ship_q1.columns:
+        expect_commit_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Expect', 'Commit'])].copy()
+        if expect_commit_q1_deals.columns.duplicated().any():
+            expect_commit_q1_deals = expect_commit_q1_deals.loc[:, ~expect_commit_q1_deals.columns.duplicated()]
+        expect_commit_q1 = expect_commit_q1_deals['Amount'].sum() if not expect_commit_q1_deals.empty else 0
+        
+        best_opp_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Best Case', 'Opportunity'])].copy()
+        if best_opp_q1_deals.columns.duplicated().any():
+            best_opp_q1_deals = best_opp_q1_deals.loc[:, ~best_opp_q1_deals.columns.duplicated()]
+        best_opp_q1 = best_opp_q1_deals['Amount'].sum() if not best_opp_q1_deals.empty else 0
+    else:
+        expect_commit_q1_deals = pd.DataFrame()
+        expect_commit_q1 = 0
+        best_opp_q1_deals = pd.DataFrame()
+        best_opp_q1 = 0
     
     # Calculate metrics for Q2 SPILLOVER DEALS (closing in Q1 but shipping in Q2)
-    expect_commit_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Expect', 'Commit'])].copy()
-    if expect_commit_q2_deals.columns.duplicated().any():
-        expect_commit_q2_deals = expect_commit_q2_deals.loc[:, ~expect_commit_q2_deals.columns.duplicated()]
-    expect_commit_q2_spillover = expect_commit_q2_deals['Amount'].sum() if not expect_commit_q2_deals.empty else 0
-    
-    best_opp_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    if best_opp_q2_deals.columns.duplicated().any():
-        best_opp_q2_deals = best_opp_q2_deals.loc[:, ~best_opp_q2_deals.columns.duplicated()]
-    best_opp_q2_spillover = best_opp_q2_deals['Amount'].sum() if not best_opp_q2_deals.empty else 0
+    if not rep_deals_ship_q2.empty and 'Status' in rep_deals_ship_q2.columns:
+        expect_commit_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Expect', 'Commit'])].copy()
+        if expect_commit_q2_deals.columns.duplicated().any():
+            expect_commit_q2_deals = expect_commit_q2_deals.loc[:, ~expect_commit_q2_deals.columns.duplicated()]
+        expect_commit_q2_spillover = expect_commit_q2_deals['Amount'].sum() if not expect_commit_q2_deals.empty else 0
+        
+        best_opp_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Best Case', 'Opportunity'])].copy()
+        if best_opp_q2_deals.columns.duplicated().any():
+            best_opp_q2_deals = best_opp_q2_deals.loc[:, ~best_opp_q2_deals.columns.duplicated()]
+        best_opp_q2_spillover = best_opp_q2_deals['Amount'].sum() if not best_opp_q2_deals.empty else 0
+    else:
+        expect_commit_q2_deals = pd.DataFrame()
+        expect_commit_q2_spillover = 0
+        best_opp_q2_deals = pd.DataFrame()
+        best_opp_q2_spillover = 0
     
     # Calculate metrics for Q4 2025 SPILLOVER DEALS (carryover from Q4)
-    expect_commit_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Expect', 'Commit'])].copy()
-    if expect_commit_q4_deals.columns.duplicated().any():
-        expect_commit_q4_deals = expect_commit_q4_deals.loc[:, ~expect_commit_q4_deals.columns.duplicated()]
-    expect_commit_q4_spillover = expect_commit_q4_deals['Amount'].sum() if not expect_commit_q4_deals.empty else 0
-    
-    best_opp_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    if best_opp_q4_deals.columns.duplicated().any():
-        best_opp_q4_deals = best_opp_q4_deals.loc[:, ~best_opp_q4_deals.columns.duplicated()]
-    best_opp_q4_spillover = best_opp_q4_deals['Amount'].sum() if not best_opp_q4_deals.empty else 0
+    if not rep_deals_ship_q4.empty and 'Status' in rep_deals_ship_q4.columns:
+        expect_commit_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Expect', 'Commit'])].copy()
+        if expect_commit_q4_deals.columns.duplicated().any():
+            expect_commit_q4_deals = expect_commit_q4_deals.loc[:, ~expect_commit_q4_deals.columns.duplicated()]
+        expect_commit_q4_spillover = expect_commit_q4_deals['Amount'].sum() if not expect_commit_q4_deals.empty else 0
+        
+        best_opp_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
+        if best_opp_q4_deals.columns.duplicated().any():
+            best_opp_q4_deals = best_opp_q4_deals.loc[:, ~best_opp_q4_deals.columns.duplicated()]
+        best_opp_q4_spillover = best_opp_q4_deals['Amount'].sum() if not best_opp_q4_deals.empty else 0
+    else:
+        expect_commit_q4_deals = pd.DataFrame()
+        expect_commit_q4_spillover = 0
+        best_opp_q4_deals = pd.DataFrame()
+        best_opp_q4_spillover = 0
     
     # Total spillovers
     q2_spillover_total = expect_commit_q2_spillover + best_opp_q2_spillover
