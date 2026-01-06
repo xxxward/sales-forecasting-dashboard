@@ -3044,6 +3044,8 @@ def main():
                             if st.button("✅ Select ALL", key=f"select_all_{rep_name}", type="primary", help="Select all reorder opportunities"):
                                 for opp in all_reorder_opps:
                                     selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    checkbox_key = f"chk_{selection_key}_{rep_name}"
+                                    # Update both the data store AND the checkbox widget key
                                     st.session_state[reorder_selections_key][selection_key] = {
                                         'selected': True,
                                         'value': opp['Q1_Value'],
@@ -3055,6 +3057,7 @@ def main():
                                         'expected_orders': opp['Expected_Orders'],
                                         'confidence_tier': opp['Confidence_Tier']
                                     }
+                                    st.session_state[checkbox_key] = True
                                 st.success(f"Selected {len(all_reorder_opps)} opportunities!")
                                 st.rerun()
                         
@@ -3063,6 +3066,7 @@ def main():
                                 likely_count = 0
                                 for opp in likely_opps:
                                     selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    checkbox_key = f"chk_{selection_key}_{rep_name}"
                                     st.session_state[reorder_selections_key][selection_key] = {
                                         'selected': True,
                                         'value': opp['Q1_Value'],
@@ -3074,6 +3078,7 @@ def main():
                                         'expected_orders': opp['Expected_Orders'],
                                         'confidence_tier': opp['Confidence_Tier']
                                     }
+                                    st.session_state[checkbox_key] = True
                                     likely_count += 1
                                 st.success(f"Selected {likely_count} 'Likely' opportunities!")
                                 st.rerun()
@@ -3083,6 +3088,7 @@ def main():
                                 count = 0
                                 for opp in likely_opps + possible_opps:
                                     selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    checkbox_key = f"chk_{selection_key}_{rep_name}"
                                     st.session_state[reorder_selections_key][selection_key] = {
                                         'selected': True,
                                         'value': opp['Q1_Value'],
@@ -3094,12 +3100,19 @@ def main():
                                         'expected_orders': opp['Expected_Orders'],
                                         'confidence_tier': opp['Confidence_Tier']
                                     }
+                                    st.session_state[checkbox_key] = True
                                     count += 1
                                 st.success(f"Selected {count} opportunities!")
                                 st.rerun()
                         
                         with btn_col4:
                             if st.button("🗑️ Clear All", key=f"clear_all_{rep_name}", help="Clear all selections"):
+                                # Clear both the data store AND the checkbox widget keys
+                                for opp in all_reorder_opps:
+                                    selection_key = f"{opp['Customer']}|{opp['Product_Type']}"
+                                    checkbox_key = f"chk_{selection_key}_{rep_name}"
+                                    if checkbox_key in st.session_state:
+                                        st.session_state[checkbox_key] = False
                                 st.session_state[reorder_selections_key] = {}
                                 st.success("Cleared all selections!")
                                 st.rerun()
