@@ -1,7 +1,7 @@
 """
-Sales Forecasting Dashboard - Enhanced Version with Drill-Down Capability
+Sales Forecasting Dashboard - Q1 2026 Version
 Reads from Google Sheets and displays gap-to-goal analysis with interactive visualizations
-Includes lead time logic for Q4/Q1 fulfillment determination and detailed order drill-downs
+Includes lead time logic for Q1/Q2 fulfillment determination and detailed order drill-downs
 """
 
 import streamlit as st
@@ -57,26 +57,25 @@ pio.templates.default = "plotly"  # Use default template that adapts to theme
 # Helper function for business days calculation
 def calculate_business_days_remaining():
     """
-    Calculate business days from today through end of Q4 2025 (Dec 31)
+    Calculate business days from today through end of Q1 2026 (Mar 31)
     Excludes weekends and major holidays
     """
     from datetime import date, timedelta
     
     today = date.today()
-    q4_end = date(2025, 12, 31)
+    q1_end = date(2026, 3, 31)
     
     # Define holidays to exclude
     holidays = [
-        date(2025, 11, 27),  # Thanksgiving
-        date(2025, 11, 28),  # Day after Thanksgiving
-        date(2025, 12, 25),  # Christmas
-        date(2025, 12, 26),  # Day after Christmas
+        date(2026, 1, 1),   # New Year's Day
+        date(2026, 1, 20),  # MLK Day
+        date(2026, 2, 16),  # Presidents Day
     ]
     
     business_days = 0
     current_date = today
     
-    while current_date <= q4_end:
+    while current_date <= q1_end:
         # Check if it's a weekday (Monday=0, Sunday=6)
         if current_date.weekday() < 5 and current_date not in holidays:
             business_days += 1
@@ -784,10 +783,10 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         return pd.DataFrame()
 
-def apply_q4_fulfillment_logic(deals_df):
+def apply_q1_fulfillment_logic(deals_df):
     """
-    Apply lead time logic to filter out deals that close late in Q4 
-    but won't ship until Q1 based on product type
+    Apply lead time logic to filter out deals that close late in Q1 2026
+    but won't ship until Q2 based on product type
     """
     # Lead time mapping based on your image
     lead_time_map = {
@@ -807,7 +806,7 @@ def apply_q4_fulfillment_logic(deals_df):
     }
     
     # Calculate cutoff date for each product type
-    q4_end = pd.Timestamp('2025-12-31')
+    q1_end = pd.Timestamp('2026-03-31')
     
     def get_business_days_before(end_date, business_days):
         """Calculate date that is N business days before end_date"""
@@ -822,31 +821,31 @@ def apply_q4_fulfillment_logic(deals_df):
         
         return current
     
-    # Add a column to track if deal counts for Q4
-    deals_df['Counts_In_Q4'] = True
-    deals_df['Q1_Spillover_Amount'] = 0
+    # Add a column to track if deal counts for Q1
+    deals_df['Counts_In_Q1'] = True
+    deals_df['Q2_Spillover_Amount'] = 0
     
     # Check if we have a Product Type column
     if 'Product Type' in deals_df.columns:
         for product_type, lead_days in lead_time_map.items():
-            cutoff_date = get_business_days_before(q4_end, lead_days)
+            cutoff_date = get_business_days_before(q1_end, lead_days)
             
-            # Mark deals closing after cutoff as Q1
+            # Mark deals closing after cutoff as Q2
             mask = (
                 (deals_df['Product Type'] == product_type) & 
                 (deals_df['Close Date'] > cutoff_date) &
                 (deals_df['Close Date'].notna())
             )
-            deals_df.loc[mask, 'Counts_In_Q4'] = False
-            deals_df.loc[mask, 'Q1_Spillover_Amount'] = deals_df.loc[mask, 'Amount']
+            deals_df.loc[mask, 'Counts_In_Q1'] = False
+            deals_df.loc[mask, 'Q2_Spillover_Amount'] = deals_df.loc[mask, 'Amount']
             
         # Log how many deals were excluded
-        excluded_count = (~deals_df['Counts_In_Q4']).sum()
-        excluded_value = deals_df[~deals_df['Counts_In_Q4']]['Amount'].sum()
+        excluded_count = (~deals_df['Counts_In_Q1']).sum()
+        excluded_value = deals_df[~deals_df['Counts_In_Q1']]['Amount'].sum()
         
         if excluded_count > 0:
             pass  # Debug info removed
-            #st.sidebar.info(f"📊 {excluded_count} deals (${excluded_value:,.0f}) deferred to Q1 2026 due to lead times")
+            #st.sidebar.info(f"📊 {excluded_count} deals (${excluded_value:,.0f}) deferred to Q2 2026 due to lead times")
     else:
         pass  # Debug info removed
         #st.sidebar.warning("⚠️ No 'Product Type' column found - lead time logic not applied")
@@ -858,7 +857,7 @@ def load_all_data():
     
     #st.sidebar.info("🔄 Loading data from Google Sheets...")
     
-    # Load deals data - extend range to include Q1 2026 Spillover column
+    # Load deals data - extend range to include Q2 2026 Spillover column
     deals_df = load_google_sheets_data("All Reps All Pipelines", "A:R", version=CACHE_VERSION)
     
     # DEBUG: Show what we got from HubSpot
@@ -880,8 +879,8 @@ def load_all_data():
     # Load sales orders data from NetSuite - EXTEND to include Columns through AF (Calyx | External Order, Pending Approval Date, Corrected Customer Name, Rep Master)
     sales_orders_df = load_google_sheets_data("NS Sales Orders", "A:AF", version=CACHE_VERSION)
     
-    # Load Q4 Push planning status data (Deal/Order ID and Status)
-    q4_push_df = load_google_sheets_data("Q4 Push", "A:C", version=CACHE_VERSION)
+    # Q4 Push planning status removed for Q1 dashboard
+    q4_push_df = pd.DataFrame()  # Empty placeholder for compatibility
     
     # Clean and process deals data - FIXED VERSION to match actual sheet
     if not deals_df.empty and len(deals_df.columns) >= 6:
@@ -925,8 +924,8 @@ def load_all_data():
                     rename_dict[col] = 'Product Type'  # Map Deal Type to Product Type for lead time logic
                 elif col == 'Average Leadtime':
                     rename_dict[col] = 'Average Leadtime'
-                elif col == 'Q1 2026 Spillover':
-                    rename_dict[col] = 'Q1 2026 Spillover'
+                elif col == 'Q2 2026 Spillover':
+                    rename_dict[col] = 'Q2 2026 Spillover'
             
             deals_df = deals_df.rename(columns=rename_dict)
             
@@ -1011,25 +1010,25 @@ def load_all_data():
                 pass  # Debug info removed
                 #st.sidebar.error("❌ No Status column found! Check 'Close Status' mapping")
             
-            # FILTER: Only Q4 2025 deals (Oct 1 - Dec 31, 2025)
-            # Use < Jan 1, 2026 to include all of Dec 31 regardless of timestamp
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2026-01-01')
+            # FILTER: Only Q1 2026 deals (Jan 1 - Mar 31, 2026)
+            # Use < Apr 1, 2026 to include all of Mar 31 regardless of timestamp
+            q1_start = pd.Timestamp('2026-01-01')
+            q1_end = pd.Timestamp('2026-04-01')
             
             if 'Close Date' in deals_df.columns:
                 before_count = len(deals_df)
                 before_amount = deals_df['Amount'].sum()
                 
                 deals_df = deals_df[
-                    (deals_df['Close Date'] >= q4_start) & 
-                    (deals_df['Close Date'] < q4_end)
+                    (deals_df['Close Date'] >= q1_start) & 
+                    (deals_df['Close Date'] < q1_end)
                 ]
                 after_count = len(deals_df)
                 after_amount = deals_df['Amount'].sum()
                 
                 st.sidebar.markdown("### 📊 HubSpot Data Loaded")
-                st.sidebar.caption(f"Total deals before Q4 filter: {before_count} (${before_amount:,.0f})")
-                st.sidebar.caption(f"Q4 2025 deals: {after_count} (${after_amount:,.0f})")
+                st.sidebar.caption(f"Total deals before Q1 filter: {before_count} (${before_amount:,.0f})")
+                st.sidebar.caption(f"Q1 2026 deals: {after_count} (${after_amount:,.0f})")
                 st.sidebar.caption(f"Filtered out: {before_count - after_count} deals")
                 
                 # Show breakdown by rep for Expect/Commit
@@ -1069,8 +1068,8 @@ def load_all_data():
                 pass  # Debug info removed
                 #st.sidebar.warning("⚠️ No Deal Stage column found")
             
-            # Apply Q4 fulfillment logic
-            deals_df = apply_q4_fulfillment_logic(deals_df)
+            # Apply Q1 fulfillment logic
+            deals_df = apply_q1_fulfillment_logic(deals_df)
     else:
         pass  # Debug info removed
         #st.sidebar.error(f"❌ HubSpot data has insufficient columns: {len(deals_df.columns) if not deals_df.empty else 0}")
@@ -1166,15 +1165,15 @@ def load_all_data():
             invoices_df['Amount'] = invoices_df['Amount'].apply(clean_numeric)
             invoices_df['Date'] = pd.to_datetime(invoices_df['Date'], errors='coerce')
             
-            # Filter to Q4 2025 only (10/1/2025 - 12/31/2025)
+            # Filter to Q1 2026 only (1/1/2026 - 3/31/2026)
             # This should match exactly what your boss filters in the sheet
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
+            q1_start = pd.Timestamp('2026-01-01')
+            q1_end = pd.Timestamp('2026-03-31')
             
             # Apply date filter
             invoices_df = invoices_df[
-                (invoices_df['Date'] >= q4_start) & 
-                (invoices_df['Date'] <= q4_end)
+                (invoices_df['Date'] >= q1_start) & 
+                (invoices_df['Date'] <= q1_end)
             ]
             
             # Clean up Sales Rep field
@@ -1551,9 +1550,9 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             so_df = so_df.copy()
             so_df['Amount_Numeric'] = pd.to_numeric(so_df.get('Amount', 0), errors='coerce')
             
-            # Q4 2025 date range for filtering
-            q4_start = pd.Timestamp('2025-10-01')
-            q4_end = pd.Timestamp('2025-12-31')
+            # Q1 2026 date range for filtering
+            q1_start = pd.Timestamp('2026-01-01')
+            q1_end = pd.Timestamp('2026-03-31')
             
             # Parse dates
             if 'Estimated Ship Date' in so_df.columns:
@@ -1577,16 +1576,16 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             metrics['pending_fulfillment'] = pf_df[pf_df['Ship_Date_Parsed'].notna()]['Amount_Numeric'].sum()
             metrics['pending_fulfillment_no_date'] = pf_df[pf_df['Ship_Date_Parsed'].isna()]['Amount_Numeric'].sum()
             
-            # Pending Approval - filtered by Pending Approval Date within Q4 2025
+            # Pending Approval - filtered by Pending Approval Date within Q1 2026
             pa_df = so_df[so_df.get('Status', '') == 'Pending Approval'].copy()
             
-            # PA with date: must have a valid date WITHIN Q4 2025
-            pa_with_q4_date = pa_df[
+            # PA with date: must have a valid date WITHIN Q1 2026
+            pa_with_q1_date = pa_df[
                 (pa_df['PA_Date_Parsed'].notna()) &
-                (pa_df['PA_Date_Parsed'] >= q4_start) &
-                (pa_df['PA_Date_Parsed'] <= q4_end)
+                (pa_df['PA_Date_Parsed'] >= q1_start) &
+                (pa_df['PA_Date_Parsed'] <= q1_end)
             ]
-            metrics['pending_approval'] = pa_with_q4_date['Amount_Numeric'].sum()
+            metrics['pending_approval'] = pa_with_q1_date['Amount_Numeric'].sum()
             
             # PA no date: missing or invalid Pending Approval Date
             pa_no_date = pa_df[pa_df['PA_Date_Parsed'].isna()]
@@ -1734,9 +1733,9 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
-                q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
-                return q4_deals[q4_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
+                # Use Q2 2026 Spillover column - filter to Q1 deals only
+                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                return q1_deals[q1_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
             
             current_expect = get_expect_amount(deals_df)
             previous_expect = get_expect_amount(previous['deals'])
@@ -1750,16 +1749,16 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
-                q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
-                return q4_deals[q4_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
+                # Use Q2 2026 Spillover column - filter to Q1 deals only
+                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                return q1_deals[q1_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
             
             current_bc = get_best_case_amount(deals_df)
             previous_bc = get_best_case_amount(previous['deals'])
             delta_bc = current_bc - previous_bc
             st.metric("HubSpot Best Case", f"${current_bc:,.0f}", delta=f"${delta_bc:,.0f}")
         
-        # Row 5: HubSpot Continued + Q1 Spillover
+        # Row 5: HubSpot Continued + Q2 Spillover
         hs2_col1, hs2_col2, hs2_col3, hs2_col4 = st.columns(4)
         
         with hs2_col1:
@@ -1769,9 +1768,9 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q1 2026 Spillover column (now fixed in spreadsheet)
-                q4_deals = df[df.get('Q1 2026 Spillover') != 'Q1 2026']
-                return q4_deals[q4_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
+                # Use Q2 2026 Spillover column - filter to Q1 deals only
+                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                return q1_deals[q1_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
             
             current_opp = get_opportunity_amount(deals_df)
             previous_opp = get_opportunity_amount(previous['deals'])
@@ -1779,10 +1778,10 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
             st.metric("HubSpot Opportunity", f"${current_opp:,.0f}", delta=f"${delta_opp:,.0f}")
         
         with hs2_col2:
-            current_q1 = current_metrics.get('q1_spillover_expect_commit', 0)
-            previous_q1 = previous_metrics.get('q1_spillover_expect_commit', 0)
-            delta_q1 = current_q1 - previous_q1
-            st.metric("Q1 Spillover - Expect/Commit", f"${current_q1:,.0f}", delta=f"${delta_q1:,.0f}")
+            current_q2 = current_metrics.get('q1_spillover_expect_commit', 0)  # Key mapped to Q2
+            previous_q2 = previous_metrics.get('q1_spillover_expect_commit', 0)
+            delta_q2 = current_q2 - previous_q2
+            st.metric("Q2 Spillover - Expect/Commit", f"${current_q2:,.0f}", delta=f"${delta_q2:,.0f}")
         
         # Rep-level changes
         st.markdown("#### 👤 Rep-Level Changes")
@@ -1951,82 +1950,8 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     if planning_key not in st.session_state:
         st.session_state[planning_key] = {}
     
-    # Load planning status from Q4 Push sheet
-    if q4_push_df is not None and not q4_push_df.empty:
-        with st.expander("📊 Q4 Planning Status (From Google Sheet)", expanded=False):
-            st.info("""
-            **Planning status is loaded from the "Q4 Push" sheet in your Google Sheets.**
-            
-            - Column A: Deal/Order ID (e.g., "SO13501" or "32533096097")
-            - Column B: Status ("In", "Out", or "Maybe")
-            - Column C: Notes (optional)
-            
-            **Status meanings:**
-            - **IN** = Automatically checked in forecast
-            - **MAYBE** = Automatically checked (can adjust manually)
-            - **OUT** = Unchecked by default
-            """)
-            
-            try:
-                # Process the Q4 Push sheet data
-                # Ensure we have at least 2 columns
-                if len(q4_push_df.columns) >= 2:
-                    # Get column names (should be in first row as header)
-                    # Use first 3 columns: ID, Status, Notes (if exists)
-                    id_col = q4_push_df.columns[0]
-                    status_col = q4_push_df.columns[1]
-                    notes_col = q4_push_df.columns[2] if len(q4_push_df.columns) >= 3 else None
-                    
-                    # Clear existing planning status
-                    st.session_state[planning_key] = {}
-                    
-                    # Load into session state
-                    for idx, row in q4_push_df.iterrows():
-                        id_str = str(row[id_col]).strip()
-                        status_str = str(row[status_col]).strip().upper()
-                        
-                        # Skip empty rows
-                        if not id_str or id_str.lower() in ['nan', 'none', '']:
-                            continue
-                        
-                        # Get notes if column exists
-                        notes_str = ''
-                        if notes_col and notes_col in row:
-                            notes_str = str(row[notes_col]).strip()
-                            if notes_str.lower() in ['nan', 'none', '']:
-                                notes_str = ''
-                        
-                        # Store in session state
-                        st.session_state[planning_key][id_str] = {
-                            'status': status_str,
-                            'notes': notes_str
-                        }
-                    
-                    # Show summary
-                    if st.session_state[planning_key]:
-                        status_counts = {}
-                        for item_data in st.session_state[planning_key].values():
-                            status = item_data.get('status', '') if isinstance(item_data, dict) else item_data
-                            status_counts[status] = status_counts.get(status, 0) + 1
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("✅ IN", status_counts.get('IN', 0))
-                        with col2:
-                            st.metric("⚠️ MAYBE", status_counts.get('MAYBE', 0))
-                        with col3:
-                            st.metric("❌ OUT", status_counts.get('OUT', 0))
-                        
-                        st.success(f"✅ Loaded {len(st.session_state[planning_key])} planning statuses from Q4 Push sheet")
-                    else:
-                        st.warning("No planning status data found in Q4 Push sheet")
-                else:
-                    st.warning("Q4 Push sheet doesn't have enough columns (needs at least ID and Status)")
-                    
-            except Exception as e:
-                st.error(f"Error loading Q4 Push sheet: {e}")
-    else:
-        st.info("💡 No Q4 Push sheet data available. Add data to 'Q4 Push' sheet in Google Sheets to load planning status.")
+    # Planning status feature removed for Q1 dashboard
+    # (The Q4 Push sheet is not used in Q1)
     
     # Clear buttons - Enhanced to include selections
     if st.session_state[planning_key]:
@@ -2173,11 +2098,13 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     ns_categories = {
         'PF_Date_Ext':   {'label': 'Pending Fulfillment (Date) - External'},
         'PF_Date_Int':   {'label': 'Pending Fulfillment (Date) - Internal'},
-        'PF_Spillover':  {'label': '⚠️ PF Spillover (Q1 2026)'},
+        'PF_Q4_Spillover':  {'label': '⏪ PF Spillover (Q4 2025)'},
+        'PF_Q2_Spillover':  {'label': '⏩ PF Spillover (Q2 2026)'},
         'PF_NoDate_Ext': {'label': 'PF (No Date) - External'},
         'PF_NoDate_Int': {'label': 'PF (No Date) - Internal'},
         'PA_Date':       {'label': 'Pending Approval (With Date)'},
-        'PA_Spillover':  {'label': '⚠️ PA Spillover (Q1 2026)'},
+        'PA_Q4_Spillover':  {'label': '⏪ PA Spillover (Q4 2025)'},
+        'PA_Q2_Spillover':  {'label': '⏩ PA Spillover (Q2 2026)'},
         'PA_NoDate':     {'label': 'Pending Approval (No Date)'},
         'PA_Old':        {'label': 'Pending Approval (>2 Wks)'},
     }
@@ -2187,10 +2114,14 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
         'Commit':      {'label': 'HubSpot Commit'},
         'BestCase':    {'label': 'HubSpot Best Case'},
         'Opp':         {'label': 'HubSpot Opp'},
-        'Q1_Expect':   {'label': 'Q1 Spillover (Expect)'},
-        'Q1_Commit':   {'label': 'Q1 Spillover (Commit)'},
-        'Q1_BestCase': {'label': 'Q1 Spillover (Best Case)'},
-        'Q1_Opp':      {'label': 'Q1 Spillover (Opp)'},
+        'Q4_Expect':   {'label': 'Q4 Spillover (Expect)'},
+        'Q4_Commit':   {'label': 'Q4 Spillover (Commit)'},
+        'Q4_BestCase': {'label': 'Q4 Spillover (Best Case)'},
+        'Q4_Opp':      {'label': 'Q4 Spillover (Opp)'},
+        'Q2_Expect':   {'label': 'Q2 Spillover (Expect)'},
+        'Q2_Commit':   {'label': 'Q2 Spillover (Commit)'},
+        'Q2_BestCase': {'label': 'Q2 Spillover (Best Case)'},
+        'Q2_Opp':      {'label': 'Q2 Spillover (Opp)'},
     }
 
     # --- 3. CREATE DISPLAY DATAFRAMES ---
@@ -2256,22 +2187,26 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
     ns_dfs = {
         'PF_Date_Ext': format_ns_view(so_categories['pf_date_ext'], 'Promise'),
         'PF_Date_Int': format_ns_view(so_categories['pf_date_int'], 'Promise'),
-        'PF_Spillover': format_ns_view(so_categories['pf_spillover'], 'Promise'),
+        'PF_Q4_Spillover': format_ns_view(so_categories['pf_q4_spillover'], 'Promise'),
+        'PF_Q2_Spillover': format_ns_view(so_categories['pf_q2_spillover'], 'Promise'),
         'PF_NoDate_Ext': format_ns_view(so_categories['pf_nodate_ext'], 'PF_Date'),
         'PF_NoDate_Int': format_ns_view(so_categories['pf_nodate_int'], 'PF_Date'),
         'PA_Old': format_ns_view(so_categories['pa_old'], 'PA_Date'),
         'PA_Date': format_ns_view(so_categories['pa_date'], 'PA_Date'),
-        'PA_Spillover': format_ns_view(so_categories['pa_spillover'], 'PA_Date'),
+        'PA_Q4_Spillover': format_ns_view(so_categories['pa_q4_spillover'], 'PA_Date'),
+        'PA_Q2_Spillover': format_ns_view(so_categories['pa_q2_spillover'], 'PA_Date'),
         'PA_NoDate': format_ns_view(so_categories['pa_nodate'], 'None')
     }
 
     hs_dfs = {}
     if not hs_data.empty:
-        # Use the Q1 2026 Spillover column from Google Sheet (spreadsheet formula now handles PA date logic)
-        # Q4 deals: NOT marked as Q1 spillover
-        # Q1 deals: Explicitly marked as Q1 2026
-        q4 = hs_data.get('Q1 2026 Spillover') != 'Q1 2026'
-        q1 = hs_data.get('Q1 2026 Spillover') == 'Q1 2026'
+        # Use the Q2 2026 Spillover column from Google Sheet (spreadsheet formula handles PA date logic)
+        # Q1 deals: NOT marked as Q2 spillover (primary quarter)
+        # Q4 deals: Marked as Q4 2025 (backward spillover - carryover)
+        # Q2 deals: Explicitly marked as Q2 2026 (forward spillover)
+        q1 = (hs_data.get('Q2 2026 Spillover') != 'Q2 2026') & (hs_data.get('Q2 2026 Spillover') != 'Q4 2025')
+        q4 = hs_data.get('Q2 2026 Spillover') == 'Q4 2025'
+        q2 = hs_data.get('Q2 2026 Spillover') == 'Q2 2026'
         
         def format_hs_view(df):
             if df.empty: return df
@@ -2302,14 +2237,18 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                 d['Link'] = d['Record ID'].apply(lambda x: f"https://app.hubspot.com/contacts/6712259/record/0-3/{x}/" if pd.notna(x) else "")
             return d.sort_values(['Type', 'Amount_Numeric'], ascending=[True, False])
 
-        hs_dfs['Expect'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Expect')])
-        hs_dfs['Commit'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Commit')])
-        hs_dfs['BestCase'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Best Case')])
-        hs_dfs['Opp'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Opportunity')])
-        hs_dfs['Q1_Expect'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Expect')])
-        hs_dfs['Q1_Commit'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Commit')])
-        hs_dfs['Q1_BestCase'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Best Case')])
-        hs_dfs['Q1_Opp'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Opportunity')])
+        hs_dfs['Expect'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Expect')])
+        hs_dfs['Commit'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Commit')])
+        hs_dfs['BestCase'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Best Case')])
+        hs_dfs['Opp'] = format_hs_view(hs_data[q1 & (hs_data['Status'] == 'Opportunity')])
+        hs_dfs['Q4_Expect'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Expect')])
+        hs_dfs['Q4_Commit'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Commit')])
+        hs_dfs['Q4_BestCase'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Best Case')])
+        hs_dfs['Q4_Opp'] = format_hs_view(hs_data[q4 & (hs_data['Status'] == 'Opportunity')])
+        hs_dfs['Q2_Expect'] = format_hs_view(hs_data[q2 & (hs_data['Status'] == 'Expect')])
+        hs_dfs['Q2_Commit'] = format_hs_view(hs_data[q2 & (hs_data['Status'] == 'Commit')])
+        hs_dfs['Q2_BestCase'] = format_hs_view(hs_data[q2 & (hs_data['Status'] == 'Best Case')])
+        hs_dfs['Q2_Opp'] = format_hs_view(hs_data[q2 & (hs_data['Status'] == 'Opportunity')])
 
     # --- 4. RENDER UI & CAPTURE SELECTIONS ---
     
@@ -2455,7 +2394,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Status": st.column_config.SelectboxColumn(
-                                                "Q4 Status",
+                                                "Status",
                                                 width="small",
                                                 options=['IN', 'MAYBE', 'OUT', '—'],
                                                 required=False
@@ -2499,7 +2438,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     # Add Status and Notes columns to export data
                                     if 'SO #' in selected_rows.columns:
-                                        selected_rows['Q4 Status'] = selected_rows['SO #'].apply(get_planning_status)
+                                        selected_rows['Status'] = selected_rows['SO #'].apply(get_planning_status)
                                         selected_rows['Notes'] = selected_rows['SO #'].apply(get_planning_notes)
                                     
                                     export_buckets[key] = selected_rows
@@ -2523,7 +2462,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         st.dataframe(
                                             df_readonly[display_readonly],
                                             column_config={
-                                                "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                                "Status": st.column_config.TextColumn("Status", width="small"),
                                                 "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                                 "SO #": st.column_config.TextColumn("SO #", width="small"),
                                                 "Type": st.column_config.TextColumn("Type", width="small"),
@@ -2631,7 +2570,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                         column_config={
                                             "Select": st.column_config.CheckboxColumn("✓", width="small"),
                                             "Status": st.column_config.SelectboxColumn(
-                                                "Q4 Status",
+                                                "Status",
                                                 width="small",
                                                 options=['IN', 'MAYBE', 'OUT', '—'],
                                                 required=False
@@ -2676,7 +2615,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     
                                     # Add Status and Notes columns to export data
                                     if 'Deal ID' in selected_rows.columns:
-                                        selected_rows['Q4 Status'] = selected_rows['Deal ID'].apply(get_planning_status)
+                                        selected_rows['Status'] = selected_rows['Deal ID'].apply(get_planning_status)
                                         selected_rows['Notes'] = selected_rows['Deal ID'].apply(get_planning_notes)
                                     
                                     export_buckets[key] = selected_rows
@@ -2699,7 +2638,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                                     st.dataframe(
                                         df_readonly[display_readonly],
                                         column_config={
-                                            "Status": st.column_config.TextColumn("Q4 Status", width="small"),
+                                            "Status": st.column_config.TextColumn("Status", width="small"),
                                             "Link": st.column_config.LinkColumn("🔗", display_text="Open", width="small"),
                                             "Deal ID": st.column_config.TextColumn("Deal ID", width="small"),
                                             "Type": st.column_config.TextColumn("Type", width="small"),
@@ -3132,7 +3071,7 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
                     'Order/Deal Type': deal_type,
                     'Date': date_val,
                     'Amount': amount,
-                    'Q4 Status': planning_status,
+                    'Status': planning_status,
                     'Notes': planning_notes,
                     'Rep': rep
                 })
@@ -3240,14 +3179,15 @@ def calculate_team_metrics(deals_df, dashboard_df):
     total_quota = dashboard_df['Quota'].sum()
     total_orders = dashboard_df['NetSuite Orders'].sum()
     
-    # Filter for Q4 fulfillment only (spreadsheet formula now handles PA date logic)
-    deals_q4 = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
+    # Filter for Q1 2026 fulfillment only (exclude Q2 and Q4 spillover)
+    # Primary quarter deals: NOT marked as Q2 2026 spillover AND NOT marked as Q4 2025 spillover
+    deals_q1 = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
     
-    # Calculate Expect/Commit forecast (Q4 only)
-    expect_commit = deals_q4[deals_q4['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
+    # Calculate Expect/Commit forecast (Q1 only)
+    expect_commit = deals_q1[deals_q1['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
     
-    # Calculate Best Case/Opportunity (Q4 only)
-    best_opp = deals_q4[deals_q4['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
+    # Calculate Best Case/Opportunity (Q1 only)
+    best_opp = deals_q1[deals_q1['Status'].isin(['Best Case', 'Opportunity'])]['Amount'].sum()
     
     # Calculate gap
     gap = total_quota - expect_commit - total_orders
@@ -3291,8 +3231,10 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
             'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
-            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0,
-            'pa_spillover': pd.DataFrame(), 'pa_spillover_amount': 0
+            'pf_q4_spillover': pd.DataFrame(), 'pf_q4_spillover_amount': 0,
+            'pa_q4_spillover': pd.DataFrame(), 'pa_q4_spillover_amount': 0,
+            'pf_q2_spillover': pd.DataFrame(), 'pf_q2_spillover_amount': 0,
+            'pa_q2_spillover': pd.DataFrame(), 'pa_q2_spillover_amount': 0
         }
     
     # Filter by rep if specified
@@ -3310,8 +3252,10 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
             'pa_date': pd.DataFrame(), 'pa_date_amount': 0,
             'pa_nodate': pd.DataFrame(), 'pa_nodate_amount': 0,
             'pa_old': pd.DataFrame(), 'pa_old_amount': 0,
-            'pf_spillover': pd.DataFrame(), 'pf_spillover_amount': 0,
-            'pa_spillover': pd.DataFrame(), 'pa_spillover_amount': 0
+            'pf_q4_spillover': pd.DataFrame(), 'pf_q4_spillover_amount': 0,
+            'pa_q4_spillover': pd.DataFrame(), 'pa_q4_spillover_amount': 0,
+            'pf_q2_spillover': pd.DataFrame(), 'pf_q2_spillover_amount': 0,
+            'pa_q2_spillover': pd.DataFrame(), 'pa_q2_spillover_amount': 0
         }
     
     # Remove duplicate columns
@@ -3331,28 +3275,20 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
     else:
         orders['Display_PA_Date'] = pd.to_datetime(get_col_by_index(orders, 29), errors='coerce')  # Col AD: PA Date
     
-    # Define Q4 2025 and Q1 2026 date ranges
-    q4_start = pd.Timestamp('2025-10-01')
-    q4_end = pd.Timestamp('2025-12-31')
+    # Define Q1 2026 (primary), Q4 2025 (spillover backward), and Q2 2026 (spillover forward) date ranges
+    q4_2025_start = pd.Timestamp('2025-10-01')
+    q4_2025_end = pd.Timestamp('2025-12-31')
     q1_2026_start = pd.Timestamp('2026-01-01')
     q1_2026_end = pd.Timestamp('2026-03-31')
+    q2_2026_start = pd.Timestamp('2026-04-01')
+    q2_2026_end = pd.Timestamp('2026-06-30')
     
     # === PENDING FULFILLMENT CATEGORIZATION ===
     pf_orders = orders[orders['Status'].isin(['Pending Fulfillment', 'Pending Billing/Partially Fulfilled'])].copy()
     
     if not pf_orders.empty:
-        # Check if dates are in Q4 range
-        def has_q4_date(row):
-            if pd.notna(row.get('Customer Promise Date')):
-                if q4_start <= row['Customer Promise Date'] <= q4_end:
-                    return True
-            if pd.notna(row.get('Projected Date')):
-                if q4_start <= row['Projected Date'] <= q4_end:
-                    return True
-            return False
-        
-        # NEW: Check if dates are in Q1 2026 range (Spillover)
-        def has_q1_2026_date(row):
+        # Check if dates are in Q1 2026 range (primary quarter)
+        def has_q1_date(row):
             if pd.notna(row.get('Customer Promise Date')):
                 if q1_2026_start <= row['Customer Promise Date'] <= q1_2026_end:
                     return True
@@ -3361,24 +3297,50 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
                     return True
             return False
         
-        pf_orders['Has_Q4_Date'] = pf_orders.apply(has_q4_date, axis=1)
-        pf_orders['Has_Q1_2026_Date'] = pf_orders.apply(has_q1_2026_date, axis=1)
+        # Check if dates are in Q4 2025 range (backward spillover - carryover from Q4)
+        def has_q4_2025_date(row):
+            if pd.notna(row.get('Customer Promise Date')):
+                if q4_2025_start <= row['Customer Promise Date'] <= q4_2025_end:
+                    return True
+            if pd.notna(row.get('Projected Date')):
+                if q4_2025_start <= row['Projected Date'] <= q4_2025_end:
+                    return True
+            return False
+        
+        # Check if dates are in Q2 2026 range (forward spillover)
+        def has_q2_2026_date(row):
+            if pd.notna(row.get('Customer Promise Date')):
+                if q2_2026_start <= row['Customer Promise Date'] <= q2_2026_end:
+                    return True
+            if pd.notna(row.get('Projected Date')):
+                if q2_2026_start <= row['Projected Date'] <= q2_2026_end:
+                    return True
+            return False
+        
+        pf_orders['Has_Q1_Date'] = pf_orders.apply(has_q1_date, axis=1)
+        pf_orders['Has_Q4_2025_Date'] = pf_orders.apply(has_q4_2025_date, axis=1)
+        pf_orders['Has_Q2_2026_Date'] = pf_orders.apply(has_q2_2026_date, axis=1)
         
         # Check External/Internal flag
         is_ext = pd.Series(False, index=pf_orders.index)
         if 'Calyx External Order' in pf_orders.columns:
             is_ext = pf_orders['Calyx External Order'].astype(str).str.strip().str.upper() == 'YES'
         
-        # NEW: Q1 2026 Spillover bucket (takes priority)
-        pf_spillover = pf_orders[pf_orders['Has_Q1_2026_Date'] == True].copy()
-        spillover_ids = pf_spillover.index
+        # Q4 2025 Spillover bucket (carryover from Q4 that hasn't shipped)
+        pf_q4_spillover = pf_orders[pf_orders['Has_Q4_2025_Date'] == True].copy()
+        q4_spillover_ids = pf_q4_spillover.index
         
-        # Categorize Q4 PF orders (exclude spillover to avoid double counting)
-        q4_candidates = pf_orders[(pf_orders['Has_Q4_Date'] == True) & (~pf_orders.index.isin(spillover_ids))]
-        pf_date_ext = q4_candidates[is_ext.loc[q4_candidates.index]].copy()
-        pf_date_int = q4_candidates[~is_ext.loc[q4_candidates.index]].copy()
+        # Q2 2026 Spillover bucket (forward spillover)
+        pf_q2_spillover = pf_orders[pf_orders['Has_Q2_2026_Date'] == True].copy()
+        q2_spillover_ids = pf_q2_spillover.index
         
-        # No date means BOTH dates are missing (not Q4 and not Q1)
+        # Categorize Q1 PF orders (exclude both spillover buckets to avoid double counting)
+        excluded_ids = q4_spillover_ids.union(q2_spillover_ids)
+        q1_candidates = pf_orders[(pf_orders['Has_Q1_Date'] == True) & (~pf_orders.index.isin(excluded_ids))]
+        pf_date_ext = q1_candidates[is_ext.loc[q1_candidates.index]].copy()
+        pf_date_int = q1_candidates[~is_ext.loc[q1_candidates.index]].copy()
+        
+        # No date means BOTH dates are missing (not Q1, not Q4, not Q2)
         no_date_mask = (
             (pf_orders['Customer Promise Date'].isna()) &
             (pf_orders['Projected Date'].isna())
@@ -3386,11 +3348,11 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         pf_nodate_ext = pf_orders[no_date_mask & is_ext].copy()
         pf_nodate_int = pf_orders[no_date_mask & ~is_ext].copy()
     else:
-        pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pf_spillover = pd.DataFrame()
+        pf_date_ext = pf_date_int = pf_nodate_ext = pf_nodate_int = pf_q4_spillover = pf_q2_spillover = pd.DataFrame()
     
     # === PENDING APPROVAL CATEGORIZATION ===
     # Logic:
-    # 1. PA with Date (within Q4): Has PA Date in Q4 2025 AND Age < 13 business days
+    # 1. PA with Date (within Q1): Has PA Date in Q1 2026 AND Age < 13 business days
     # 2. PA No Date: No PA Date AND Age < 13 business days  
     # 3. PA Old (>2 Weeks): Age >= 13 business days (regardless of whether they have a PA date or not)
     pa_orders = orders[orders['Status'] == 'Pending Approval'].copy()
@@ -3412,32 +3374,44 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         else:
             pa_orders['PA_Date_Parsed'] = pd.NaT
         
-        # Determine which orders have a valid Q4 PA Date
-        has_q4_pa_date = (
+        # Determine which orders have a valid Q1 2026 PA Date (primary quarter)
+        has_q1_pa_date = (
             (pa_orders['PA_Date_Parsed'].notna()) &
-            (pa_orders['PA_Date_Parsed'] >= q4_start) &
-            (pa_orders['PA_Date_Parsed'] <= q4_end)
+            (pa_orders['PA_Date_Parsed'] >= q1_2026_start) &
+            (pa_orders['PA_Date_Parsed'] <= q1_2026_end)
         )
         
-        # NEW: Determine which orders have a Q1 2026 PA Date (Spillover)
-        has_q1_2026_pa_date = (
+        # Determine which orders have a Q4 2025 PA Date (backward spillover)
+        has_q4_2025_pa_date = (
             (pa_orders['PA_Date_Parsed'].notna()) &
-            (pa_orders['PA_Date_Parsed'] >= q1_2026_start)
+            (pa_orders['PA_Date_Parsed'] >= q4_2025_start) &
+            (pa_orders['PA_Date_Parsed'] <= q4_2025_end)
         )
         
-        # Determine which orders have NO PA Date (or invalid/outside Q4)
+        # Determine which orders have a Q2 2026 PA Date (forward spillover)
+        has_q2_2026_pa_date = (
+            (pa_orders['PA_Date_Parsed'].notna()) &
+            (pa_orders['PA_Date_Parsed'] >= q2_2026_start)
+        )
+        
+        # Determine which orders have NO PA Date (or invalid)
         has_no_pa_date = (
             (pa_orders['PA_Date_Parsed'].isna()) |
             (pa_orders['Pending Approval Date'].astype(str).str.strip() == 'No Date') |
             (pa_orders['Pending Approval Date'].astype(str).str.strip() == '')
         )
         
-        # NEW: PA Q1 2026 Spillover bucket (takes priority over other PA categories)
-        pa_spillover = pa_orders[has_q1_2026_pa_date].copy()
-        spillover_pa_ids = pa_spillover.index
+        # PA Q4 2025 Spillover bucket (carryover from Q4)
+        pa_q4_spillover = pa_orders[has_q4_2025_pa_date].copy()
+        q4_spillover_pa_ids = pa_q4_spillover.index
+        
+        # PA Q2 2026 Spillover bucket (forward spillover)
+        pa_q2_spillover = pa_orders[has_q2_2026_pa_date].copy()
+        q2_spillover_pa_ids = pa_q2_spillover.index
         
         # Exclude spillover from remaining PA categorization
-        pa_orders_remaining = pa_orders[~pa_orders.index.isin(spillover_pa_ids)].copy()
+        excluded_pa_ids = q4_spillover_pa_ids.union(q2_spillover_pa_ids)
+        pa_orders_remaining = pa_orders[~pa_orders.index.isin(excluded_pa_ids)].copy()
         
         # CATEGORY 3: PA Old (>= 13 business days) - ANY PA order that is old, regardless of PA date
         # This takes priority - old orders go here first
@@ -3446,13 +3420,13 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         # Only "young" orders (< 13 days) are eligible for PA with Date or PA No Date
         young_pa = pa_orders_remaining[pa_orders_remaining['Age_Business_Days'] < 13].copy()
         
-        # CATEGORY 1: PA with Date - has Q4 PA date AND is NOT old (< 13 days)
-        pa_date = young_pa[has_q4_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
+        # CATEGORY 1: PA with Date - has Q1 PA date AND is NOT old (< 13 days)
+        pa_date = young_pa[has_q1_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
         
         # CATEGORY 2: PA No Date - no PA date AND is NOT old (< 13 days)
         pa_nodate = young_pa[has_no_pa_date.loc[young_pa.index]].copy() if not young_pa.empty else pd.DataFrame()
     else:
-        pa_old = pa_date = pa_nodate = pa_spillover = pd.DataFrame()
+        pa_old = pa_date = pa_nodate = pa_q4_spillover = pa_q2_spillover = pd.DataFrame()
     
     # Calculate amounts
     def get_amount(df):
@@ -3473,10 +3447,14 @@ def categorize_sales_orders(sales_orders_df, rep_name=None):
         'pa_nodate_amount': get_amount(pa_nodate),
         'pa_old': pa_old,
         'pa_old_amount': get_amount(pa_old),
-        'pf_spillover': pf_spillover,
-        'pf_spillover_amount': get_amount(pf_spillover),
-        'pa_spillover': pa_spillover,
-        'pa_spillover_amount': get_amount(pa_spillover)
+        'pf_q4_spillover': pf_q4_spillover,
+        'pf_q4_spillover_amount': get_amount(pf_q4_spillover),
+        'pa_q4_spillover': pa_q4_spillover,
+        'pa_q4_spillover_amount': get_amount(pa_q4_spillover),
+        'pf_q2_spillover': pf_q2_spillover,
+        'pf_q2_spillover_amount': get_amount(pf_q2_spillover),
+        'pa_q2_spillover': pa_q2_spillover,
+        'pa_q2_spillover_amount': get_amount(pa_q2_spillover)
     }
 
 def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None):
@@ -3491,51 +3469,68 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     quota = rep_info['Quota'].iloc[0]
     orders = rep_info['NetSuite Orders'].iloc[0]
     
-    # Filter deals for this rep - ALL Q4 2025 deals (regardless of spillover)
+    # Filter deals for this rep - ALL Q1 2026 deals (regardless of spillover)
     rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
     
-    # Check if we have the Q1 2026 Spillover column (spreadsheet formula now handles PA date logic)
-    has_spillover_column = 'Q1 2026 Spillover' in rep_deals.columns
+    # Check if we have the Q2 2026 Spillover column (spreadsheet formula now handles PA date logic)
+    has_spillover_column = 'Q2 2026 Spillover' in rep_deals.columns
     
     if has_spillover_column:
         # Separate deals by shipping timeline using spreadsheet formula
-        rep_deals['Ships_In_Q4'] = rep_deals['Q1 2026 Spillover'] != 'Q1 2026'
-        rep_deals['Ships_In_Q1'] = rep_deals['Q1 2026 Spillover'] == 'Q1 2026'
+        rep_deals['Ships_In_Q1'] = (rep_deals['Q2 2026 Spillover'] != 'Q2 2026') & (rep_deals['Q2 2026 Spillover'] != 'Q4 2025')
+        rep_deals['Ships_In_Q2'] = rep_deals['Q2 2026 Spillover'] == 'Q2 2026'
+        rep_deals['Ships_In_Q4'] = rep_deals['Q2 2026 Spillover'] == 'Q4 2025'
         
-        # Deals that ship in Q4 2025
-        rep_deals_ship_q4 = rep_deals[rep_deals['Ships_In_Q4'] == True].copy()
-        
-        # Deals that ship in Q1 2026 (spillover)
+        # Deals that ship in Q1 2026 (primary quarter)
         rep_deals_ship_q1 = rep_deals[rep_deals['Ships_In_Q1'] == True].copy()
+        
+        # Deals that ship in Q2 2026 (forward spillover)
+        rep_deals_ship_q2 = rep_deals[rep_deals['Ships_In_Q2'] == True].copy()
+        
+        # Deals that ship in Q4 2025 (backward spillover - carryover)
+        rep_deals_ship_q4 = rep_deals[rep_deals['Ships_In_Q4'] == True].copy()
     else:
-        # Fallback if column doesn't exist - treat all as Q4
-        rep_deals_ship_q4 = rep_deals.copy()
-        rep_deals_ship_q1 = pd.DataFrame()
+        # Fallback if column doesn't exist - treat all as Q1
+        rep_deals_ship_q1 = rep_deals.copy()
+        rep_deals_ship_q2 = pd.DataFrame()
+        rep_deals_ship_q4 = pd.DataFrame()
     
-    # Calculate metrics for DEALS SHIPPING IN Q4 (this counts toward quota)
-    expect_commit_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Expect', 'Commit'])].copy()
-    if expect_commit_q4_deals.columns.duplicated().any():
-        expect_commit_q4_deals = expect_commit_q4_deals.loc[:, ~expect_commit_q4_deals.columns.duplicated()]
-    expect_commit_q4 = expect_commit_q4_deals['Amount'].sum() if not expect_commit_q4_deals.empty else 0
-    
-    best_opp_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
-    if best_opp_q4_deals.columns.duplicated().any():
-        best_opp_q4_deals = best_opp_q4_deals.loc[:, ~best_opp_q4_deals.columns.duplicated()]
-    best_opp_q4 = best_opp_q4_deals['Amount'].sum() if not best_opp_q4_deals.empty else 0
-    
-    # Calculate metrics for Q1 SPILLOVER DEALS (closing in Q4 but shipping in Q1)
+    # Calculate metrics for DEALS SHIPPING IN Q1 (this counts toward quota)
     expect_commit_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Expect', 'Commit'])].copy()
     if expect_commit_q1_deals.columns.duplicated().any():
         expect_commit_q1_deals = expect_commit_q1_deals.loc[:, ~expect_commit_q1_deals.columns.duplicated()]
-    expect_commit_q1_spillover = expect_commit_q1_deals['Amount'].sum() if not expect_commit_q1_deals.empty else 0
+    expect_commit_q1 = expect_commit_q1_deals['Amount'].sum() if not expect_commit_q1_deals.empty else 0
     
     best_opp_q1_deals = rep_deals_ship_q1[rep_deals_ship_q1['Status'].isin(['Best Case', 'Opportunity'])].copy()
     if best_opp_q1_deals.columns.duplicated().any():
         best_opp_q1_deals = best_opp_q1_deals.loc[:, ~best_opp_q1_deals.columns.duplicated()]
-    best_opp_q1_spillover = best_opp_q1_deals['Amount'].sum() if not best_opp_q1_deals.empty else 0
+    best_opp_q1 = best_opp_q1_deals['Amount'].sum() if not best_opp_q1_deals.empty else 0
     
-    # Total Q1 spillover
-    q1_spillover_total = expect_commit_q1_spillover + best_opp_q1_spillover
+    # Calculate metrics for Q2 SPILLOVER DEALS (closing in Q1 but shipping in Q2)
+    expect_commit_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Expect', 'Commit'])].copy()
+    if expect_commit_q2_deals.columns.duplicated().any():
+        expect_commit_q2_deals = expect_commit_q2_deals.loc[:, ~expect_commit_q2_deals.columns.duplicated()]
+    expect_commit_q2_spillover = expect_commit_q2_deals['Amount'].sum() if not expect_commit_q2_deals.empty else 0
+    
+    best_opp_q2_deals = rep_deals_ship_q2[rep_deals_ship_q2['Status'].isin(['Best Case', 'Opportunity'])].copy()
+    if best_opp_q2_deals.columns.duplicated().any():
+        best_opp_q2_deals = best_opp_q2_deals.loc[:, ~best_opp_q2_deals.columns.duplicated()]
+    best_opp_q2_spillover = best_opp_q2_deals['Amount'].sum() if not best_opp_q2_deals.empty else 0
+    
+    # Calculate metrics for Q4 2025 SPILLOVER DEALS (carryover from Q4)
+    expect_commit_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Expect', 'Commit'])].copy()
+    if expect_commit_q4_deals.columns.duplicated().any():
+        expect_commit_q4_deals = expect_commit_q4_deals.loc[:, ~expect_commit_q4_deals.columns.duplicated()]
+    expect_commit_q4_spillover = expect_commit_q4_deals['Amount'].sum() if not expect_commit_q4_deals.empty else 0
+    
+    best_opp_q4_deals = rep_deals_ship_q4[rep_deals_ship_q4['Status'].isin(['Best Case', 'Opportunity'])].copy()
+    if best_opp_q4_deals.columns.duplicated().any():
+        best_opp_q4_deals = best_opp_q4_deals.loc[:, ~best_opp_q4_deals.columns.duplicated()]
+    best_opp_q4_spillover = best_opp_q4_deals['Amount'].sum() if not best_opp_q4_deals.empty else 0
+    
+    # Total spillovers
+    q2_spillover_total = expect_commit_q2_spillover + best_opp_q2_spillover
+    q4_spillover_total = expect_commit_q4_spillover + best_opp_q4_spillover
     
     # === USE CENTRALIZED CATEGORIZATION FUNCTION ===
     so_categories = categorize_sales_orders(sales_orders_df, rep_name)
@@ -3554,18 +3549,18 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     pending_fulfillment_details = pd.concat([so_categories['pf_date_ext'], so_categories['pf_date_int']])
     pending_fulfillment_no_date_details = pd.concat([so_categories['pf_nodate_ext'], so_categories['pf_nodate_int']])
     
-    # Total calculations - ONLY Q4 SHIPPING DEALS COUNT TOWARD QUOTA
+    # Total calculations - ONLY Q1 SHIPPING DEALS COUNT TOWARD QUOTA
     total_pending_fulfillment = pending_fulfillment + pending_fulfillment_no_date
-    total_progress = orders + expect_commit_q4 + pending_approval + pending_fulfillment
+    total_progress = orders + expect_commit_q1 + pending_approval + pending_fulfillment
     gap = quota - total_progress
     attainment_pct = (total_progress / quota * 100) if quota > 0 else 0
-    potential_attainment = ((total_progress + best_opp_q4) / quota * 100) if quota > 0 else 0
+    potential_attainment = ((total_progress + best_opp_q1) / quota * 100) if quota > 0 else 0
     
     return {
         'quota': quota,
         'orders': orders,
-        'expect_commit': expect_commit_q4,  # Only Q4 shipping deals
-        'best_opp': best_opp_q4,  # Only Q4 shipping deals
+        'expect_commit': expect_commit_q1,  # Only Q1 shipping deals
+        'best_opp': best_opp_q1,  # Only Q1 shipping deals
         'gap': gap,
         'attainment_pct': attainment_pct,
         'potential_attainment': potential_attainment,
@@ -3577,16 +3572,26 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'pending_fulfillment_no_date': pending_fulfillment_no_date,
         'total_pending_fulfillment': total_pending_fulfillment,
         
-        # NEW: Q1 Spillover metrics
-        'q1_spillover_expect_commit': expect_commit_q1_spillover,
-        'q1_spillover_best_opp': best_opp_q1_spillover,
-        'q1_spillover_total': q1_spillover_total,
+        # Q2 2026 Spillover metrics (forward)
+        'q2_spillover_expect_commit': expect_commit_q2_spillover,
+        'q2_spillover_best_opp': best_opp_q2_spillover,
+        'q2_spillover_total': q2_spillover_total,
         
-        # ALL Q4 2025 closing deals (for reference)
-        'total_q4_closing_deals': len(rep_deals),
-        'total_q4_closing_amount': rep_deals['Amount'].sum() if not rep_deals.empty else 0,
+        # Q4 2025 Spillover metrics (backward carryover)
+        'q4_spillover_expect_commit': expect_commit_q4_spillover,
+        'q4_spillover_best_opp': best_opp_q4_spillover,
+        'q4_spillover_total': q4_spillover_total,
         
-        'deals': rep_deals_ship_q4,  # Deals shipping in Q4
+        # Keep q1_spillover keys for backward compatibility (mapped to q2)
+        'q1_spillover_expect_commit': expect_commit_q2_spillover,
+        'q1_spillover_best_opp': best_opp_q2_spillover,
+        'q1_spillover_total': q2_spillover_total,
+        
+        # ALL Q1 2026 closing deals (for reference)
+        'total_q1_closing_deals': len(rep_deals),
+        'total_q1_closing_amount': rep_deals['Amount'].sum() if not rep_deals.empty else 0,
+        
+        'deals': rep_deals_ship_q1,  # Deals shipping in Q1
         
         # Add detail dataframes for drill-down
         'pending_approval_details': pending_approval_details,
@@ -3594,13 +3599,18 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         'pending_approval_old_details': pending_approval_old_details,
         'pending_fulfillment_details': pending_fulfillment_details,
         'pending_fulfillment_no_date_details': pending_fulfillment_no_date_details,
-        'expect_commit_deals': expect_commit_q4_deals,
-        'best_opp_deals': best_opp_q4_deals,
+        'expect_commit_deals': expect_commit_q1_deals,
+        'best_opp_deals': best_opp_q1_deals,
         
-        # NEW: Q1 Spillover deal details
-        'expect_commit_q1_spillover_deals': expect_commit_q1_deals,
-        'best_opp_q1_spillover_deals': best_opp_q1_deals,
-        'all_q1_spillover_deals': rep_deals_ship_q1
+        # Q2 Spillover deal details
+        'expect_commit_q2_spillover_deals': expect_commit_q2_deals,
+        'best_opp_q2_spillover_deals': best_opp_q2_deals,
+        'all_q2_spillover_deals': rep_deals_ship_q2,
+        
+        # Keep old key names for backward compatibility
+        'expect_commit_q1_spillover_deals': expect_commit_q2_deals,
+        'best_opp_q1_spillover_deals': best_opp_q2_deals,
+        'all_q1_spillover_deals': rep_deals_ship_q2
     }
 
 # ========== ENHANCED CHART FUNCTIONS (GEMINI ENHANCEMENTS) ==========
@@ -4046,8 +4056,8 @@ def create_status_breakdown_chart(deals_df, rep_name=None):
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
-    # Only show Q4 deals (spreadsheet formula now handles PA date logic)
-    deals_df = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
+    # Only show Q1 deals (filter out Q2 and Q4 spillover)
+    deals_df = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
     
     if deals_df.empty:
         return None
@@ -4065,7 +4075,7 @@ def create_status_breakdown_chart(deals_df, rep_name=None):
         status_summary,
         values='Amount',
         names='Status',
-        title='Deal Amount by Forecast Category (Q4 Only)',
+        title='Deal Amount by Forecast Category (Q1 Only)',
         color='Status',
         color_discrete_map=color_map,
         hole=0.4
@@ -4082,8 +4092,8 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
     if rep_name:
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
-    # Only show Q4 deals (spreadsheet formula now handles PA date logic)
-    deals_df = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026']
+    # Only show Q1 deals (filter out Q2 and Q4 spillover)
+    deals_df = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
     
     if deals_df.empty:
         return None
@@ -4148,11 +4158,17 @@ def create_deals_timeline(deals_df, rep_name=None):
     # Sort by close date
     timeline_df = timeline_df.sort_values('Close Date')
     
-    # Add Q4/Q1 indicator to color map
-    timeline_df['Quarter'] = timeline_df.apply(
-        lambda x: 'Q4 2025' if x.get('Q1 2026 Spillover') != 'Q1 2026' else 'Q1 2026', 
-        axis=1
-    )
+    # Add Q1/Q4/Q2 indicator to color map
+    def get_quarter(row):
+        spillover_val = row.get('Q2 2026 Spillover', '')
+        if spillover_val == 'Q4 2025':
+            return 'Q4 2025 Spillover'
+        elif spillover_val == 'Q2 2026':
+            return 'Q2 2026 Spillover'
+        else:
+            return 'Q1 2026'
+    
+    timeline_df['Quarter'] = timeline_df.apply(get_quarter, axis=1)
     
     color_map = {
         'Expect': '#1E88E5',
@@ -4380,367 +4396,10 @@ def display_progress_breakdown(metrics):
                  delta=f"+${metrics['best_opp']:,.0f} Best Case/Opp",
                  help="The optimist's view (we believe! 🌟)")
 
-def display_reconciliation_view(deals_df, dashboard_df, sales_orders_df):
-    """Show a reconciliation view to compare with boss's numbers"""
-    
-    st.title("🔍 Forecast Reconciliation with Boss's Numbers")
-    
-    # Boss's Q4 numbers from the LATEST screenshot (November 21, 2025)
-    boss_rep_numbers = {
-        'Jake Lynch': {
-            'invoiced': 799840,
-            'pending_fulfillment': 303737,
-            'pending_approval': 97427,
-            'hubspot': 62021,
-            'total': 1263025,
-            'pending_fulfillment_so_no_date': 101694,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 39174,
-            'total_q4': 1263025,
-            'hubspot_best_case': 413594,
-            'jan_expect_commit': 0,
-            'jan_best_case': 325245
-        },
-        'Dave Borkowski': {
-            'invoiced': 395285,
-            'pending_fulfillment': 200071,
-            'pending_approval': 30931,
-            'hubspot': 273179,
-            'total': 899467,
-            'pending_fulfillment_so_no_date': 68908,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 37927,
-            'total_q4': 899467,
-            'hubspot_best_case': 119160,
-            'jan_expect_commit': 0,
-            'jan_best_case': 113005
-        },
-        'Alex Gonzalez': {
-            'invoiced': 432791,
-            'pending_fulfillment': 323333,
-            'pending_approval': 516,
-            'hubspot': 5496,
-            'total': 762136,
-            'pending_fulfillment_so_no_date': 0,
-            'pending_approval_so_no_date': 25020,
-            'old_pending_approval': 4900,
-            'total_q4': 762136,
-            'hubspot_best_case': 0,
-            'jan_expect_commit': 0,
-            'jan_best_case': 0
-        },
-        'Brad Sherman': {
-            'invoiced': 194683,
-            'pending_fulfillment': 39127,
-            'pending_approval': 11636,
-            'hubspot': 90616,
-            'total': 336062,
-            'pending_fulfillment_so_no_date': 4217,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 4553,
-            'total_q4': 336062,
-            'hubspot_best_case': 61523,
-            'jan_expect_commit': 0,
-            'jan_best_case': 90585
-        },
-        'Lance Mitton': {
-            'invoiced': 28502,
-            'pending_fulfillment': 1287,
-            'pending_approval': 1069,
-            'hubspot': 0,
-            'total': 30857,
-            'pending_fulfillment_so_no_date': 1914,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 0,
-            'total_q4': 30857,
-            'hubspot_best_case': 0,
-            'jan_expect_commit': 5700,
-            'jan_best_case': 8700
-        },
-        'House': {
-            'invoiced': 0,
-            'pending_fulfillment': 0,
-            'pending_approval': 0,
-            'hubspot': 0,
-            'total': 0,
-            'pending_fulfillment_so_no_date': 0,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 0,
-            'total_q4': 0,
-            'hubspot_best_case': 0,
-            'jan_expect_commit': 0,
-            'jan_best_case': 0
-        },
-        'Shopify ECommerce': {
-            'invoiced': 30621,
-            'pending_fulfillment': 3374,
-            'pending_approval': 171,
-            'hubspot': 0,
-            'total': 34166,
-            'pending_fulfillment_so_no_date': 0,
-            'pending_approval_so_no_date': 0,
-            'old_pending_approval': 2718,
-            'total_q4': 34166,
-            'hubspot_best_case': 0,
-            'jan_expect_commit': 0,
-            'jan_best_case': 1500
-        }
-    }
-    
-    # Tab selection for Rep vs Pipeline view
-    tab1, tab2 = st.tabs(["By Rep", "By Pipeline"])
-    
-    with tab1:
-        st.markdown('<div class="section-header">Section 1: Q4 Gap to Goal</div>', unsafe_allow_html=True)
-        
-        # Create the comparison table
-        comparison_data = []
-        totals = {
-            'invoiced_you': 0, 'invoiced_boss': 0,
-            'pf_you': 0, 'pf_boss': 0,
-            'pa_you': 0, 'pa_boss': 0,
-            'hs_you': 0, 'hs_boss': 0,
-            'total_you': 0, 'total_boss': 0
-        }
-        
-        for rep_name in boss_rep_numbers.keys():
-            metrics = None
-            if rep_name in dashboard_df['Rep Name'].values:
-                metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-            
-            if metrics or rep_name == 'Shopify ECommerce':
-                boss = boss_rep_numbers[rep_name]
-                
-                # Get your values
-                your_invoiced = metrics['orders'] if metrics else 0
-                your_pf = metrics['pending_fulfillment'] if metrics else 0
-                your_pa = metrics['pending_approval'] if metrics else 0
-                your_hs = metrics['expect_commit'] if metrics else 0
-                your_total = your_invoiced + your_pf + your_pa + your_hs
-                
-                # Update totals
-                totals['invoiced_you'] += your_invoiced
-                totals['invoiced_boss'] += boss['invoiced']
-                totals['pf_you'] += your_pf
-                totals['pf_boss'] += boss['pending_fulfillment']
-                totals['pa_you'] += your_pa
-                totals['pa_boss'] += boss['pending_approval']
-                totals['hs_you'] += your_hs
-                totals['hs_boss'] += boss['hubspot']
-                totals['total_you'] += your_total
-                totals['total_boss'] += boss['total']
-                
-                comparison_data.append({
-                    'Rep': rep_name,
-                    'Invoiced': f"${your_invoiced:,.0f}",
-                    'Invoiced (Boss)': f"${boss['invoiced']:,.0f}",
-                    'Pending Fulfillment': f"${your_pf:,.0f}",
-                    'PF (Boss)': f"${boss['pending_fulfillment']:,.0f}",
-                    'Pending Approval': f"${your_pa:,.0f}",
-                    'PA (Boss)': f"${boss['pending_approval']:,.0f}",
-                    'HubSpot Expect/Commit': f"${your_hs:,.0f}",
-                    'HS (Boss)': f"${boss['hubspot']:,.0f}",
-                    'Total': f"${your_total:,.0f}",
-                    'Total (Boss)': f"${boss['total']:,.0f}"
-                })
-        
-        # Add totals row
-        comparison_data.append({
-            'Rep': 'TOTAL',
-            'Invoiced': f"${totals['invoiced_you']:,.0f}",
-            'Invoiced (Boss)': f"${totals['invoiced_boss']:,.0f}",
-            'Pending Fulfillment': f"${totals['pf_you']:,.0f}",
-            'PF (Boss)': f"${totals['pf_boss']:,.0f}",
-            'Pending Approval': f"${totals['pa_you']:,.0f}",
-            'PA (Boss)': f"${totals['pa_boss']:,.0f}",
-            'HubSpot Expect/Commit': f"${totals['hs_you']:,.0f}",
-            'HS (Boss)': f"${totals['hs_boss']:,.0f}",
-            'Total': f"${totals['total_you']:,.0f}",
-            'Total (Boss)': f"${totals['total_boss']:,.0f}"
-        })
-        
-        if comparison_data:
-            comparison_df = pd.DataFrame(comparison_data)
-            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
-        
-        # Section 2: Additional Orders
-        st.markdown('<div class="section-header">Section 2: Additional Orders (Can be included)</div>', unsafe_allow_html=True)
-        
-        additional_data = []
-        additional_totals = {
-            'pf_no_date_you': 0, 'pf_no_date_boss': 0,
-            'pa_no_date_you': 0, 'pa_no_date_boss': 0,
-            'old_pa_you': 0, 'old_pa_boss': 0,
-            'final_you': 0, 'final_boss': 0
-        }
-        
-        for rep_name in boss_rep_numbers.keys():
-            metrics = None
-            if rep_name in dashboard_df['Rep Name'].values:
-                metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-            
-            if metrics or rep_name == 'Shopify ECommerce':
-                boss = boss_rep_numbers[rep_name]
-                
-                # Calculate additional metrics
-                your_pf_no_date = metrics['pending_fulfillment_no_date'] if metrics else 0
-                your_pa_no_date = metrics['pending_approval_no_date'] if metrics else 0
-                your_old_pa = metrics['pending_approval_old'] if metrics else 0
-                
-                # Calculate final total
-                section1_total = (metrics['orders'] + metrics['pending_fulfillment'] + 
-                                 metrics['pending_approval'] + metrics['expect_commit']) if metrics else 0
-                your_final = section1_total + your_pf_no_date + your_pa_no_date + your_old_pa
-                
-                # Update totals
-                additional_totals['pf_no_date_you'] += your_pf_no_date
-                additional_totals['pf_no_date_boss'] += boss['pending_fulfillment_so_no_date']
-                additional_totals['pa_no_date_you'] += your_pa_no_date
-                additional_totals['pa_no_date_boss'] += boss['pending_approval_so_no_date']
-                additional_totals['old_pa_you'] += your_old_pa
-                additional_totals['old_pa_boss'] += boss['old_pending_approval']
-                additional_totals['final_you'] += your_final
-                additional_totals['final_boss'] += boss['total_q4']
-                
-                additional_data.append({
-                    'Rep': rep_name,
-                    'PF SO\'s No Date': f"${your_pf_no_date:,.0f}",
-                    'PF No Date (Boss)': f"${boss['pending_fulfillment_so_no_date']:,.0f}",
-                    'PA SO\'s No Date': f"${your_pa_no_date:,.0f}",
-                    'PA No Date (Boss)': f"${boss['pending_approval_so_no_date']:,.0f}",
-                    'Old PA (>2 weeks)': f"${your_old_pa:,.0f}",
-                    'Old PA (Boss)': f"${boss['old_pending_approval']:,.0f}",
-                    'Total Q4': f"${your_final:,.0f}",
-                    'Total Q4 (Boss)': f"${boss['total_q4']:,.0f}"
-                })
-        
-        # Add totals row
-        additional_data.append({
-            'Rep': 'TOTAL',
-            'PF SO\'s No Date': f"${additional_totals['pf_no_date_you']:,.0f}",
-            'PF No Date (Boss)': f"${additional_totals['pf_no_date_boss']:,.0f}",
-            'PA SO\'s No Date': f"${additional_totals['pa_no_date_you']:,.0f}",
-            'PA No Date (Boss)': f"${additional_totals['pa_no_date_boss']:,.0f}",
-            'Old PA (>2 weeks)': f"${additional_totals['old_pa_you']:,.0f}",
-            'Old PA (Boss)': f"${additional_totals['old_pa_boss']:,.0f}",
-            'Total Q4': f"${additional_totals['final_you']:,.0f}",
-            'Total Q4 (Boss)': f"${additional_totals['final_boss']:,.0f}"
-        })
-        
-        if additional_data:
-            additional_df = pd.DataFrame(additional_data)
-            st.dataframe(additional_df, use_container_width=True, hide_index=True)
-        
-        # Section 3: Q1 2026 Spillover
-        st.markdown('<div class="section-header">Section 3: Q1 2026 Spillover (January)</div>', unsafe_allow_html=True)
-        st.info("These are deals that will close in late Q4 2025 but ship in Q1 2026 due to lead times")
-        
-        q1_spillover_data = []
-        q1_totals = {
-            'expect_commit_you': 0, 'expect_commit_boss': 0,
-            'best_case_you': 0, 'best_case_boss': 0,
-            'total_you': 0, 'total_boss': 0
-        }
-        
-        for rep_name in boss_rep_numbers.keys():
-            metrics = None
-            if rep_name in dashboard_df['Rep Name'].values:
-                metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
-            
-            if metrics or rep_name == 'Shopify ECommerce':
-                boss = boss_rep_numbers[rep_name]
-                
-                # Get Q1 spillover values - use the correct field names from calculate_rep_metrics
-                your_expect_commit = metrics.get('q1_spillover_expect_commit', 0) if metrics else 0
-                your_best_case = metrics.get('q1_spillover_best_opp', 0) if metrics else 0
-                your_q1_total = your_expect_commit + your_best_case
-                
-                boss_q1_total = boss['jan_expect_commit'] + boss['jan_best_case']
-                
-                # Update totals
-                q1_totals['expect_commit_you'] += your_expect_commit
-                q1_totals['expect_commit_boss'] += boss['jan_expect_commit']
-                q1_totals['best_case_you'] += your_best_case
-                q1_totals['best_case_boss'] += boss['jan_best_case']
-                q1_totals['total_you'] += your_q1_total
-                q1_totals['total_boss'] += boss_q1_total
-                
-                q1_spillover_data.append({
-                    'Rep': rep_name,
-                    'Expect/Commit': f"${your_expect_commit:,.0f}",
-                    'Expect/Commit (Boss)': f"${boss['jan_expect_commit']:,.0f}",
-                    'Best Case': f"${your_best_case:,.0f}",
-                    'Best Case (Boss)': f"${boss['jan_best_case']:,.0f}",
-                    'Total Q1 Spillover': f"${your_q1_total:,.0f}",
-                    'Total Q1 (Boss)': f"${boss_q1_total:,.0f}"
-                })
-        
-        # Add totals row
-        q1_spillover_data.append({
-            'Rep': 'TOTAL',
-            'Expect/Commit': f"${q1_totals['expect_commit_you']:,.0f}",
-            'Expect/Commit (Boss)': f"${q1_totals['expect_commit_boss']:,.0f}",
-            'Best Case': f"${q1_totals['best_case_you']:,.0f}",
-            'Best Case (Boss)': f"${q1_totals['best_case_boss']:,.0f}",
-            'Total Q1 Spillover': f"${q1_totals['total_you']:,.0f}",
-            'Total Q1 (Boss)': f"${q1_totals['total_boss']:,.0f}"
-        })
-        
-        if q1_spillover_data:
-            q1_spillover_df = pd.DataFrame(q1_spillover_data)
-            st.dataframe(q1_spillover_df, use_container_width=True, hide_index=True)
-    
-    with tab2:
-        st.markdown("### Pipeline-Level Comparison")
-        st.info("Pipeline breakdown in development - need to map invoices and sales orders to pipelines")
-    
-    # Summary
-    st.markdown("### 📊 Key Insights")
-    
-    # Calculate differences first
-    diff = totals['total_boss'] - totals['total_you']
-    final_diff = additional_totals['final_boss'] - additional_totals['final_you']
-    q1_diff = q1_totals['total_boss'] - q1_totals['total_you']
-    
-    # Debug: Show the actual totals being compared
-    st.caption(f"Debug: Your Total Q4 = ${additional_totals['final_you']:,.0f} | Boss Total Q4 = ${additional_totals['final_boss']:,.0f} | Diff = ${abs(final_diff):,.0f}")
-    st.caption(f"Debug: Your Q1 Spillover = ${q1_totals['total_you']:,.0f} | Boss Q1 Spillover = ${q1_totals['total_boss']:,.0f} | Diff = ${abs(q1_diff):,.0f}")
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("Section 1 Variance", f"${abs(diff):,.0f}", 
-                 delta=f"{'Under' if diff > 0 else 'Over'} by ${abs(diff):,.0f}")
-    
-    with col2:
-        st.metric("Total Q4 Variance", f"${abs(final_diff):,.0f}",
-                 delta=f"{'Under' if final_diff > 0 else 'Over'} by ${abs(final_diff):,.0f}")
-    
-    with col3:
-        st.metric("Q1 Spillover Variance", f"${abs(q1_diff):,.0f}",
-                 delta=f"{'Under' if q1_diff > 0 else 'Over'} by ${abs(q1_diff):,.0f}")
-    
-    with col4:
-        if additional_totals['final_boss'] > 0:
-            # Calculate accuracy as: 100% - (percentage difference)
-            accuracy = (1 - abs(final_diff) / additional_totals['final_boss']) * 100
-            
-            # Show color coding
-            if accuracy >= 95:
-                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Excellent match")
-            elif accuracy >= 90:
-                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Good match", delta_color="normal")
-            elif accuracy >= 80:
-                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Needs review", delta_color="off")
-            else:
-                st.metric("Accuracy", f"{accuracy:.1f}%", delta="Large variance", delta_color="inverse")
-        else:
-            st.metric("Accuracy", "N/A", delta="No boss data")
-
 def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df=None):
     """Display the team-level dashboard"""
    
-    st.title("🎯 Team Sales Dashboard - Q4 2025")
+    st.title("🎯 Team Sales Dashboard - Q1 2026")
    
     # Calculate basic metrics
     basic_metrics = calculate_team_metrics(deals_df, dashboard_df)
@@ -4829,8 +4488,8 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df,
     potential_attainment = ((base_forecast + team_best_opp) / team_quota * 100) if team_quota > 0 else 0
     
     # NEW: Calculate Best Case only (not Opportunity) for optimistic gap
-    deals_q4 = deals_df[deals_df.get('Q1 2026 Spillover') != 'Q1 2026'] if not deals_df.empty else pd.DataFrame()
-    team_best_case = deals_q4[deals_q4['Status'] == 'Best Case']['Amount'].sum() if not deals_q4.empty and 'Status' in deals_q4.columns else 0
+    deals_q1 = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')] if not deals_df.empty else pd.DataFrame()
+    team_best_case = deals_q1[deals_q1['Status'] == 'Best Case']['Amount'].sum() if not deals_q1.empty and 'Status' in deals_q1.columns else 0
     
     # NEW: Optimistic Gap = Quota - (High Confidence + Best Case + PF no date + PA no date + PA >2 weeks)
     optimistic_forecast = base_forecast + team_best_case + team_pf_no_date + team_pa_no_date + team_old_pa
@@ -4851,15 +4510,15 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df,
         'PF SO\'s No Date': f"${team_pf_no_date:,.0f}",
         'PA SO\'s No Date': f"${team_pa_no_date:,.0f}",
         'Old PA (>2 weeks)': f"${team_old_pa:,.0f}",
-        'Total Q4': f"${full_forecast:,.0f}"
+        'Total Q1': f"${full_forecast:,.0f}"
     })
    
-    # Display Q1 spillover info if applicable
-    team_q1_spillover_total = team_q1_spillover_expect_commit + team_q1_spillover_best_opp
-    if team_q1_spillover_total > 0:
+    # Display Q2 spillover info if applicable
+    team_q2_spillover_total = team_q1_spillover_expect_commit + team_q1_spillover_best_opp
+    if team_q2_spillover_total > 0:
         st.info(
-            f"ℹ️ **Q1 2026 Spillover**: ${team_q1_spillover_total:,.0f} in deals closing late Q4 2025 "
-            f"will ship in Q1 2026 due to product lead times. These are excluded from Q4 revenue recognition."
+            f"ℹ️ **Q2 2026 Spillover**: ${team_q2_spillover_total:,.0f} in deals closing late Q1 2026 "
+            f"will ship in Q2 2026 due to product lead times. These are excluded from Q1 revenue recognition."
         )
    
     # Display key metrics with two breakdowns
@@ -4871,7 +4530,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df,
             label="🎯 Total Quota",
             value=f"${team_quota/1000:.0f}K" if team_quota < 1000000 else f"${team_quota/1000000:.1f}M",
             delta=None,
-            help="Q4 2025 Sales Target"
+            help="Q1 2026 Sales Target"
         )
    
     with col2:
@@ -5153,7 +4812,7 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df,
 def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_orders_df, q4_push_df=None):
     """Display individual rep dashboard with drill-down capability - REDESIGNED"""
     
-    st.title(f"👤 {rep_name}'s Q4 2025 Forecast")
+    st.title(f"👤 {rep_name}'s Q1 2026 Forecast")
     
     # Calculate metrics with details
     metrics = calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df)
@@ -5184,7 +4843,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
         st.metric(
             label="💰 Quota",
             value=f"${metrics['quota']/1000:.0f}K" if metrics['quota'] < 1000000 else f"${metrics['quota']/1000000:.1f}M",
-            help="Your Q4 2025 sales quota"
+            help="Your Q1 2026 sales quota"
         )
     
     with metric_col2:
@@ -5382,9 +5041,9 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     st.markdown("---")
     
-    # Q1 2026 Spillover Details (moved from Section 3)
-    st.markdown("#### 🦘 Q1 2026 Spillover Details")
-    st.caption("⚠️ These deals close in Q4 2025 but will ship in Q1 2026 due to lead times")
+    # Q2 2026 Spillover Details (moved from Section 3)
+    st.markdown("#### 🦘 Q2 2026 Spillover Details")
+    st.caption("⚠️ These deals close in Q1 2026 but will ship in Q2 2026 due to lead times")
     
     spillover_col1, spillover_col2, spillover_col3 = st.columns(3)
     
@@ -5406,7 +5065,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     
     with spillover_col3:
         display_drill_down_section(
-            "📦 All Q1 2026 Spillover",
+            "📦 All Q2 2026 Spillover",
             metrics.get('q1_spillover_total', 0),
             metrics.get('all_q1_spillover_deals', pd.DataFrame()),
             f"{rep_name}_all_q1"
@@ -5419,7 +5078,7 @@ def display_rep_dashboard(rep_name, deals_df, dashboard_df, invoices_df, sales_o
     col1, col2 = st.columns(2)
     
     with col1:
-        gap_chart = create_gap_chart(metrics, f"{rep_name} - Q4 2025 Forecast Progress")
+        gap_chart = create_gap_chart(metrics, f"{rep_name} - Q1 2026 Forecast Progress")
         st.plotly_chart(gap_chart, use_container_width=True)
     
     with col2:
@@ -5485,7 +5144,7 @@ def main():
                 font-size: 14px;
                 margin: 8px 0 0 0;
                 font-weight: 500;
-            ">Q4 2025 Sales Intelligence</p>
+            ">Q1 2026 Sales Intelligence</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -5540,7 +5199,7 @@ def main():
         # Create navigation options
         view_mode = st.radio(
             "Select View:",
-            ["👥 Team Overview", "👤 Individual Rep", "🔍 Reconciliation", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast", "📦 All Products Forecast"],
+            ["👥 Team Overview", "👤 Individual Rep", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast", "📦 All Products Forecast"],
             label_visibility="collapsed",
             key="nav_selector"
         )
@@ -5549,7 +5208,6 @@ def main():
         view_mapping = {
             "👥 Team Overview": "Team Overview",
             "👤 Individual Rep": "Individual Rep",
-            "🔍 Reconciliation": "Reconciliation",
             "🤖 AI Insights": "AI Insights",
             "💰 Commission": "💰 Commission",
             "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast",
@@ -5588,11 +5246,11 @@ def main():
             <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
                 <span style="font-size: 24px;">⏱️</span>
                 <div>
-                    <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Q4 Days Left</div>
+                    <div style="font-size: 11px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Q1 Days Left</div>
                     <div style="font-size: 24px; font-weight: 700; color: #10b981;">""" + str(biz_days) + """</div>
                 </div>
             </div>
-            <div style="font-size: 10px; opacity: 0.6;">Business days until Dec 31, 2025</div>
+            <div style="font-size: 10px; opacity: 0.6;">Business days until Mar 31, 2026</div>
         </div>
         
         <div style="
@@ -5762,8 +5420,6 @@ def main():
                     st.code('\n'.join([f for f in files if f.endswith('.py')]))
                 except Exception as e:
                     st.error(f"Cannot list files: {e}")
-    else:  # Reconciliation view
-        display_reconciliation_view(deals_df, dashboard_df, sales_orders_df)
 
 if __name__ == "__main__":
     main()
