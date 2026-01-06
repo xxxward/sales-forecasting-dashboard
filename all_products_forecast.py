@@ -2453,15 +2453,141 @@ def main():
                                     export_buckets[key] = df
     
     # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 4: APPLY PIPELINE PROBABILITY WEIGHTING
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    st.markdown("---")
+    step4_title = "Apply Pipeline Probability" if is_team_view else f"{first_name}, Apply Pipeline Probability?"
+    st.markdown(f"### 🎲 Step 4: {step4_title}")
+    
+    st.markdown(f"""
+    <div style="background: rgba(139, 92, 246, 0.1); border-left: 4px solid #8b5cf6; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="font-size: 1rem;">
+            Want to apply <strong>probability weighting</strong> to your pipeline deals? This adjusts values based on likelihood to close.
+        </div>
+        <div style="color: #94a3b8; margin-top: 8px; font-size: 0.9rem;">
+            <strong>Default weights:</strong> Expect = 100% | Commit = 85% | Best Case = 50% | Opportunity = 25%
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state for pipeline weighting
+    pipeline_weight_key = f"pipeline_weighting_{rep_name}"
+    if pipeline_weight_key not in st.session_state:
+        st.session_state[pipeline_weight_key] = {
+            'enabled': False,
+            'expect': 100,
+            'commit': 85,
+            'best_case': 50,
+            'opportunity': 25
+        }
+    
+    # Toggle for enabling weighting
+    pw_col1, pw_col2 = st.columns([2, 3])
+    
+    with pw_col1:
+        apply_pipeline_weight = st.toggle(
+            "Apply probability weighting to pipeline",
+            value=st.session_state[pipeline_weight_key]['enabled'],
+            key=f"toggle_pipeline_weight_{rep_name}",
+            help="When enabled, pipeline values are multiplied by their probability percentage"
+        )
+        st.session_state[pipeline_weight_key]['enabled'] = apply_pipeline_weight
+    
+    if apply_pipeline_weight:
+        with pw_col2:
+            st.caption("Customize weights (or keep defaults):")
+        
+        # Weight customization
+        wt_col1, wt_col2, wt_col3, wt_col4 = st.columns(4)
+        
+        with wt_col1:
+            expect_wt = st.number_input(
+                "Expect %", 
+                min_value=0, max_value=100, 
+                value=st.session_state[pipeline_weight_key]['expect'],
+                key=f"wt_expect_{rep_name}"
+            )
+            st.session_state[pipeline_weight_key]['expect'] = expect_wt
+        
+        with wt_col2:
+            commit_wt = st.number_input(
+                "Commit %", 
+                min_value=0, max_value=100, 
+                value=st.session_state[pipeline_weight_key]['commit'],
+                key=f"wt_commit_{rep_name}"
+            )
+            st.session_state[pipeline_weight_key]['commit'] = commit_wt
+        
+        with wt_col3:
+            best_case_wt = st.number_input(
+                "Best Case %", 
+                min_value=0, max_value=100, 
+                value=st.session_state[pipeline_weight_key]['best_case'],
+                key=f"wt_bestcase_{rep_name}"
+            )
+            st.session_state[pipeline_weight_key]['best_case'] = best_case_wt
+        
+        with wt_col4:
+            opp_wt = st.number_input(
+                "Opportunity %", 
+                min_value=0, max_value=100, 
+                value=st.session_state[pipeline_weight_key]['opportunity'],
+                key=f"wt_opp_{rep_name}"
+            )
+            st.session_state[pipeline_weight_key]['opportunity'] = opp_wt
+        
+        # Show impact preview
+        raw_pipeline_total = sum(
+            df['Amount_Numeric'].sum() if not df.empty and 'Amount_Numeric' in df.columns else 0 
+            for k, df in export_buckets.items() if k in hs_categories
+        )
+        
+        # Calculate weighted total
+        weighted_pipeline_total = 0
+        for key, df in export_buckets.items():
+            if key in hs_categories and not df.empty and 'Amount_Numeric' in df.columns:
+                if 'Expect' in key:
+                    weighted_pipeline_total += df['Amount_Numeric'].sum() * (expect_wt / 100)
+                elif 'Commit' in key:
+                    weighted_pipeline_total += df['Amount_Numeric'].sum() * (commit_wt / 100)
+                elif 'BestCase' in key:
+                    weighted_pipeline_total += df['Amount_Numeric'].sum() * (best_case_wt / 100)
+                elif 'Opp' in key:
+                    weighted_pipeline_total += df['Amount_Numeric'].sum() * (opp_wt / 100)
+        
+        st.markdown(f"""
+        <div style="background: rgba(139, 92, 246, 0.15); padding: 12px 15px; border-radius: 8px; margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <span style="color: #94a3b8;">Pipeline Raw:</span> 
+                    <strong style="color: #60a5fa;">${raw_pipeline_total:,.0f}</strong>
+                </div>
+                <div style="font-size: 1.2rem;">→</div>
+                <div>
+                    <span style="color: #94a3b8;">Weighted:</span> 
+                    <strong style="color: #a78bfa;">${weighted_pipeline_total:,.0f}</strong>
+                </div>
+                <div>
+                    <span style="color: #94a3b8;">Reduction:</span> 
+                    <strong style="color: #f87171;">${raw_pipeline_total - weighted_pipeline_total:,.0f}</strong>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.caption("Pipeline values will be used at face value (100%).")
+    
+    # ═══════════════════════════════════════════════════════════════════════════
     # SECTION 3: REORDER FORECAST (Historical Analysis)
     # ═══════════════════════════════════════════════════════════════════════════
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # STEP 4: REORDER OPPORTUNITIES
+    # STEP 5: REORDER OPPORTUNITIES
     # ═══════════════════════════════════════════════════════════════════════════
     
     st.markdown("---")
-    st.markdown(f"### 🔄 Step 4: {'Team Reorder Opportunities' if is_team_view else f'{first_name}, Find Your Reorder Opportunities'}")
+    st.markdown(f"### 🔄 Step 5: {'Team Reorder Opportunities' if is_team_view else f'{first_name}, Find Your Reorder Opportunities'}")
     
     st.markdown(f"""
     <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
@@ -3320,18 +3446,110 @@ def main():
                              help="Sum of all Q1 projections before confidence weighting")
                 with sum_col4:
                     st.metric("Weighted Forecast", f"${total_reorder_forecast:,.0f}",
-                             help="Q1 Projection × Confidence % — this is what gets added to your forecast")
+                             help="Q1 Projection × Confidence % — available if you enable weighting in Step 6")
                 
                 # Show selected items table
                 if selected_items:
-                    with st.expander("📝 View All Selections", expanded=False):
+                    with st.expander("📝 View All Selections", expanded=True):
                         sel_df = pd.DataFrame(selected_items)
-                        sel_df['Weighted_Value'] = sel_df['Weighted_Value'].apply(lambda x: f"${x:,.0f}")
-                        sel_df['Q1_Projection'] = sel_df['Q1_Projection'].apply(lambda x: f"${x:,.0f}")
-                        st.dataframe(sel_df[['Customer', 'Product_Type', 'Q1_Projection', 'Confidence', 'Weighted_Value']], 
-                                    use_container_width=True, hide_index=True)
+                        # Keep numeric versions for calculations
+                        sel_df_display = sel_df.copy()
+                        sel_df_display['Weighted_Value'] = sel_df_display['Weighted_Value'].apply(lambda x: f"${x:,.0f}")
+                        sel_df_display['Q1_Projection'] = sel_df_display['Q1_Projection'].apply(lambda x: f"${x:,.0f}")
+                        st.dataframe(sel_df_display[['Customer', 'Product_Type', 'Q1_Projection', 'Confidence', 'Weighted_Value']], 
+                                    use_container_width=True, hide_index=True,
+                                    height=min(400, 35 + len(sel_df_display) * 35))
                     
-                    reorder_buckets['reorder_selections'] = pd.DataFrame(selected_items)
+                    # Store with numeric values for calculations
+                    reorder_buckets['reorder_selections'] = sel_df
+    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # STEP 6: APPLY REORDER PROBABILITY WEIGHTING
+    # ═══════════════════════════════════════════════════════════════════════════
+    
+    st.markdown("---")
+    step6_title = "Apply Reorder Probability" if is_team_view else f"{first_name}, Apply Reorder Probability?"
+    st.markdown(f"### 🎲 Step 6: {step6_title}")
+    
+    st.markdown(f"""
+    <div style="background: rgba(251, 191, 36, 0.1); border-left: 4px solid #fbbf24; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+        <div style="font-size: 1rem;">
+            Your reorder selections can be used at <strong>face value (Raw)</strong> or <strong>weighted by confidence</strong>.
+        </div>
+        <div style="color: #94a3b8; margin-top: 8px; font-size: 0.9rem;">
+            <strong>Confidence levels:</strong> 🟢 Likely (3+ orders) = 75% | 🟡 Possible (2 orders) = 50% | 🔴 Long Shot (1 order) = 25%
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Initialize session state for reorder weighting
+    reorder_weight_key = f"reorder_weighting_{rep_name}"
+    if reorder_weight_key not in st.session_state:
+        st.session_state[reorder_weight_key] = {'enabled': False}
+    
+    rw_col1, rw_col2 = st.columns([2, 3])
+    
+    with rw_col1:
+        apply_reorder_weight = st.toggle(
+            "Apply confidence weighting to reorder",
+            value=st.session_state[reorder_weight_key]['enabled'],
+            key=f"toggle_reorder_weight_{rep_name}",
+            help="When enabled, reorder values are multiplied by their confidence percentage"
+        )
+        st.session_state[reorder_weight_key]['enabled'] = apply_reorder_weight
+    
+    # Calculate totals for display
+    reorder_raw_total = 0
+    reorder_weighted_total = 0
+    if 'reorder_selections' in reorder_buckets and not reorder_buckets['reorder_selections'].empty:
+        df = reorder_buckets['reorder_selections']
+        if 'Q1_Projection' in df.columns:
+            reorder_raw_total = df['Q1_Projection'].sum()
+        if 'Weighted_Value' in df.columns:
+            reorder_weighted_total = df['Weighted_Value'].sum()
+    
+    with rw_col2:
+        if apply_reorder_weight:
+            st.markdown(f"""
+            <div style="background: rgba(251, 191, 36, 0.15); padding: 12px 15px; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="color: #94a3b8;">Raw:</span> 
+                        <strong style="color: #fbbf24;">${reorder_raw_total:,.0f}</strong>
+                    </div>
+                    <div style="font-size: 1.2rem;">→</div>
+                    <div>
+                        <span style="color: #94a3b8;">Weighted:</span> 
+                        <strong style="color: #a78bfa;">${reorder_weighted_total:,.0f}</strong>
+                    </div>
+                    <div>
+                        <span style="color: #94a3b8;">Using:</span> 
+                        <strong style="color: #10b981;">Weighted ✓</strong>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown(f"""
+            <div style="background: rgba(16, 185, 129, 0.15); padding: 12px 15px; border-radius: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <span style="color: #94a3b8;">Raw:</span> 
+                        <strong style="color: #fbbf24;">${reorder_raw_total:,.0f}</strong>
+                    </div>
+                    <div style="font-size: 1.2rem;">→</div>
+                    <div>
+                        <span style="color: #94a3b8;">Weighted:</span> 
+                        <span style="color: #64748b;">${reorder_weighted_total:,.0f}</span>
+                    </div>
+                    <div>
+                        <span style="color: #94a3b8;">Using:</span> 
+                        <strong style="color: #10b981;">Raw ✓</strong>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    
     # === CALCULATE RESULTS ===
     def safe_sum(df):
         if df.empty:
@@ -3352,8 +3570,30 @@ def main():
             return df['Projected_Value'].sum()
         return 0
     
+    # NetSuite scheduled (always at face value)
     selected_scheduled = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
-    selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
+    
+    # HubSpot Pipeline - apply weighting if enabled
+    pipeline_weights = st.session_state.get(pipeline_weight_key, {'enabled': False})
+    selected_pipeline_raw = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
+    
+    if pipeline_weights.get('enabled', False):
+        selected_pipeline = 0
+        for key, df in export_buckets.items():
+            if key in hs_categories and not df.empty and 'Amount_Numeric' in df.columns:
+                raw_val = df['Amount_Numeric'].sum()
+                if 'Expect' in key:
+                    selected_pipeline += raw_val * (pipeline_weights.get('expect', 100) / 100)
+                elif 'Commit' in key:
+                    selected_pipeline += raw_val * (pipeline_weights.get('commit', 85) / 100)
+                elif 'BestCase' in key:
+                    selected_pipeline += raw_val * (pipeline_weights.get('best_case', 50) / 100)
+                elif 'Opp' in key:
+                    selected_pipeline += raw_val * (pipeline_weights.get('opportunity', 25) / 100)
+                else:
+                    selected_pipeline += raw_val  # Default to 100% if category unknown
+    else:
+        selected_pipeline = selected_pipeline_raw
     
     # Calculate reorder forecast total - both RAW and WEIGHTED
     selected_reorder_weighted = 0
@@ -3368,8 +3608,12 @@ def main():
                 if 'Q1_Projection' in df.columns:
                     selected_reorder_raw += df['Q1_Projection'].sum()
     
-    # Use RAW value for the main forecast (what user selected)
-    selected_reorder = selected_reorder_raw
+    # Apply reorder weighting based on Step 6 choice
+    reorder_weights = st.session_state.get(reorder_weight_key, {'enabled': False})
+    if reorder_weights.get('enabled', False):
+        selected_reorder = selected_reorder_weighted
+    else:
+        selected_reorder = selected_reorder_raw
     
     total_forecast = selected_scheduled + selected_pipeline + selected_reorder
     gap_to_goal = q1_goal - total_forecast
@@ -3390,12 +3634,15 @@ def main():
         with cA:
             st.metric("📦 Scheduled", f"${selected_scheduled:,.0f}")
         with cB:
-            st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}")
+            pipeline_wt_status = "weighted" if pipeline_weights.get('enabled', False) else "raw"
+            st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}",
+                     help=f"Using {pipeline_wt_status} values. Raw: ${selected_pipeline_raw:,.0f}")
 
         cC, cD = st.columns(2)
         with cC:
+            reorder_wt_status = "weighted" if reorder_weights.get('enabled', False) else "raw"
             st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", 
-                     help=f"Raw Q1 projections you selected. Weighted (×confidence): ${selected_reorder_weighted:,.0f}")
+                     help=f"Using {reorder_wt_status} values. Raw: ${selected_reorder_raw:,.0f} | Weighted: ${selected_reorder_weighted:,.0f}")
         with cD:
             if gap_to_goal > 0:
                 st.metric("Gap", f"${gap_to_goal:,.0f}")
@@ -3409,6 +3656,9 @@ def main():
     gap_label = "GAP" if gap_to_goal > 0 else "AHEAD"
     gap_display = f"${abs(gap_to_goal):,.0f}"
     
+    pipeline_tip = f"Weighted ({pipeline_weights.get('enabled', False)}). Raw: ${selected_pipeline_raw:,.0f}"
+    reorder_tip = f"Raw: ${selected_reorder_raw:,.0f} | Weighted: ${selected_reorder_weighted:,.0f}"
+    
     st.markdown(f"""
     <div class="sticky-forecast-bar-q1">
         <div class="sticky-item">
@@ -3416,13 +3666,13 @@ def main():
             <div class="sticky-val val-sched">${selected_scheduled:,.0f}</div>
         </div>
         <div class="sticky-sep"></div>
-        <div class="sticky-item">
-            <div class="sticky-label">Pipeline</div>
+        <div class="sticky-item" title="{pipeline_tip}">
+            <div class="sticky-label">Pipeline{'*' if pipeline_weights.get('enabled', False) else ''}</div>
             <div class="sticky-val val-pipe">${selected_pipeline:,.0f}</div>
         </div>
         <div class="sticky-sep"></div>
-        <div class="sticky-item" title="Raw Q1 projections. Weighted (×confidence): ${selected_reorder_weighted:,.0f}">
-            <div class="sticky-label">Reorder</div>
+        <div class="sticky-item" title="{reorder_tip}">
+            <div class="sticky-label">Reorder{'*' if reorder_weights.get('enabled', False) else ''}</div>
             <div class="sticky-val val-reorder">${selected_reorder:,.0f}</div>
         </div>
         <div class="sticky-sep"></div>
@@ -3439,12 +3689,12 @@ def main():
     """, unsafe_allow_html=True)
     
     # ═══════════════════════════════════════════════════════════════════════════
-    # STEP 5: YOUR FORECAST SUMMARY
+    # STEP 7: YOUR FORECAST SUMMARY
     # ═══════════════════════════════════════════════════════════════════════════
     
     st.markdown("---")
-    step5_title = "Team Forecast Summary" if is_team_view else f"{first_name}, Here's Your Q1 Forecast!"
-    st.markdown(f"### 🎉 Step 5: {step5_title}")
+    step7_title = "Team Forecast Summary" if is_team_view else f"{first_name}, Here's Your Q1 Forecast!"
+    st.markdown(f"### 🎉 Step 7: {step7_title}")
     
     # Personalized summary message
     pct_of_goal = (total_forecast / q1_goal * 100) if q1_goal > 0 else 0
@@ -3476,10 +3726,11 @@ def main():
     with m1:
         st.metric("📦 Scheduled", f"${selected_scheduled:,.0f}", help="Confirmed NetSuite orders")
     with m2:
-        st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals to close")
+        pipeline_help = f"{'Weighted' if pipeline_weights.get('enabled', False) else 'Raw'} values. Raw: ${selected_pipeline_raw:,.0f}"
+        st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}", help=pipeline_help)
     with m3:
-        st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", 
-                 help=f"Raw Q1 projections you selected. Weighted (×confidence): ${selected_reorder_weighted:,.0f}")
+        reorder_help = f"{'Weighted' if reorder_weights.get('enabled', False) else 'Raw'} values. Raw: ${selected_reorder_raw:,.0f} | Weighted: ${selected_reorder_weighted:,.0f}"
+        st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", help=reorder_help)
     with m4:
         st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}")
     with m5:
@@ -3496,16 +3747,19 @@ def main():
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
+        pipeline_status = "weighted" if pipeline_weights.get('enabled', False) else "raw"
+        reorder_status = "weighted" if reorder_weights.get('enabled', False) else "raw"
+        
         st.markdown("#### 📊 The Breakdown")
         st.markdown(f"""
         **📦 Confirmed Orders:** ${selected_scheduled:,.0f}
         - Already in NetSuite, shipping Q1
         
         **🎯 Pipeline Deals:** ${selected_pipeline:,.0f}
-        - {'Work these deals!' if not is_team_view else 'Deals to close in Q1'}
+        - Using {pipeline_status} values{f' (raw: ${selected_pipeline_raw:,.0f})' if pipeline_weights.get('enabled', False) else ''}
         
         **🔄 Reorder Potential:** ${selected_reorder:,.0f}
-        - Weighted: ${selected_reorder_weighted:,.0f}
+        - Using {reorder_status} values{f' (raw: ${selected_reorder_raw:,.0f})' if reorder_weights.get('enabled', False) else f' (weighted: ${selected_reorder_weighted:,.0f})'}
         
         **🎯 Q1 Goal:** ${q1_goal:,.0f}
         """)
