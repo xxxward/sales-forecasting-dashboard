@@ -3355,10 +3355,21 @@ def main():
     selected_scheduled = sum(safe_sum(df) for k, df in export_buckets.items() if k in ns_categories)
     selected_pipeline = sum(safe_sum(df) for k, df in export_buckets.items() if k in hs_categories)
     
-    # Calculate reorder forecast total
-    selected_reorder = 0
+    # Calculate reorder forecast total - both RAW and WEIGHTED
+    selected_reorder_weighted = 0
+    selected_reorder_raw = 0
     if reorder_buckets:
-        selected_reorder = sum(safe_sum_projected(df) for df in reorder_buckets.values())
+        for df in reorder_buckets.values():
+            if not df.empty:
+                if 'Weighted_Value' in df.columns:
+                    selected_reorder_weighted += df['Weighted_Value'].sum()
+                elif 'Projected_Value' in df.columns:
+                    selected_reorder_weighted += df['Projected_Value'].sum()
+                if 'Q1_Projection' in df.columns:
+                    selected_reorder_raw += df['Q1_Projection'].sum()
+    
+    # Use RAW value for the main forecast (what user selected)
+    selected_reorder = selected_reorder_raw
     
     total_forecast = selected_scheduled + selected_pipeline + selected_reorder
     gap_to_goal = q1_goal - total_forecast
@@ -3383,7 +3394,8 @@ def main():
 
         cC, cD = st.columns(2)
         with cC:
-            st.metric("🔄 Reorder", f"${selected_reorder:,.0f}")
+            st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", 
+                     help=f"Raw Q1 projections you selected. Weighted (×confidence): ${selected_reorder_weighted:,.0f}")
         with cD:
             if gap_to_goal > 0:
                 st.metric("Gap", f"${gap_to_goal:,.0f}")
@@ -3409,7 +3421,7 @@ def main():
             <div class="sticky-val val-pipe">${selected_pipeline:,.0f}</div>
         </div>
         <div class="sticky-sep"></div>
-        <div class="sticky-item">
+        <div class="sticky-item" title="Raw Q1 projections. Weighted (×confidence): ${selected_reorder_weighted:,.0f}">
             <div class="sticky-label">Reorder</div>
             <div class="sticky-val val-reorder">${selected_reorder:,.0f}</div>
         </div>
@@ -3466,7 +3478,8 @@ def main():
     with m2:
         st.metric("🎯 Pipeline", f"${selected_pipeline:,.0f}", help="HubSpot deals to close")
     with m3:
-        st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", help="Historical customer opportunities")
+        st.metric("🔄 Reorder", f"${selected_reorder:,.0f}", 
+                 help=f"Raw Q1 projections you selected. Weighted (×confidence): ${selected_reorder_weighted:,.0f}")
     with m4:
         st.metric("🏁 Total Forecast", f"${total_forecast:,.0f}")
     with m5:
@@ -3492,7 +3505,7 @@ def main():
         - {'Work these deals!' if not is_team_view else 'Deals to close in Q1'}
         
         **🔄 Reorder Potential:** ${selected_reorder:,.0f}
-        - 🟢 Likely (75%) | 🟡 Possible (50%) | ⚪ Long Shot (25%)
+        - Weighted: ${selected_reorder_weighted:,.0f}
         
         **🎯 Q1 Goal:** ${q1_goal:,.0f}
         """)
