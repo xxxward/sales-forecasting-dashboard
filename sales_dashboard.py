@@ -38,7 +38,7 @@ except Exception as e:
     SHIPPING_PLANNING_AVAILABLE = False
     SHIPPING_PLANNING_ERROR = f"Error loading module: {str(e)}"
 
-# Optional: All Products Forecast module (if available)
+# Optional: Q1 2026 Forecasting Tool module (if available)
 try:
     import all_products_forecast
     from importlib import reload
@@ -5169,7 +5169,7 @@ def main():
         # Create navigation options
         view_mode = st.radio(
             "Select View:",
-            ["👥 Team Overview", "👤 Individual Rep", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast", "📦 All Products Forecast"],
+            ["👥 Team Overview", "👤 Individual Rep", "🤖 AI Insights", "💰 Commission", "🧪 Concentrate Jar Forecast", "📦 Q1 2026 Forecasting Tool"],
             label_visibility="collapsed",
             key="nav_selector"
         )
@@ -5181,7 +5181,7 @@ def main():
             "🤖 AI Insights": "AI Insights",
             "💰 Commission": "💰 Commission",
             "🧪 Concentrate Jar Forecast": "🧪 Concentrate Jar Forecast",
-            "📦 All Products Forecast": "📦 All Products Forecast"
+            "📦 Q1 2026 Forecasting Tool": "📦 Q1 2026 Forecasting Tool"
         }
         
         view_mode = view_mapping.get(view_mode, "Team Overview")
@@ -5368,12 +5368,12 @@ def main():
                     st.code('\n'.join([f for f in files if f.endswith('.py')]))
                 except Exception as e:
                     st.error(f"Cannot list files: {e}")
-    elif view_mode == "📦 All Products Forecast":
-        # All Products Forecasting view
+    elif view_mode == "📦 Q1 2026 Forecasting Tool":
+        # Q1 2026 Forecasting view
         if ALL_PRODUCTS_FORECAST_AVAILABLE:
             all_products_forecast.main()
         else:
-            st.error("❌ All Products Forecast module not found.")
+            st.error("❌ Q1 2026 Forecasting Tool module not found.")
             if 'ALL_PRODUCTS_FORECAST_ERROR' in globals():
                 st.error(f"Error details: {ALL_PRODUCTS_FORECAST_ERROR}")
             st.info("Make sure all_products_forecast.py is in your repository at the same level as this dashboard file.")
