@@ -3809,18 +3809,41 @@ def main():
         export_summary = []
         export_data = []
         
+        # Get weighting status
+        pipeline_weighted = pipeline_weights.get('enabled', False)
+        reorder_weighted = reorder_weights.get('enabled', False)
+        
         # A. Build Summary
         export_summary.append({'Category': '=== Q1 2026 FORECAST SUMMARY ===', 'Amount': ''})
         export_summary.append({'Category': 'Q1 Goal', 'Amount': f"${q1_goal:,.0f}"})
         export_summary.append({'Category': 'Scheduled Orders (NetSuite)', 'Amount': f"${selected_scheduled:,.0f}"})
-        export_summary.append({'Category': 'Pipeline Deals (HubSpot)', 'Amount': f"${selected_pipeline:,.0f}"})
-        export_summary.append({'Category': 'Reorder Potential', 'Amount': f"${selected_reorder:,.0f}"})
+        
+        # Pipeline with weighting info
+        if pipeline_weighted:
+            export_summary.append({'Category': 'Pipeline Deals (HubSpot) - WEIGHTED', 'Amount': f"${selected_pipeline:,.0f}"})
+            export_summary.append({'Category': '  → Raw Pipeline Value', 'Amount': f"${selected_pipeline_raw:,.0f}"})
+            export_summary.append({'Category': f"  → Weights: Expect={pipeline_weights.get('expect',100)}% Commit={pipeline_weights.get('commit',85)}% BestCase={pipeline_weights.get('best_case',50)}% Opp={pipeline_weights.get('opportunity',25)}%", 'Amount': ''})
+        else:
+            export_summary.append({'Category': 'Pipeline Deals (HubSpot) - RAW', 'Amount': f"${selected_pipeline:,.0f}"})
+        
+        # Reorder with weighting info
+        if reorder_weighted:
+            export_summary.append({'Category': 'Reorder Potential - WEIGHTED', 'Amount': f"${selected_reorder:,.0f}"})
+            export_summary.append({'Category': '  → Raw Reorder Value', 'Amount': f"${selected_reorder_raw:,.0f}"})
+            export_summary.append({'Category': '  → Weights: Likely=75% Possible=50% LongShot=25%', 'Amount': ''})
+        else:
+            export_summary.append({'Category': 'Reorder Potential - RAW', 'Amount': f"${selected_reorder:,.0f}"})
+            export_summary.append({'Category': '  → Weighted Value (not applied)', 'Amount': f"${selected_reorder_weighted:,.0f}"})
+        
         export_summary.append({'Category': 'Total Forecast', 'Amount': f"${total_forecast:,.0f}"})
         export_summary.append({'Category': 'Gap to Goal', 'Amount': f"${gap_to_goal:,.0f}"})
         export_summary.append({'Category': '', 'Amount': ''})
+        export_summary.append({'Category': '=== WEIGHTING SETTINGS ===', 'Amount': ''})
+        export_summary.append({'Category': 'Pipeline Probability Applied', 'Amount': 'Yes' if pipeline_weighted else 'No'})
+        export_summary.append({'Category': 'Reorder Confidence Applied', 'Amount': 'Yes' if reorder_weighted else 'No'})
+        export_summary.append({'Category': '', 'Amount': ''})
         export_summary.append({'Category': '=== SELECTED COMPONENTS ===', 'Amount': ''})
         
-        # Add Component Totals by bucket
         # Helper to strip emojis from labels for clean CSV export
         def clean_label(text):
             """Remove emojis and clean up label for CSV export"""
@@ -3852,30 +3875,51 @@ def main():
                 continue
             # Handle both Amount and Amount_Numeric columns (NS uses Amount, HS uses Amount_Numeric)
             if 'Amount_Numeric' in df.columns:
-                cat_val = df['Amount_Numeric'].sum()
+                cat_val_raw = df['Amount_Numeric'].sum()
             elif 'Amount' in df.columns:
-                cat_val = df['Amount'].sum()
+                cat_val_raw = df['Amount'].sum()
             else:
-                cat_val = 0
+                cat_val_raw = 0
+            
+            # Apply pipeline weighting for display if enabled
+            if key in hs_categories and pipeline_weighted:
+                if 'Expect' in key:
+                    cat_val = cat_val_raw * (pipeline_weights.get('expect', 100) / 100)
+                elif 'Commit' in key:
+                    cat_val = cat_val_raw * (pipeline_weights.get('commit', 85) / 100)
+                elif 'BestCase' in key:
+                    cat_val = cat_val_raw * (pipeline_weights.get('best_case', 50) / 100)
+                elif 'Opp' in key:
+                    cat_val = cat_val_raw * (pipeline_weights.get('opportunity', 25) / 100)
+                else:
+                    cat_val = cat_val_raw
+            else:
+                cat_val = cat_val_raw
                 
-            if cat_val > 0:
+            if cat_val_raw > 0:
                 label = clean_label(ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key)))
                 count = len(df)
-                export_summary.append({'Category': f"{label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
+                if key in hs_categories and pipeline_weighted and cat_val != cat_val_raw:
+                    export_summary.append({'Category': f"{label} ({count} items)", 'Amount': f"${cat_val:,.0f} (raw: ${cat_val_raw:,.0f})"})
+                else:
+                    export_summary.append({'Category': f"{label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
         
         # Add reorder bucket totals to summary
         if reorder_buckets:
             for key, df in reorder_buckets.items():
                 if df.empty:
                     continue
-                if 'Projected_Value' in df.columns:
-                    cat_val = df['Projected_Value'].sum()
-                else:
-                    cat_val = 0
-                if cat_val > 0:
+                # Use correct column names
+                raw_val = df['Q1_Projection'].sum() if 'Q1_Projection' in df.columns else 0
+                weighted_val = df['Weighted_Value'].sum() if 'Weighted_Value' in df.columns else 0
+                
+                if raw_val > 0 or weighted_val > 0:
                     tier_label = key.replace('reorder_', 'Reorder - ').replace('_', ' ').title()
                     count = len(df)
-                    export_summary.append({'Category': f"{tier_label} ({count} items)", 'Amount': f"${cat_val:,.0f}"})
+                    if reorder_weighted:
+                        export_summary.append({'Category': f"{tier_label} ({count} items)", 'Amount': f"${weighted_val:,.0f} (raw: ${raw_val:,.0f})"})
+                    else:
+                        export_summary.append({'Category': f"{tier_label} ({count} items)", 'Amount': f"${raw_val:,.0f} (weighted: ${weighted_val:,.0f})"})
         
         export_summary.append({'Category': '', 'Amount': ''})
         export_summary.append({'Category': '=== DETAILED LINE ITEMS ===', 'Amount': ''})
@@ -3889,6 +3933,18 @@ def main():
             
             label = clean_label(ns_categories.get(key, {}).get('label', hs_categories.get(key, {}).get('label', key)))
             
+            # Get weight multiplier for this category
+            weight_mult = 1.0
+            if key in hs_categories and pipeline_weighted:
+                if 'Expect' in key:
+                    weight_mult = pipeline_weights.get('expect', 100) / 100
+                elif 'Commit' in key:
+                    weight_mult = pipeline_weights.get('commit', 85) / 100
+                elif 'BestCase' in key:
+                    weight_mult = pipeline_weights.get('best_case', 50) / 100
+                elif 'Opp' in key:
+                    weight_mult = pipeline_weights.get('opportunity', 25) / 100
+            
             for _, row in df.iterrows():
                 # Determine fields based on source type (NS vs HS)
                 if key in ns_categories:  # NetSuite
@@ -3897,7 +3953,8 @@ def main():
                     cust = row.get('Customer', '')
                     date_val = row.get('Ship Date', row.get('Key Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
-                    amount = pd.to_numeric(row.get('Amount', 0), errors='coerce')
+                    amount_raw = pd.to_numeric(row.get('Amount', 0), errors='coerce')
+                    amount = amount_raw  # NS always at face value
                     # Get Sales Rep
                     rep = row.get('Sales Rep', row.get('Rep Master', ''))
                 else:  # HubSpot
@@ -3906,7 +3963,8 @@ def main():
                     cust = row.get('Account Name', row.get('Deal Name', ''))
                     date_val = row.get('Close', row.get('Close Date', ''))
                     deal_type = row.get('Type', row.get('Display_Type', ''))
-                    amount = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
+                    amount_raw = pd.to_numeric(row.get('Amount_Numeric', 0), errors='coerce')
+                    amount = amount_raw * weight_mult  # Apply weighting
                     # Get Deal Owner
                     rep = row.get('Deal Owner', '')
                     if pd.isna(rep) or rep is None or str(rep).strip() == '':
@@ -3943,7 +4001,7 @@ def main():
                     if rep.lower() in ['nan', 'none']:
                         rep = ''
                 
-                export_data.append({
+                export_row = {
                     'Category': item_type,
                     'ID': item_id,
                     'Customer': cust,
@@ -3952,7 +4010,14 @@ def main():
                     'Date': date_val,
                     'Amount': amount,
                     'Rep': rep
-                })
+                }
+                
+                # Add raw amount column for weighted items
+                if key in hs_categories and pipeline_weighted and weight_mult != 1.0:
+                    export_row['Raw Amount'] = amount_raw
+                    export_row['Weight'] = f"{weight_mult:.0%}"
+                
+                export_data.append(export_row)
         
         # 2. Reorder Prospects from reorder_buckets
         if reorder_buckets:
@@ -3966,21 +4031,40 @@ def main():
                     cust = row.get('Customer', '')
                     product_type = row.get('Product_Type', '')
                     top_skus = row.get('Top_SKUs', '')
-                    conf_tier = row.get('Confidence_Tier', '')
-                    conf_pct = row.get('Confidence_Pct', 0)
-                    q1_val = row.get('Q1_Value', 0)
-                    projected_val = row.get('Projected_Value', 0)
+                    conf_tier = row.get('Confidence_Tier', row.get('Confidence', ''))
                     
-                    export_data.append({
+                    # Handle confidence - could be string "75%" or float 0.75
+                    conf_val = row.get('Confidence', 0)
+                    if isinstance(conf_val, str) and '%' in conf_val:
+                        conf_pct = float(conf_val.replace('%', '')) / 100
+                    else:
+                        conf_pct = float(conf_val) if conf_val else 0
+                    
+                    # Use correct column names
+                    q1_val = row.get('Q1_Projection', row.get('Q1_Value', 0))
+                    weighted_val = row.get('Weighted_Value', row.get('Projected_Value', q1_val * conf_pct))
+                    
+                    # Use raw or weighted based on setting
+                    if reorder_weighted:
+                        amount = weighted_val
+                    else:
+                        amount = q1_val
+                    
+                    export_row = {
                         'Category': tier_label,
                         'ID': '',  # No ID for reorder prospects
                         'Customer': cust,
-                        'Order/Deal Type': f"{product_type} - {conf_tier} ({conf_pct:.0%})",
+                        'Order/Deal Type': f"{product_type} - {conf_tier}",
                         'Top SKUs': top_skus,
                         'Date': '',  # No specific date
-                        'Amount': projected_val,
-                        'Rep': rep_name  # Use selected rep name
-                    })
+                        'Amount': amount,
+                        'Rep': rep_name,  # Use selected rep name
+                        'Confidence': f"{conf_pct:.0%}" if conf_pct else '',
+                        'Raw Value': q1_val,
+                        'Weighted Value': weighted_val
+                    }
+                    
+                    export_data.append(export_row)
         
         # C. Construct CSV
         if export_data:
@@ -3988,7 +4072,13 @@ def main():
             data_df = pd.DataFrame(export_data)
             
             # Format Amount in Data DF
-            data_df['Amount'] = data_df['Amount'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "$0.00")
+            data_df['Amount'] = data_df['Amount'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) and x != '' else "$0.00")
+            if 'Raw Amount' in data_df.columns:
+                data_df['Raw Amount'] = data_df['Raw Amount'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) else "")
+            if 'Raw Value' in data_df.columns:
+                data_df['Raw Value'] = data_df['Raw Value'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) and x != 0 else "")
+            if 'Weighted Value' in data_df.columns:
+                data_df['Weighted Value'] = data_df['Weighted Value'].apply(lambda x: f"${x:,.2f}" if pd.notna(x) and x != 0 else "")
             
             final_csv = summary_df.to_csv(index=False) + "\n" + data_df.to_csv(index=False)
             
@@ -3998,7 +4088,17 @@ def main():
                 file_name=f"q1_2026_forecast_{rep_name.replace(' ', '_')}_{pd.Timestamp.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
-            st.caption(f"Export includes summary + {len(data_df)} line items.")
+            
+            # Show what's in the export
+            weight_note = ""
+            if pipeline_weighted or reorder_weighted:
+                weight_note = " | Weighting: "
+                if pipeline_weighted:
+                    weight_note += "Pipeline ✓"
+                if reorder_weighted:
+                    weight_note += " Reorder ✓"
+            
+            st.caption(f"Export includes summary + {len(data_df)} line items.{weight_note}")
         else:
             st.info("No items selected for export")
     else:
