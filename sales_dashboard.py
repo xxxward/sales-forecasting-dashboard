@@ -783,6 +783,53 @@ def load_google_sheets_data(sheet_name, range_name, version=CACHE_VERSION):
         
         return pd.DataFrame()
 
+# ========== SPILLOVER COLUMN HELPER FUNCTIONS ==========
+# These functions handle both old ('Q1 2026 Spillover') and new ('Q2 2026 Spillover') column names
+# to provide backwards compatibility during the spreadsheet transition
+
+def get_spillover_column(df):
+    """
+    Get the spillover column name - handles both old and new column names.
+    Returns the column name if found, None otherwise.
+    Checks for 'Q2 2026 Spillover' first, falls back to 'Q1 2026 Spillover'.
+    """
+    if df is None or df.empty:
+        return None
+    if 'Q2 2026 Spillover' in df.columns:
+        return 'Q2 2026 Spillover'
+    elif 'Q1 2026 Spillover' in df.columns:
+        return 'Q1 2026 Spillover'
+    return None
+
+def get_spillover_value(df, spillover_col):
+    """
+    Get spillover column values, handling the case where column doesn't exist.
+    Returns a Series of the column values or a Series of empty strings if column doesn't exist.
+    """
+    if spillover_col and spillover_col in df.columns:
+        return df[spillover_col]
+    return pd.Series([''] * len(df), index=df.index)
+
+def is_q1_deal(df, spillover_col):
+    """
+    Determine if deals are Q1 2026 deals (primary quarter).
+    Q1 deals are NOT marked as Q2 2026 spillover AND NOT marked as Q4 2025 spillover.
+    If using old column name 'Q1 2026 Spillover', Q1 deals are those NOT marked as 'Q1 2026'.
+    """
+    if df is None or df.empty:
+        return pd.Series([], dtype=bool)
+    if spillover_col is None:
+        return pd.Series([True] * len(df), index=df.index)
+    
+    spillover_vals = get_spillover_value(df, spillover_col)
+    
+    if spillover_col == 'Q2 2026 Spillover':
+        # New column: exclude Q2 2026 and Q4 2025 spillover
+        return (spillover_vals != 'Q2 2026') & (spillover_vals != 'Q4 2025')
+    else:
+        # Old column 'Q1 2026 Spillover': for Q1 dashboard, all deals are primary quarter
+        return pd.Series([True] * len(df), index=df.index)
+
 def apply_q1_fulfillment_logic(deals_df):
     """
     Apply lead time logic to filter out deals that close late in Q1 2026
@@ -1733,8 +1780,13 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q2 2026 Spillover column - filter to Q1 deals only
-                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                # Use spillover column - handles both old and new column names
+                spillover_col = get_spillover_column(df)
+                if spillover_col:
+                    q1_mask = is_q1_deal(df, spillover_col)
+                    q1_deals = df[q1_mask]
+                else:
+                    q1_deals = df
                 return q1_deals[q1_deals['Status'] == 'Expect']['Amount_Numeric'].sum()
             
             current_expect = get_expect_amount(deals_df)
@@ -1749,8 +1801,13 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q2 2026 Spillover column - filter to Q1 deals only
-                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                # Use spillover column - handles both old and new column names
+                spillover_col = get_spillover_column(df)
+                if spillover_col:
+                    q1_mask = is_q1_deal(df, spillover_col)
+                    q1_deals = df[q1_mask]
+                else:
+                    q1_deals = df
                 return q1_deals[q1_deals['Status'] == 'Best Case']['Amount_Numeric'].sum()
             
             current_bc = get_best_case_amount(deals_df)
@@ -1768,8 +1825,13 @@ def create_dod_audit_section(deals_df, dashboard_df, invoices_df, sales_orders_d
                     return 0
                 df = df.copy()
                 df['Amount_Numeric'] = pd.to_numeric(df.get('Amount', 0), errors='coerce')
-                # Use Q2 2026 Spillover column - filter to Q1 deals only
-                q1_deals = df[(df.get('Q2 2026 Spillover') != 'Q2 2026') & (df.get('Q2 2026 Spillover') != 'Q4 2025')]
+                # Use spillover column - handles both old and new column names
+                spillover_col = get_spillover_column(df)
+                if spillover_col:
+                    q1_mask = is_q1_deal(df, spillover_col)
+                    q1_deals = df[q1_mask]
+                else:
+                    q1_deals = df
                 return q1_deals[q1_deals['Status'] == 'Opportunity']['Amount_Numeric'].sum()
             
             current_opp = get_opportunity_amount(deals_df)
@@ -2200,13 +2262,28 @@ def build_your_own_forecast_section(metrics, quota, rep_name=None, deals_df=None
 
     hs_dfs = {}
     if not hs_data.empty:
-        # Use the Q2 2026 Spillover column from Google Sheet (spreadsheet formula handles PA date logic)
+        # Use the spillover column from Google Sheet (handles both old and new column names)
         # Q1 deals: NOT marked as Q2 spillover (primary quarter)
         # Q4 deals: Marked as Q4 2025 (backward spillover - carryover)
         # Q2 deals: Explicitly marked as Q2 2026 (forward spillover)
-        q1 = (hs_data.get('Q2 2026 Spillover') != 'Q2 2026') & (hs_data.get('Q2 2026 Spillover') != 'Q4 2025')
-        q4 = hs_data.get('Q2 2026 Spillover') == 'Q4 2025'
-        q2 = hs_data.get('Q2 2026 Spillover') == 'Q2 2026'
+        spillover_col = get_spillover_column(hs_data)
+        
+        if spillover_col == 'Q2 2026 Spillover':
+            spillover_vals = hs_data[spillover_col]
+            q1 = (spillover_vals != 'Q2 2026') & (spillover_vals != 'Q4 2025')
+            q4 = spillover_vals == 'Q4 2025'
+            q2 = spillover_vals == 'Q2 2026'
+        elif spillover_col == 'Q1 2026 Spillover':
+            # Old column name - for Q1 dashboard, all deals are primary quarter
+            # The old column was marking deals that spill TO Q1, but now we're IN Q1
+            q1 = pd.Series([True] * len(hs_data), index=hs_data.index)
+            q4 = pd.Series([False] * len(hs_data), index=hs_data.index)
+            q2 = pd.Series([False] * len(hs_data), index=hs_data.index)
+        else:
+            # No spillover column - all deals are primary quarter
+            q1 = pd.Series([True] * len(hs_data), index=hs_data.index)
+            q4 = pd.Series([False] * len(hs_data), index=hs_data.index)
+            q2 = pd.Series([False] * len(hs_data), index=hs_data.index)
         
         def format_hs_view(df):
             if df.empty: return df
@@ -3179,9 +3256,16 @@ def calculate_team_metrics(deals_df, dashboard_df):
     total_quota = dashboard_df['Quota'].sum()
     total_orders = dashboard_df['NetSuite Orders'].sum()
     
-    # Filter for Q1 2026 fulfillment only (exclude Q2 and Q4 spillover)
-    # Primary quarter deals: NOT marked as Q2 2026 spillover AND NOT marked as Q4 2025 spillover
-    deals_q1 = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
+    # Get spillover column (handles both old and new column names)
+    spillover_col = get_spillover_column(deals_df)
+    
+    # Filter for Q1 2026 fulfillment only
+    if spillover_col:
+        q1_mask = is_q1_deal(deals_df, spillover_col)
+        deals_q1 = deals_df[q1_mask]
+    else:
+        # No spillover column - use all deals
+        deals_q1 = deals_df
     
     # Calculate Expect/Commit forecast (Q1 only)
     expect_commit = deals_q1[deals_q1['Status'].isin(['Expect', 'Commit'])]['Amount'].sum()
@@ -3472,14 +3556,14 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
     # Filter deals for this rep - ALL Q1 2026 deals (regardless of spillover)
     rep_deals = deals_df[deals_df['Deal Owner'] == rep_name].copy()
     
-    # Check if we have the Q2 2026 Spillover column (spreadsheet formula now handles PA date logic)
-    has_spillover_column = 'Q2 2026 Spillover' in rep_deals.columns
+    # Check for spillover column (handles both old and new column names)
+    spillover_col = get_spillover_column(rep_deals)
     
-    if has_spillover_column:
-        # Separate deals by shipping timeline using spreadsheet formula
-        rep_deals['Ships_In_Q1'] = (rep_deals['Q2 2026 Spillover'] != 'Q2 2026') & (rep_deals['Q2 2026 Spillover'] != 'Q4 2025')
-        rep_deals['Ships_In_Q2'] = rep_deals['Q2 2026 Spillover'] == 'Q2 2026'
-        rep_deals['Ships_In_Q4'] = rep_deals['Q2 2026 Spillover'] == 'Q4 2025'
+    if spillover_col == 'Q2 2026 Spillover':
+        # New column: Separate deals by shipping timeline
+        rep_deals['Ships_In_Q1'] = (rep_deals[spillover_col] != 'Q2 2026') & (rep_deals[spillover_col] != 'Q4 2025')
+        rep_deals['Ships_In_Q2'] = rep_deals[spillover_col] == 'Q2 2026'
+        rep_deals['Ships_In_Q4'] = rep_deals[spillover_col] == 'Q4 2025'
         
         # Deals that ship in Q1 2026 (primary quarter)
         rep_deals_ship_q1 = rep_deals[rep_deals['Ships_In_Q1'] == True].copy()
@@ -3490,7 +3574,7 @@ def calculate_rep_metrics(rep_name, deals_df, dashboard_df, sales_orders_df=None
         # Deals that ship in Q4 2025 (backward spillover - carryover)
         rep_deals_ship_q4 = rep_deals[rep_deals['Ships_In_Q4'] == True].copy()
     else:
-        # Fallback if column doesn't exist - treat all as Q1
+        # Old column name or no column - treat all as Q1 (primary quarter)
         rep_deals_ship_q1 = rep_deals.copy()
         rep_deals_ship_q2 = pd.DataFrame()
         rep_deals_ship_q4 = pd.DataFrame()
@@ -4057,7 +4141,10 @@ def create_status_breakdown_chart(deals_df, rep_name=None):
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
     # Only show Q1 deals (filter out Q2 and Q4 spillover)
-    deals_df = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
+    spillover_col = get_spillover_column(deals_df)
+    if spillover_col:
+        q1_mask = is_q1_deal(deals_df, spillover_col)
+        deals_df = deals_df[q1_mask]
     
     if deals_df.empty:
         return None
@@ -4093,7 +4180,10 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
         deals_df = deals_df[deals_df['Deal Owner'] == rep_name]
     
     # Only show Q1 deals (filter out Q2 and Q4 spillover)
-    deals_df = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')]
+    spillover_col = get_spillover_column(deals_df)
+    if spillover_col:
+        q1_mask = is_q1_deal(deals_df, spillover_col)
+        deals_df = deals_df[q1_mask]
     
     if deals_df.empty:
         return None
@@ -4113,7 +4203,7 @@ def create_pipeline_breakdown_chart(deals_df, rep_name=None):
         x='Pipeline',
         y='Amount',
         color='Status',
-        title='Pipeline Breakdown by Forecast Category (Q4 Only)',
+        title='Pipeline Breakdown by Forecast Category (Q1 Only)',
         color_discrete_map=color_map,
         text_auto='.2s',
         barmode='stack'
@@ -4159,14 +4249,17 @@ def create_deals_timeline(deals_df, rep_name=None):
     timeline_df = timeline_df.sort_values('Close Date')
     
     # Add Q1/Q4/Q2 indicator to color map
+    spillover_col = get_spillover_column(timeline_df)
+    
     def get_quarter(row):
-        spillover_val = row.get('Q2 2026 Spillover', '')
-        if spillover_val == 'Q4 2025':
-            return 'Q4 2025 Spillover'
-        elif spillover_val == 'Q2 2026':
-            return 'Q2 2026 Spillover'
-        else:
-            return 'Q1 2026'
+        if spillover_col and spillover_col in row.index:
+            spillover_val = row.get(spillover_col, '')
+            if spillover_col == 'Q2 2026 Spillover':
+                if spillover_val == 'Q4 2025':
+                    return 'Q4 2025 Spillover'
+                elif spillover_val == 'Q2 2026':
+                    return 'Q2 2026 Spillover'
+        return 'Q1 2026'
     
     timeline_df['Quarter'] = timeline_df.apply(get_quarter, axis=1)
     
@@ -4488,7 +4581,15 @@ def display_team_dashboard(deals_df, dashboard_df, invoices_df, sales_orders_df,
     potential_attainment = ((base_forecast + team_best_opp) / team_quota * 100) if team_quota > 0 else 0
     
     # NEW: Calculate Best Case only (not Opportunity) for optimistic gap
-    deals_q1 = deals_df[(deals_df.get('Q2 2026 Spillover') != 'Q2 2026') & (deals_df.get('Q2 2026 Spillover') != 'Q4 2025')] if not deals_df.empty else pd.DataFrame()
+    if not deals_df.empty:
+        spillover_col = get_spillover_column(deals_df)
+        if spillover_col:
+            q1_mask = is_q1_deal(deals_df, spillover_col)
+            deals_q1 = deals_df[q1_mask]
+        else:
+            deals_q1 = deals_df
+    else:
+        deals_q1 = pd.DataFrame()
     team_best_case = deals_q1[deals_q1['Status'] == 'Best Case']['Amount'].sum() if not deals_q1.empty and 'Status' in deals_q1.columns else 0
     
     # NEW: Optimistic Gap = Quota - (High Confidence + Best Case + PF no date + PA no date + PA >2 weeks)
